@@ -7,6 +7,7 @@ use std::fs::OpenOptions;
 use std::io::prelude::*;
 use std::io::{stdin, BufReader, BufWriter, Stdin};
 use std::path::PathBuf;
+use zoe::data::types::nucleotides::reverse_complement;
 
 /*
 
@@ -163,12 +164,12 @@ pub fn fastq_process(args: FastqConverterArgs) {
     let (forward_adapter, reverse_adapter, adapter_mask) = if let Some(ref a) = args.mask_adapter {
         let forward = a.as_bytes().to_ascii_uppercase();
         let length = forward.len();
-        let reverse = forward.iter().copied().rev().collect(); // add reverse complement using Zoe
+        let reverse = reverse_complement(&forward);
 
         (forward, reverse, [b'N'].repeat(length))
     } else if let Some(ref a) = args.clip_adapter {
         let forward = a.as_bytes().to_ascii_uppercase();
-        let reverse = forward.iter().copied().rev().collect(); // add reverse complement using Zoe
+        let reverse = reverse_complement(&forward);
 
         (forward, reverse, Vec::new())
     } else {
