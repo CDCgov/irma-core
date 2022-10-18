@@ -1,4 +1,4 @@
-#![allow(unused_variables, irrefutable_let_patterns, dead_code)]
+#![allow(unreachable_patterns)]
 
 use clap::{Parser, Subcommand};
 use irma_core::fastq_converter::*;
@@ -16,16 +16,11 @@ enum Commands {
     FastqConverter(FastqConverterArgs),
 }
 
-/*
-
-
-*/
-
 fn main() {
     let args = Cli::parse();
 
     match args.command {
-        Commands::FastqConverter(cmd_args) => fastq_process(cmd_args),
+        Commands::FastqConverter(cmd_args) => fastq_process(&cmd_args),
         _ => println!("Hello world!"),
     }
 }

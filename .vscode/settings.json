@@ -1,0 +1,4 @@
+{
+    "files.trimTrailingWhitespace": true,
+    "rust-analyzer.checkOnSave.command": "clippy"
+}
