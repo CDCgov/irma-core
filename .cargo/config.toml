@@ -1,2 +1,2 @@
 [net]
-git-fetch-with-cli = true   # use the `git` executable for git operations
+git-fetch-with-cli = true # use the `git` executable for git operations

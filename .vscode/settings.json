@@ -1,4 +1,5 @@
 {
     "files.trimTrailingWhitespace": true,
-    "rust-analyzer.checkOnSave.command": "clippy"
+    "rust-analyzer.checkOnSave.command": "clippy",
+    "rust-analyzer.procMacro.attributes.enable": true
 }

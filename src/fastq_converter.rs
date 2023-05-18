@@ -39,17 +39,19 @@
 #![allow(
     clippy::struct_excessive_bools,
     clippy::module_name_repetitions,
-    clippy::too_many_lines
+    clippy::too_many_lines,
+    clippy::missing_errors_doc
 )]
+
 use clap::{Args, ValueHint};
 use either::Either;
 use regex::bytes::Regex;
 use std::borrow::Borrow;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
-use std::io::{stdin, BufReader, BufWriter};
+use std::io::{stdin, BufReader, BufWriter, Error as IOError, ErrorKind};
 use std::path::PathBuf;
-use zoe::data::fastq::FastQReader;
+use zoe::data::fastq::{FastQ, FastQReader};
 use zoe::data::types::nucleotides::reverse_complement;
 
 #[derive(Args)]
@@ -58,34 +60,34 @@ pub struct FastqConverterArgs {
 
     #[arg(short = 'Q', long)]
     /// Outputs fastQ instead of fastA format.
-    fastq_output: bool,
+    fastq_output:   bool,
     #[arg(short = 'C', long)]
     /// Take the reverse complement and add to data.
     complement_add: bool,
     #[arg(short = 'H', long)]
     /// Keep the fastq header as usual.
-    keep_header: bool,
+    keep_header:    bool,
 
     #[arg(short = 'T', long, default_value_t = 0)]
     /// Specify the read quality threshold (geometric mean, median).
     min_read_quality: u8,
     #[arg(short = 'M', long)]
     /// Interprets the threshold (-T) as the median, not the geometric mean.
-    use_median: bool,
+    use_median:       bool,
 
     #[arg(short = 'L', long, default_value_t = 0)]
     /// Minimum length of sequence read data, filtered otherwise.
-    min_length: usize,
+    min_length:             usize,
     #[arg(short = 'E', long)]
     /// The minimum length threshold (-L) is enforced when adapter clipped (-c).
     enforce_clipped_length: bool,
 
     #[arg(short = 'm', long)]
     /// Specify adapter sequence and mask when found in reads.
-    mask_adapter: Option<String>,
+    mask_adapter:  Option<String>,
     #[arg(short = 'c', long)]
     /// Specify adapter sequence and clip appropriate ends when found in reads.
-    clip_adapter: Option<String>,
+    clip_adapter:  Option<String>,
     #[arg(short = 'Z', long)]
     /// Allow up to one mismatch for adapter clipping (-c) or masking (-m).
     fuzzy_adapter: bool,
@@ -103,7 +105,7 @@ pub struct FastqConverterArgs {
     log_file: Option<PathBuf>,
     #[arg(short = 'g', long)]
     /// Specify log ID tag (integer) for output collation.
-    log_id: Option<usize>,
+    log_id:   Option<usize>,
 
     #[arg(short = 'O', long)]
     /// Replace header with monotonically increasing ordinal headers.
@@ -114,7 +116,7 @@ pub struct FastqConverterArgs {
 
     #[arg(short = 'A', long, value_hint = ValueHint::FilePath)]
     /// Save quality vs. length statistics file for analysis.
-    save_stats: Option<PathBuf>,
+    save_stats:     Option<PathBuf>,
     #[arg(short = 'K', long)]
     /// Do not output data FASTA/FASTQ data (assumes -A).
     skip_remaining: bool,
@@ -143,33 +145,19 @@ fn create_fuzzy_pattern(pattern: &[u8]) -> Vec<u8> {
 }
 
 // Helper function to compile regex
-fn compile_byte_regex(b: &[u8]) -> Regex {
-    Regex::new(String::from_utf8_lossy(b).borrow()).unwrap_or_else(|e| {
-        eprintln!(
-            "{PROGRAM_NAME} Error! Failed to compile regex for adapter: '{}'\n{e}",
-            String::from_utf8_lossy(b),
-        );
-        std::process::exit(1);
-    })
+fn compile_byte_regex(b: &[u8]) -> Result<Regex, IOError> {
+    match Regex::new(String::from_utf8_lossy(b).borrow()) {
+        Ok(r) => Ok(r),
+        Err(e) => Err(IOError::new(ErrorKind::InvalidData, e)),
+    }
 }
 
 /// # Panics
 ///
 /// Sub-program for processing fastQ data.
-pub fn fastq_process(args: &FastqConverterArgs) {
+pub fn fastq_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
     let fastq_file_reader = if let Some(ref file_path) = args.fastq_input_file {
-        FastQReader::new(BufReader::new(Either::Left(
-            OpenOptions::new()
-                .read(true)
-                .open(file_path)
-                .unwrap_or_else(|e| {
-                    eprintln!(
-                        "{PROGRAM_NAME} Error! Cannot open FASTQ file at: '{}'\n{e}",
-                        file_path.display()
-                    );
-                    std::process::exit(e.raw_os_error().unwrap_or(1));
-                }),
-        )))
+        FastQReader::new(BufReader::new(Either::Left(OpenOptions::new().read(true).open(file_path)?)))
     } else {
         FastQReader::new(BufReader::new(Either::Right(stdin())))
     };
@@ -183,58 +171,28 @@ pub fn fastq_process(args: &FastqConverterArgs) {
         }
 
         (
-            Some(BufWriter::new(
-                OpenOptions::new()
-                    .append(true)
-                    .create(true)
-                    .open(file_path)
-                    .unwrap_or_else(|e| {
-                        eprintln!(
-                            "{PROGRAM_NAME} Error! Cannot open log file at: '{}'\n{e}",
-                            file_path.display()
-                        );
-                        std::process::exit(e.raw_os_error().unwrap_or(1));
-                    }),
-            )),
+            Some(BufWriter::new(OpenOptions::new().append(true).create(true).open(file_path)?)),
             log_id,
         )
     } else {
         (None, String::new())
     };
 
-    let mut save_stats_writer = args.save_stats.as_ref().map(|file_path| {
-        BufWriter::new(
-            OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(file_path)
-                .unwrap_or_else(|e| {
-                    eprintln!(
-                        "{PROGRAM_NAME} Error! Cannot open statistics file at: '{}'\n{e}",
-                        file_path.display()
-                    );
-                    std::process::exit(e.raw_os_error().unwrap_or(1));
-                }),
-        )
-    });
+    let mut save_stats_writer = if let Some(ref file_path) = args.save_stats {
+        Some(BufWriter::new(
+            OpenOptions::new().write(true).create(true).truncate(true).open(file_path)?,
+        ))
+    } else {
+        None
+    };
 
-    let mut quality_file_writer = args.save_quality_file.as_ref().map(|file_path| {
-        BufWriter::new(
-            OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(file_path)
-                .unwrap_or_else(|e| {
-                    eprintln!(
-                        "{PROGRAM_NAME} Error! Cannot open quality file for writing at: '{}'\n{e}",
-                        file_path.display()
-                    );
-                    std::process::exit(e.raw_os_error().unwrap_or(1));
-                }),
-        )
-    });
+    let mut quality_file_writer = if let Some(ref file_path) = args.save_quality_file {
+        Some(BufWriter::new(
+            OpenOptions::new().write(true).create(true).truncate(true).open(file_path)?,
+        ))
+    } else {
+        None
+    };
 
     let file_id = if let Some(ref id) = args.ordinal_file_id {
         if args.complement_add {
@@ -265,31 +223,26 @@ pub fn fastq_process(args: &FastqConverterArgs) {
             let fuzzy_adapter_forward = create_fuzzy_pattern(&forward_adapter);
             let fuzzy_adapter_reverse = create_fuzzy_pattern(&reverse_adapter);
             (
-                Some(compile_byte_regex(&fuzzy_adapter_forward)),
-                Some(compile_byte_regex(&fuzzy_adapter_reverse)),
+                Some(compile_byte_regex(&fuzzy_adapter_forward)?),
+                Some(compile_byte_regex(&fuzzy_adapter_reverse)?),
             )
         } else {
             (None, None)
         };
 
-    let (forward_regex, reverse_regex) =
-        if args.mask_adapter.is_some() || args.clip_adapter.is_some() {
-            (
-                Some(compile_byte_regex(&forward_adapter)),
-                Some(compile_byte_regex(&reverse_adapter)),
-            )
-        } else {
-            (None, None)
-        };
+    let (forward_regex, reverse_regex) = if args.mask_adapter.is_some() || args.clip_adapter.is_some() {
+        (
+            Some(compile_byte_regex(&forward_adapter)?),
+            Some(compile_byte_regex(&reverse_adapter)?),
+        )
+    } else {
+        (None, None)
+    };
 
     let mut reads_passing_qc: u32 = 0;
     let mut ordinal_id: u32 = 0;
 
-    let (pp, nn, dnp) = if args.complement_add {
-        ("P", "N", "_")
-    } else {
-        ("", "", "")
-    };
+    let (pp, nn, dnp) = if args.complement_add { ("P", "N", "_") } else { ("", "", "") };
 
     // Maximum dataset median or average read quality score.
     let mut dataset_q_max = None;
@@ -297,8 +250,12 @@ pub fn fastq_process(args: &FastqConverterArgs) {
     // Maximum read lengths at different points in the pipeline.
     let (mut dataset_max_read_len, mut dataset_max_clipped_read_len) = (None, None);
 
-    for fastq in fastq_file_reader {
-        let (mut header, mut sequence, mut quality) = (fastq.header, fastq.sequence, fastq.quality);
+    for result in fastq_file_reader {
+        let FastQ {
+            mut header,
+            mut sequence,
+            mut quality,
+        } = result?;
 
         if sequence.len() > dataset_max_read_len.unwrap_or_default() {
             dataset_max_read_len = Some(sequence.len());
@@ -514,4 +471,6 @@ pub fn fastq_process(args: &FastqConverterArgs) {
             args.min_read_quality, args.min_length, args.enforce_clipped_length
         );
     }
+
+    Ok(())
 }

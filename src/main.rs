@@ -2,6 +2,7 @@
 
 use clap::{Parser, Subcommand};
 use irma_core::fastq_converter::*;
+use zoe::data::err::OrFail;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -18,9 +19,13 @@ enum Commands {
 
 fn main() {
     let args = Cli::parse();
+    let module = module_path!();
 
-    match args.command {
-        Commands::FastqConverter(cmd_args) => fastq_process(&cmd_args),
-        _ => println!("Hello world!"),
+    match &args.command {
+        Commands::FastqConverter(cmd_args) => fastq_process(cmd_args).unwrap_or_die(&format!("{module}::FastqConverter")),
+        _ => {
+            eprintln!("Unrecognized command.");
+            std::process::exit(1)
+        }
     }
 }

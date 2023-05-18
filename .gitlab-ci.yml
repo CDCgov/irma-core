@@ -1,0 +1,39 @@
+image: rustlang/rust:nightly
+
+stages:
+  - build
+  - test
+
+.before_script_template:
+  before_script:
+    - git config --global credential.helper store
+    - echo "https://gitlab-ci-token:${CI_JOB_TOKEN}@git.biotech.cdc.gov" > ~/.git-credentials
+    - git config --global url."https://gitlab-ci-token:${CI_JOB_TOKEN}@git.biotech.cdc.gov".insteadOf ssh://git@git.biotech.cdc.gov
+    - git config --global http.sslCAInfo /etc/gitlab-runner/certs/ca.crt
+
+irma-build:
+  stage: build
+  tags:
+    - docker
+    - scicomp
+  extends: .before_script_template
+  script:
+    - cargo build --verbose
+
+irma-test:
+  stage: test
+  tags:
+    - docker
+    - scicomp
+  extends: .before_script_template
+  script:
+    - cargo test --verbose
+
+irma-docs:
+  stage: test
+  tags:
+    - docker
+    - scicomp
+  extends: .before_script_template
+  script:
+    - cargo doc --verbose
