@@ -15,7 +15,10 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Performs FastQ quality control, file conversions, and adapter trimming.
     FastqConverter(FastqConverterArgs),
+    /// Merges Illumina paired-end reads with parsimonious error correction and
+    /// detection.
     MergeSAM(MergeSAMArgs),
 }
 
