@@ -8,12 +8,16 @@ edition = "2021"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 either = "1"
+indoc = "*"
 regex = { version = "*", default-features = false, features = [
     "std",
     "perf",
     "unicode-perl",
 ] }
 zoe = { git = "ssh://git@git.biotech.cdc.gov/vfn4/zoe.git", branch = "main" }
+
+[profile.dev]
+opt-level = 1
 
 [profile.release]
 strip = true

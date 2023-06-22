@@ -54,7 +54,7 @@ use std::path::PathBuf;
 use zoe::data::fastq::{FastQ, FastQReader};
 use zoe::data::types::nucleotides::reverse_complement;
 
-#[derive(Args)]
+#[derive(Args, Debug)]
 pub struct FastqConverterArgs {
     fastq_input_file: Option<PathBuf>,
 
@@ -155,7 +155,7 @@ fn compile_byte_regex(b: &[u8]) -> Result<Regex, IOError> {
 /// # Panics
 ///
 /// Sub-program for processing fastQ data.
-pub fn fastq_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
+pub fn fastqc_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
     let fastq_file_reader = if let Some(ref file_path) = args.fastq_input_file {
         FastQReader::new(BufReader::new(Either::Left(OpenOptions::new().read(true).open(file_path)?)))
     } else {
