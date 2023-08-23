@@ -1,4 +1,5 @@
-// Filename:         fastQ_converter
+// Filename:         fastq_converter
+//
 // Description:      Read FastQ files, applies QC filtering (quality and length),
 //                   adapter trimming, and format conversion as requested.
 //
@@ -35,7 +36,6 @@
 //
 //  Please provide appropriate attribution in any work or product based on this
 //  material.
-#![warn(clippy::all, clippy::pedantic)]
 #![allow(
     clippy::struct_excessive_bools,
     clippy::module_name_repetitions,
@@ -122,7 +122,7 @@ pub struct FastqConverterArgs {
     skip_remaining: bool,
 }
 
-const PROGRAM_NAME: &str = "FASTQ_CONVERTER";
+static MODULE: &str = module_path!();
 
 // Create a fuzzy pattern from a simple nucleotide sequence (one mismatch)
 const N_PATTERN: &[u8; 7] = b"[ATCGN]";
@@ -361,7 +361,7 @@ pub fn fastqc_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
         if let Some(ref mut w) = save_stats_writer {
             if let Err(e) = writeln!(w, "{ordinal_id}\t{read_q_center}\t{n}") {
                 eprintln!(
-                    "{PROGRAM_NAME} Warning! Failed to write to '{}' for id '{ordinal_id}'. See: {e}",
+                    "{MODULE} Warning! Failed to write to '{}' for id '{ordinal_id}'. See: {e}",
                     args.save_stats.as_ref().unwrap().display()
                 );
             }
@@ -392,7 +392,7 @@ pub fn fastqc_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
                 if let Some(ref mut w) = quality_file_writer {
                     writeln!(w, "{header2}{dnp}{pp}\t{quality}").unwrap_or_else(|e| {
                         eprintln!(
-                            "{PROGRAM_NAME} Warning! Cannot write to '{}'. See: {e}",
+                            "{MODULE} Warning! Cannot write to '{}'. See: {e}",
                             args.save_quality_file.as_ref().unwrap().display()
                         );
                     });
@@ -418,7 +418,7 @@ pub fn fastqc_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
                     if let Some(ref mut w) = quality_file_writer {
                         writeln!(w, "{header2}{dnp}{nn}\t{quality}").unwrap_or_else(|e| {
                             eprintln!(
-                                "{PROGRAM_NAME} Warning! Cannot write to '{}'. See: {e}",
+                                "{MODULE} Warning! Cannot write to '{}'. See: {e}",
                                 args.save_quality_file.as_ref().unwrap().display()
                             );
                         });
@@ -436,7 +436,7 @@ pub fn fastqc_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
             args.min_read_quality, args.min_length, args.use_median
         )
         .unwrap_or_else(|e| {
-            eprintln!("{PROGRAM_NAME} Warning! Cannot write to {log_name_id}. See: {e}");
+            eprintln!("{MODULE} Warning! Cannot write to {log_name_id}. See: {e}");
         });
     }
 
@@ -459,7 +459,7 @@ pub fn fastqc_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
         };
 
         eprintln!(
-            "{PROGRAM_NAME} Warning! No reads passed QC.
+            "{MODULE} Warning! No reads passed QC.
 
             Configuration specified minimum {center_type} read quality score: {}
             Configuration specified minimum read length: {}

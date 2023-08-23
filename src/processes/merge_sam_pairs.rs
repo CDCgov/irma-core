@@ -1,7 +1,41 @@
-#![allow(non_snake_case, unused_mut, dead_code, clippy::wrong_self_convention)]
-
-const PROGRAM: &str = "mergeSAMpairs";
-
+// Filename:         merge_sam_pairs
+//
+// Description:      Merges Illumina paired-end reads with parsimonious error
+//                   correction and detection.
+//
+// Date dedicated:   2023-08-22
+// Author:           Samuel S. Shepard, Centers for Disease Control and Prevention
+//
+// Citation:         Shepard SS, Meno S, Bahl J, Wilson MM, Barnes J, Neuhaus E.
+//                   Viral deep sequencing needs an adaptive approach: IRMA, the
+//                   iterative refinement meta-assembler. BMC Genomics.
+//                   2016;17(1). doi:10.1186/s12864-016-3030-6
+//
+// =============================================================================
+//
+//                            PUBLIC DOMAIN NOTICE
+//
+//  This source code file or script constitutes a work of the United States
+//  Government and is not subject to domestic copyright protection under 17 USC §
+//  105. This file is in the public domain within the United States, and
+//  copyright and related rights in the work worldwide are waived through the CC0
+//  1.0 Universal public domain dedication:
+//  https://creativecommons.org/publicdomain/zero/1.0/
+//
+//  The material embodied in this software is provided to you "as-is" and without
+//  warranty of any kind, express, implied or otherwise, including without
+//  limitation, any warranty of fitness for a particular purpose. In no event
+//  shall the Centers for Disease Control and Prevention (CDC) or the United
+//  States (U.S.) government be liable to you or anyone else for any direct,
+//  special, incidental, indirect or consequential damages of any kind, or any
+//  damages whatsoever, including without limitation, loss of profit, loss of
+//  use, savings or revenue, or the claims of third parties, whether or not CDC
+//  or the U.S. government has been advised of the possibility of such loss,
+//  however caused and on any theory of liability, arising out of or in
+//  connection with the possession, use or performance of this software.
+//
+//  Please provide appropriate attribution in any work or product based on this
+//  material.
 use clap::Args;
 use indoc::writedoc;
 use regex::Regex;
@@ -34,10 +68,18 @@ static MODULE: &str = module_path!();
 
 pub fn merge_sam_pairs_process(args: &MergeSAMArgs) {
     let reference = FastaReader::from_filename(&args.fasta_reference)
-        .unwrap_or_die(&format!("{MODULE}: cannot open reference file"))
+        .unwrap_or_die(&format!(
+            "cannot open reference file '{}'\n  In: {MODULE}",
+            &args.fasta_reference.display()
+        ))
         .filter_map(|f| f.ok())
         .next()
-        .unwrap_or_else(|| panic!("{MODULE}: no valid fasta data"));
+        .unwrap_or_else(|| {
+            panic!(
+                "Error: no valid fasta data in file '{}'\n  In: {MODULE}",
+                &args.fasta_reference.display()
+            )
+        });
 
     const ONE_MB: usize = 2usize.pow(20);
     let merged_sam_file = args.output_prefix.with_extension("sam");
@@ -48,11 +90,15 @@ pub fn merge_sam_pairs_process(args: &MergeSAMArgs) {
             .create(true)
             .truncate(true)
             .open(&merged_sam_file)
-            .unwrap_or_die(&format!("Cannot open output SAM file: {}", merged_sam_file.display())),
+            .unwrap_or_die(&format!(
+                "cannot open output SAM file '{}'\n  In: {MODULE}",
+                merged_sam_file.display()
+            )),
     );
 
     // Make lazy static for a lib function
-    let MOL_NAME_ID = Regex::new(r"(.+?)[_ ]([12]):.+").expect("REGEX molecular ID didn't compile.");
+    let mol_name_id = Regex::new(r"(.+?)[_ ]([12]):.+")
+        .unwrap_or_else(|e| panic!("REGEX molecular ID didn't compile: {e}\n  In: {MODULE}"));
 
     let mut sam_data: Vec<SamData> = Vec::new();
     let mut pairs: HashMap<String, IndexPair> = HashMap::new();
@@ -60,7 +106,10 @@ pub fn merge_sam_pairs_process(args: &MergeSAMArgs) {
 
     // TO-DO: could be more functional
     // TO-DO: push down a reference
-    let sam_records = SAMReader::from_filename(&args.sam_file).unwrap_or_die(&format!("{MODULE}: cannot read SAM file."));
+    let sam_records = SAMReader::from_filename(&args.sam_file).unwrap_or_die(&format!(
+        "cannot read SAM file '{}'\n  In: {MODULE}",
+        &args.sam_file.display()
+    ));
     for sam_row in sam_records {
         let row = match sam_row {
             Ok(SamRow::Data(d)) => {
@@ -72,26 +121,26 @@ pub fn merge_sam_pairs_process(args: &MergeSAMArgs) {
             }
             Ok(SamRow::Header(h)) => {
                 writeln!(sam_writer, "{h}").unwrap_or_die(&format!(
-                    "Failed to write header to merged sam file: {}",
+                    "failed to write header to merged sam file: {}\n  In: {MODULE}",
                     merged_sam_file.display()
                 ));
                 continue;
             }
-            Err(e) => Err(e).unwrap_or_die(&format!("{MODULE}: parsing SAM row failed")),
+            Err(e) => Err(e).unwrap_or_die(&format!("parsing SAM row failed\n  In: {MODULE}")),
         };
 
         // bowtie is order based
-        if let Some(cap) = MOL_NAME_ID.captures_iter(&row.qname).next() {
+        if let Some(cap) = mol_name_id.captures_iter(&row.qname).next() {
             let new_pair = cap[2].into_indexpair(index);
 
             pairs
                 .entry(cap[1].to_string())
-                .and_modify(|mut old_pair| old_pair.merge(&new_pair))
+                .and_modify(|old_pair| old_pair.merge(&new_pair))
                 .or_insert(new_pair);
         } else {
             pairs
                 .entry(row.qname.clone())
-                .and_modify(|mut r1| r1.merge(&IndexPair::new_r2(index)))
+                .and_modify(|r1| r1.merge(&IndexPair::new_r2(index)))
                 .or_insert(IndexPair::new_r1(index));
         }
 
@@ -113,12 +162,16 @@ pub fn merge_sam_pairs_process(args: &MergeSAMArgs) {
                 );
                 paired_merging_stats += stats;
 
-                writeln!(sam_writer, "{s}")
-                    .unwrap_or_die(&format!("Failed to write to paired sam file: {}", merged_sam_file.display()));
+                writeln!(sam_writer, "{s}").unwrap_or_die(&format!(
+                    "failed to write to paired sam file: {}\n  In: {MODULE}",
+                    merged_sam_file.display()
+                ));
             }
             (Some(index), None) | (None, Some(index)) => {
-                writeln!(sam_writer, "{}", sam_data[index])
-                    .unwrap_or_die(&format!("Failed to write to merged sam file: {}", merged_sam_file.display()));
+                writeln!(sam_writer, "{}", sam_data[index]).unwrap_or_die(&format!(
+                    "failed to write to merged sam file: {}\n  In: {MODULE}",
+                    merged_sam_file.display()
+                ));
             }
             _ => continue,
         }
@@ -132,7 +185,10 @@ pub fn merge_sam_pairs_process(args: &MergeSAMArgs) {
                 .create(true)
                 .truncate(true)
                 .open(&paired_stats_file)
-                .unwrap_or_die(&format!("Cannot open stats file: {}", paired_stats_file.display())),
+                .unwrap_or_die(&format!(
+                    "cannot open stats file: {}\n  In: {MODULE}",
+                    paired_stats_file.display()
+                )),
         );
 
         let name = String::from_utf8_lossy(&reference.name);
@@ -154,7 +210,10 @@ pub fn merge_sam_pairs_process(args: &MergeSAMArgs) {
              {name}\tinsObs\t{insert_obs}
              {name}\tinsErr\t{insert_errors}\n",
         )
-        .unwrap_or_die(&format!("Failed to write paired stats file: {}", paired_stats_file.display()));
+        .unwrap_or_die(&format!(
+            "failed to write paired stats file: {}\n  In: {MODULE}",
+            paired_stats_file.display()
+        ));
     }
 }
 
@@ -188,14 +247,6 @@ impl IndexPair {
             r2: Some(index),
         }
     }
-
-    fn is_widowed(&self) -> bool {
-        self.r1.is_some() ^ self.r2.is_some()
-    }
-
-    fn get_either(&self) -> Option<usize> {
-        self.r1.or(self.r2)
-    }
 }
 
 trait IntoIndexPair {
@@ -213,7 +264,7 @@ impl IntoIndexPair for &str {
                 r1: None,
                 r2: Some(index),
             },
-            _ => panic!("{MODULE}: unexpected value for SAM pair"),
+            _ => panic!("unexpected value for SAM pair\n  In: {MODULE}"),
         }
     }
 }
