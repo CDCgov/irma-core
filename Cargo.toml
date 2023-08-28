@@ -14,7 +14,7 @@ regex = { version = "*", default-features = false, features = [
     "perf",
     "unicode-perl",
 ] }
-zoe = { git = "ssh://git@git.biotech.cdc.gov/vfn4/zoe.git", branch = "main" }
+zoe = { git = "https://github.com/CDCgov/zoe.git", tag = "v0.0.1" }
 
 [profile.dev]
 opt-level = 1
