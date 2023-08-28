@@ -9,7 +9,6 @@ irma-build:
   tags:
     - docker
     - scicomp
-  extends: .before_script_template
   script:
     - cargo build --verbose
 
@@ -18,7 +17,6 @@ irma-test:
   tags:
     - docker
     - scicomp
-  extends: .before_script_template
   script:
     - cargo test --verbose
 
@@ -27,6 +25,5 @@ irma-docs:
   tags:
     - docker
     - scicomp
-  extends: .before_script_template
   script:
     - cargo doc --verbose
