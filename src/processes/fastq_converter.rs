@@ -152,6 +152,8 @@ fn compile_byte_regex(b: &[u8]) -> Result<Regex, IOError> {
     }
 }
 
+const BAM_QNAME_LIMIT: usize = 254;
+
 /// # Panics
 ///
 /// Sub-program for processing fastQ data.
@@ -247,6 +249,8 @@ pub fn fastqc_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
     // Maximum dataset median or average read quality score.
     let mut dataset_q_max = None;
 
+    let mut give_warning_for_long_fastq = true;
+
     // Maximum read lengths at different points in the pipeline.
     let (mut dataset_max_read_len, mut dataset_max_clipped_read_len) = (None, None);
 
@@ -256,6 +260,17 @@ pub fn fastqc_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
             mut sequence,
             mut quality,
         } = result?;
+
+        if header.len() > BAM_QNAME_LIMIT {
+            // Cannot panic given use of `floor_char_boundary`
+            header.truncate(header.floor_char_boundary(BAM_QNAME_LIMIT));
+            if give_warning_for_long_fastq {
+                give_warning_for_long_fastq = false;
+                eprintln!(
+                    "{MODULE} WARNING: FASTQ headers truncated, downstream BAM format expects no more than 254 bytes!"
+                )
+            }
+        }
 
         if sequence.len() > dataset_max_read_len.unwrap_or_default() {
             dataset_max_read_len = Some(sequence.len());
