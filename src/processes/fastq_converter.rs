@@ -261,17 +261,6 @@ pub fn fastqc_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
             mut quality,
         } = result?;
 
-        if header.len() > BAM_QNAME_LIMIT {
-            // Cannot panic given use of `floor_char_boundary`
-            header.truncate(header.floor_char_boundary(BAM_QNAME_LIMIT));
-            if give_warning_for_long_fastq {
-                give_warning_for_long_fastq = false;
-                eprintln!(
-                    "{MODULE} WARNING: FASTQ headers truncated, downstream BAM format expects no more than 254 bytes!"
-                )
-            }
-        }
-
         if sequence.len() > dataset_max_read_len.unwrap_or_default() {
             dataset_max_read_len = Some(sequence.len());
         }
@@ -389,6 +378,17 @@ pub fn fastqc_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
         if read_q_center >= f32::from(args.min_read_quality) {
             reads_passing_qc += 1;
             if !args.keep_header {
+                if header.len() > BAM_QNAME_LIMIT {
+                    // Cannot panic given use of `floor_char_boundary`
+                    header.truncate(header.floor_char_boundary(BAM_QNAME_LIMIT));
+                    if give_warning_for_long_fastq {
+                        give_warning_for_long_fastq = false;
+                        eprintln!(
+                            "{MODULE} WARNING: FASTQ headers truncated, downstream BAM format expects no more than 254 bytes!"
+                        )
+                    }
+                }
+
                 header = header.replace(' ', "_");
             }
 
