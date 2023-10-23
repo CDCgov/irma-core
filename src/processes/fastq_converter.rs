@@ -120,6 +120,10 @@ pub struct FastqConverterArgs {
     #[arg(short = 'K', long)]
     /// Do not output data FASTA/FASTQ data (assumes -A).
     skip_remaining: bool,
+
+    /// If FASTQ header is SRA format and missing a read identifier, alter the header to add it.
+    #[arg(short = 'R', long)]
+    read_side: Option<char>,
 }
 
 static MODULE: &str = module_path!();
@@ -260,6 +264,10 @@ pub fn fastqc_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
             mut sequence,
             mut quality,
         } = result?;
+
+        if let Some(rside) = args.read_side {
+            header = fix_sra_format(header, rside);
+        }
 
         if sequence.len() > dataset_max_read_len.unwrap_or_default() {
             dataset_max_read_len = Some(sequence.len());
@@ -488,4 +496,97 @@ pub fn fastqc_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
     }
 
     Ok(())
+}
+
+fn fix_sra_format(header: String, read_side: char) -> String {
+    let delim = if header.contains(' ') { ' ' } else { '_' };
+    let mut pieces = header.split(delim);
+    let maybe_id = pieces.next();
+
+    if let Some(id) = maybe_id
+        && (id.starts_with("@SRR") || id.starts_with("@DRR") || id.starts_with("@ERR"))
+        && id.chars().filter(|&c| c == '.').count() == 1 {
+             let mut updated = String::with_capacity(header.len() + 2);
+             updated.push_str(id);
+             updated.push('.');
+             updated.push(read_side);
+             for p in pieces {
+                updated.push(delim);
+                updated.push_str(p);
+             }
+
+             updated
+    } else {
+        header
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::fastq_converter::fix_sra_format;
+
+    static QNAMES: [&str; 26] = [
+        "@SRR26182418.1 M07901:28:000000000-KP3NB:1:1101:10138:2117 length=147",
+        "@SRR26182418.1 M07901:28:000000000-KP3NB:1:1101:10138:2117 length=301",
+        "@SRR26182418.1.1 M07901:28:000000000-KP3NB:1:1101:10138:2117 length=147",
+        "@SRR26182418.1.2 M07901:28:000000000-KP3NB:1:1101:10138:2117 length=301",
+        "@A00350:691:HCKYLDSX3:2:2119:23863:2456/2",
+        "@A00350:691:HCKYLDSX3:2:2119:23863:2456/1",
+        "@M02989:9:000000000-L4PJL:1:2112:9890:15606 1:N:0:AACGCACGAG+GCCTCGGATA",
+        "@M02989:9:000000000-L4PJL:1:2112:9890:15606 2:N:0:AACGCACGAG+GCCTCGGATA",
+        "@NS500500:69:HKJFLAFX5:1:11204:14878:14643 1:N:0:TTCTCGTGCA+CTCTGTGTAT",
+        "@NS500500:69:HKJFLAFX5:1:11204:14878:14643 2:N:0:TTCTCGTGCA+CTCTGTGTAT",
+        "@A01000:249:HJFFWDRX2:1:2107:24605:18082 1:N:0:TAGGCATG+ATAGCCTT",
+        "@A01000:249:HJFFWDRX2:1:2107:24605:18082 2:N:0:TAGGCATG+ATAGCCTT",
+        "@M02989:9:000000000-L4PJL:1:2114:17393:19614_1:N:0:CTCTGCAGCG+GATGGATGTA",
+        "@M02989:9:000000000-L4PJL:1:2114:17393:19614_2:N:0:CTCTGCAGCG+GATGGATGTA",
+        "@M02989_1:9:000000000-L4PJL:1:2114:17393:19614_1:N:0:CTCTGCAGCG+GATGGATGTA",
+        "@M02989_1:9:000000000-L4PJL:1:2114:17393:19614_2:N:0:CTCTGCAGCG+GATGGATGTA",
+        "@SRR26182418.1_M07901:28:000000000-KP3NB:1:1101:10138:2117_length=147",
+        "@SRR26182418.1_M07901:28:000000000-KP3NB:1:1101:10138:2117_length=301",
+        "@SRR26182418.1.1_M07901:28:000000000-KP3NB:1:1101:10138:2117_length=147",
+        "@SRR26182418.1.2_M07901:28:000000000-KP3NB:1:1101:10138:2117_length=301",
+        "@SRR26182418.1 1:N:18:NULL",
+        "@SRR26182418.1.1 1:N:18:NULL",
+        "@ERR26182418.1 M07901:28:000000000-KP3NB:1:1101:10138:2117 length=147",
+        "@DRR26182418.1 M07901:28:000000000-KP3NB:1:1101:10138:2117 length=301",
+        "@ERR26182418.1.1 M07901:28:000000000-KP3NB:1:1101:10138:2117 length=147",
+        "@DRR26182418.2.2 M07901:28:000000000-KP3NB:1:1101:10138:2117 length=301",
+    ];
+
+    #[test]
+    fn test_fix_sra_names() {
+        let fixed = [
+            "@SRR26182418.1.0 M07901:28:000000000-KP3NB:1:1101:10138:2117 length=147",
+            "@SRR26182418.1.0 M07901:28:000000000-KP3NB:1:1101:10138:2117 length=301",
+            "@SRR26182418.1.1 M07901:28:000000000-KP3NB:1:1101:10138:2117 length=147",
+            "@SRR26182418.1.2 M07901:28:000000000-KP3NB:1:1101:10138:2117 length=301",
+            "@A00350:691:HCKYLDSX3:2:2119:23863:2456/2",
+            "@A00350:691:HCKYLDSX3:2:2119:23863:2456/1",
+            "@M02989:9:000000000-L4PJL:1:2112:9890:15606 1:N:0:AACGCACGAG+GCCTCGGATA",
+            "@M02989:9:000000000-L4PJL:1:2112:9890:15606 2:N:0:AACGCACGAG+GCCTCGGATA",
+            "@NS500500:69:HKJFLAFX5:1:11204:14878:14643 1:N:0:TTCTCGTGCA+CTCTGTGTAT",
+            "@NS500500:69:HKJFLAFX5:1:11204:14878:14643 2:N:0:TTCTCGTGCA+CTCTGTGTAT",
+            "@A01000:249:HJFFWDRX2:1:2107:24605:18082 1:N:0:TAGGCATG+ATAGCCTT",
+            "@A01000:249:HJFFWDRX2:1:2107:24605:18082 2:N:0:TAGGCATG+ATAGCCTT",
+            "@M02989:9:000000000-L4PJL:1:2114:17393:19614_1:N:0:CTCTGCAGCG+GATGGATGTA",
+            "@M02989:9:000000000-L4PJL:1:2114:17393:19614_2:N:0:CTCTGCAGCG+GATGGATGTA",
+            "@M02989_1:9:000000000-L4PJL:1:2114:17393:19614_1:N:0:CTCTGCAGCG+GATGGATGTA",
+            "@M02989_1:9:000000000-L4PJL:1:2114:17393:19614_2:N:0:CTCTGCAGCG+GATGGATGTA",
+            "@SRR26182418.1.0_M07901:28:000000000-KP3NB:1:1101:10138:2117_length=147",
+            "@SRR26182418.1.0_M07901:28:000000000-KP3NB:1:1101:10138:2117_length=301",
+            "@SRR26182418.1.1_M07901:28:000000000-KP3NB:1:1101:10138:2117_length=147",
+            "@SRR26182418.1.2_M07901:28:000000000-KP3NB:1:1101:10138:2117_length=301",
+            "@SRR26182418.1.0 1:N:18:NULL",
+            "@SRR26182418.1.1 1:N:18:NULL",
+            "@ERR26182418.1.0 M07901:28:000000000-KP3NB:1:1101:10138:2117 length=147",
+            "@DRR26182418.1.0 M07901:28:000000000-KP3NB:1:1101:10138:2117 length=301",
+            "@ERR26182418.1.1 M07901:28:000000000-KP3NB:1:1101:10138:2117 length=147",
+            "@DRR26182418.2.2 M07901:28:000000000-KP3NB:1:1101:10138:2117 length=301",
+        ];
+
+        for (i, &o) in QNAMES.iter().enumerate() {
+            assert_eq!(fix_sra_format(o.to_string(), '0'), fixed[i]);
+        }
+    }
 }
