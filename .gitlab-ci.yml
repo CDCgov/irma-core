@@ -25,13 +25,13 @@ irma-test:
   script:
     - cargo test --verbose
 
-irma-docs:
+pages:
   stage: deploy
   image: rustlang/rust:nightly
   tags:
-    - docker
-    - scicomp
+    - pages
   script:
+    - git config --global http.sslCAInfo /etc/gitlab-runner/certs/ca.crt
     - cargo doc --no-deps --document-private-items
     - mv target/doc public/
     - echo "<meta http-equiv=\"refresh\" content=\"0; url=${CI_PROJECT_TITLE}\">" > public/index.html
