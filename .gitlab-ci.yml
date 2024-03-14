@@ -34,7 +34,7 @@ pages:
     - git config --global http.sslCAInfo /etc/gitlab-runner/certs/ca.crt
     - cargo doc --no-deps --document-private-items
     - mv target/doc public/
-    - echo "<meta http-equiv=\"refresh\" content=\"0; url=${CI_PROJECT_TITLE}\">" > public/index.html
+    - echo "<meta http-equiv=\"refresh\" content=\"0; url=irma_core\">" > public/index.html
   artifacts:
     paths:
       - public
