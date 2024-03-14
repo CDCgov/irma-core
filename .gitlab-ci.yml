@@ -29,7 +29,8 @@ irma-docs:
   stage: deploy
   image: rustlang/rust:nightly
   tags:
-    - pages
+    - docker
+    - scicomp
   script:
     - cargo doc --no-deps --document-private-items
     - mv target/doc public/
