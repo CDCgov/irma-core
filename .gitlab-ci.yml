@@ -3,6 +3,11 @@ image: rustlang/rust:nightly
 stages:
   - build
   - test
+  - deploy
+
+cache:
+  paths:
+    - target
 
 irma-build:
   stage: build
@@ -21,9 +26,14 @@ irma-test:
     - cargo test --verbose
 
 irma-docs:
-  stage: test
+  stage: deploy
+  image: rustlang/rust:nightly
   tags:
-    - docker
-    - scicomp
+    - pages
   script:
-    - cargo doc --verbose
+    - cargo doc --no-deps --document-private-items
+    - mv target/doc public/
+    - echo "<meta http-equiv=\"refresh\" content=\"0; url=${CI_PROJECT_TITLE}\">" > public/index.html
+  artifacts:
+    paths:
+      - public
