@@ -105,11 +105,11 @@ pub fn merge_sam_pairs_process(args: &MergeSAMArgs) {
         "cannot read SAM file '{}'\n  In: {MODULE}",
         &args.sam_file.display()
     ));
+
     for sam_row in sam_records {
         let row = match sam_row {
             Ok(SamRow::Data(d)) => {
-                // TO-DO: inconsistent, fix types
-                if d.rname.as_bytes() != reference.name {
+                if d.rname != reference.name {
                     continue;
                 }
                 *d
@@ -186,7 +186,6 @@ pub fn merge_sam_pairs_process(args: &MergeSAMArgs) {
                 )),
         );
 
-        let name = String::from_utf8_lossy(&reference.name);
         let PairedMergeStats {
             observations,
             true_variations,
@@ -204,6 +203,7 @@ pub fn merge_sam_pairs_process(args: &MergeSAMArgs) {
              {name}\tdmv\t{deletion_errors}
              {name}\tinsObs\t{insert_obs}
              {name}\tinsErr\t{insert_errors}\n",
+            name = reference.name
         )
         .unwrap_or_die(&format!(
             "failed to write paired stats file: {}\n  In: {MODULE}",
@@ -311,11 +311,12 @@ fn get_molecular_id_side(s: &str, default_side: char) -> Option<(&str, char)> {
         let mut indices = s.match_indices(':');
         let (left, right) = (indices.nth(5), indices.next());
         if let (Some((start, _)), Some((stop, _))) = (left, right)
-            && let Some(us) = s[start..stop].find('_') {
-                let underscore_index = start + us;
-                (&s[..underscore_index],s[..stop].chars().next_back())
+            && let Some(us) = s[start..stop].find('_')
+        {
+            let underscore_index = start + us;
+            (&s[..underscore_index], s[..stop].chars().next_back())
         } else {
-               return None;
+            return None;
         }
     };
 

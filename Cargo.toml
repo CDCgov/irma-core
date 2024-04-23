@@ -1,6 +1,6 @@
 [package]
 name = "irma-core"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -14,7 +14,7 @@ regex = { version = "*", default-features = false, features = [
     "perf",
     "unicode-perl",
 ] }
-zoe = { git = "https://github.com/CDCgov/zoe.git", tag = "v0.0.1" }
+zoe = { git = "https://github.com/CDCgov/zoe.git", tag = "v0.0.2" }
 
 [profile.dev]
 opt-level = 1

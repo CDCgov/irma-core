@@ -93,8 +93,8 @@ pub struct FastqConverterArgs {
     fuzzy_adapter: bool,
 
     #[arg(short = 'U', long)]
-    /// Covert uracil (U) to thymine (T) in read sequences.
-    uracil_to_thymine: bool,
+    /// Re-encode FASTQ sequence to expected input: A, C, T, G, N
+    canonical_bases: bool,
 
     #[arg(short = 'S', long, value_hint = ValueHint::FilePath)]
     /// Save quality file for back-mapping.
@@ -277,8 +277,8 @@ pub fn fastqc_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
             continue;
         }
 
-        if args.uracil_to_thymine {
-            sequence.find_and_replace(b'U', b'T');
+        if args.canonical_bases {
+            sequence.recode_iupac_to_actgn();
         }
 
         if let Some(ref r) = reverse_regex
@@ -292,7 +292,7 @@ pub fn fastqc_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
                 quality.as_mut_vec().truncate(new_length);
             } else {
                 // Mask data
-                for i in m.start() .. m.end() {
+                for i in m.start()..m.end() {
                     sequence[i] = b'N';
                 }
             }
@@ -307,7 +307,7 @@ pub fn fastqc_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
                 quality = quality.as_mut_vec().drain(new_start..).collect();
             } else {
                 // Mask data
-                for i in m.start() .. m.end() {
+                for i in m.start()..m.end() {
                     sequence[i] = b'N';
                 }
             }
@@ -322,7 +322,7 @@ pub fn fastqc_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
                 quality.as_mut_vec().truncate(new_length);
             } else {
                 // Mask data
-                for i in m.start() .. m.end() {
+                for i in m.start()..m.end() {
                     sequence[i] = b'N';
                 }
             }
@@ -337,7 +337,7 @@ pub fn fastqc_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
                 quality = quality.as_mut_vec().drain(new_start..).collect();
             } else {
                 // Mask data
-                for i in m.start() .. m.end() {
+                for i in m.start()..m.end() {
                     sequence[i] = b'N';
                 }
             }
@@ -505,17 +505,18 @@ fn fix_sra_format(header: String, read_side: char) -> String {
 
     if let Some(id) = maybe_id
         && (id.starts_with("@SRR") || id.starts_with("@DRR") || id.starts_with("@ERR"))
-        && id.chars().filter(|&c| c == '.').count() == 1 {
-             let mut updated = String::with_capacity(header.len() + 2);
-             updated.push_str(id);
-             updated.push('.');
-             updated.push(read_side);
-             for p in pieces {
-                updated.push(delim);
-                updated.push_str(p);
-             }
+        && id.chars().filter(|&c| c == '.').count() == 1
+    {
+        let mut updated = String::with_capacity(header.len() + 2);
+        updated.push_str(id);
+        updated.push('.');
+        updated.push(read_side);
+        for p in pieces {
+            updated.push(delim);
+            updated.push_str(p);
+        }
 
-             updated
+        updated
     } else {
         header
     }
