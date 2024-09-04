@@ -160,7 +160,7 @@ checksum = "f4c7245a08504955605670dbf141fceab975f15ca21570696aebe9d2e71576bd"
 
 [[package]]
 name = "irma-core"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "clap",
  "either",
@@ -394,8 +394,8 @@ dependencies = [
 
 [[package]]
 name = "zoe"
-version = "0.0.2"
-source = "git+https://github.com/CDCgov/zoe.git?tag=v0.0.2#8899ddd4fa3536dae2d3d725b7f1fcb2623002d9"
+version = "0.0.3"
+source = "git+https://github.com/CDCgov/zoe.git?tag=v0.0.3#ef053ac56ac7a25e356c0282c278212dec3630ca"
 dependencies = [
  "ahash",
  "atoi",

@@ -45,14 +45,14 @@
 
 use clap::{Args, ValueHint};
 use either::Either;
-use regex::bytes::Regex;
 use std::borrow::Borrow;
 use std::fs::OpenOptions;
 use std::io::prelude::*;
-use std::io::{stdin, BufReader, BufWriter, Error as IOError, ErrorKind};
+use std::io::{stdin, BufReader, BufWriter};
 use std::path::PathBuf;
 use zoe::data::fastq::{FastQ, FastQReader};
 use zoe::data::types::nucleotides::reverse_complement;
+use zoe::data::ByteSubstring;
 
 #[derive(Args, Debug)]
 pub struct FastqConverterArgs {
@@ -127,35 +127,6 @@ pub struct FastqConverterArgs {
 }
 
 static MODULE: &str = module_path!();
-
-// Create a fuzzy pattern from a simple nucleotide sequence (one mismatch)
-const N_PATTERN: &[u8; 7] = b"[ATCGN]";
-fn create_fuzzy_pattern(pattern: &[u8]) -> Vec<u8> {
-    let mut fuzzy_pattern = Vec::with_capacity(pattern.len() + N_PATTERN.len() + 1);
-    let mut new_combined_pattern = Vec::new();
-
-    for i in 0..pattern.len() {
-        fuzzy_pattern.extend_from_slice(&pattern[0..i]);
-        fuzzy_pattern.extend_from_slice(N_PATTERN);
-        fuzzy_pattern.extend_from_slice(&pattern[(i + 1)..]);
-
-        new_combined_pattern.extend_from_slice(&fuzzy_pattern);
-        new_combined_pattern.extend_from_slice(b"|");
-        fuzzy_pattern.clear();
-    }
-    new_combined_pattern.pop();
-
-    new_combined_pattern
-}
-
-// Helper function to compile regex
-fn compile_byte_regex(b: &[u8]) -> Result<Regex, IOError> {
-    match Regex::new(String::from_utf8_lossy(b).borrow()) {
-        Ok(r) => Ok(r),
-        Err(e) => Err(IOError::new(ErrorKind::InvalidData, e)),
-    }
-}
-
 const BAM_QNAME_LIMIT: usize = 254;
 
 /// # Panics
@@ -224,27 +195,6 @@ pub fn fastqc_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
         (Vec::new(), Vec::new())
     };
 
-    let (forward_fuzzy_regex, reverse_fuzzy_regex) =
-        if args.fuzzy_adapter && (args.mask_adapter.is_some() || args.clip_adapter.is_some()) {
-            let fuzzy_adapter_forward = create_fuzzy_pattern(&forward_adapter);
-            let fuzzy_adapter_reverse = create_fuzzy_pattern(&reverse_adapter);
-            (
-                Some(compile_byte_regex(&fuzzy_adapter_forward)?),
-                Some(compile_byte_regex(&fuzzy_adapter_reverse)?),
-            )
-        } else {
-            (None, None)
-        };
-
-    let (forward_regex, reverse_regex) = if args.mask_adapter.is_some() || args.clip_adapter.is_some() {
-        (
-            Some(compile_byte_regex(&forward_adapter)?),
-            Some(compile_byte_regex(&reverse_adapter)?),
-        )
-    } else {
-        (None, None)
-    };
-
     let mut reads_passing_qc: u32 = 0;
     let mut ordinal_id: u32 = 0;
 
@@ -281,64 +231,38 @@ pub fn fastqc_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
             sequence.recode_iupac_to_actgn();
         }
 
-        if let Some(ref r) = reverse_regex
-            && let Some(c) = r.captures(sequence.as_bytes())
-            && let Some(m) = c.get(0)
-        {
+        if let Some(r) = sequence.find_substring(&reverse_adapter) {
             if args.clip_adapter.is_some() {
                 // Chop 3' end of sequence data
-                let new_length = m.start();
-                sequence.as_mut_vec().truncate(new_length);
-                quality.as_mut_vec().truncate(new_length);
+                sequence.shorten_to(r.start);
+                quality.shorten_to(r.start);
             } else {
-                // Mask data
-                for i in m.start()..m.end() {
-                    sequence[i] = b'N';
-                }
+                sequence.mask_if_exists(r, b'N');
             }
-        } else if let Some(ref r) = forward_regex
-            && let Some(c) = r.captures(sequence.as_bytes())
-            && let Some(m) = c.get(0)
-        {
+        } else if let Some(r) = sequence.find_substring(&forward_adapter) {
             if args.clip_adapter.is_some() {
                 // Remove the 5' and clone back in
-                let new_start = m.end();
-                sequence = sequence.as_mut_vec().drain(new_start..).collect();
-                quality = quality.as_mut_vec().drain(new_start..).collect();
+                sequence.cut_to_start(r.end);
+                quality.cut_to_start(r.end);
             } else {
-                // Mask data
-                for i in m.start()..m.end() {
-                    sequence[i] = b'N';
-                }
+                sequence.mask_if_exists(r, b'N');
             }
-        } else if let Some(ref r) = reverse_fuzzy_regex
-            && let Some(c) = r.captures(sequence.as_bytes())
-            && let Some(m) = c.get(0)
-        {
-            if args.clip_adapter.is_some() {
-                // Chop 3' end of sequence data
-                let new_length = m.start();
-                sequence.as_mut_vec().truncate(new_length);
-                quality.as_mut_vec().truncate(new_length);
-            } else {
-                // Mask data
-                for i in m.start()..m.end() {
-                    sequence[i] = b'N';
+        } else if args.fuzzy_adapter {
+            if let Some(r) = sequence.find_fuzzy_substring::<1>(&reverse_adapter) {
+                if args.clip_adapter.is_some() {
+                    // Chop 3' end of sequence data
+                    sequence.shorten_to(r.start);
+                    quality.shorten_to(r.start);
+                } else {
+                    sequence.mask_if_exists(r, b'N');
                 }
-            }
-        } else if let Some(ref r) = forward_fuzzy_regex
-            && let Some(c) = r.captures(sequence.as_bytes())
-            && let Some(m) = c.get(0)
-        {
-            if args.clip_adapter.is_some() {
-                // Remove the 5' and clone back in
-                let new_start = m.end();
-                sequence = sequence.as_mut_vec().drain(new_start..).collect();
-                quality = quality.as_mut_vec().drain(new_start..).collect();
-            } else {
-                // Mask data
-                for i in m.start()..m.end() {
-                    sequence[i] = b'N';
+            } else if let Some(r) = sequence.find_fuzzy_substring::<1>(&forward_adapter) {
+                if args.clip_adapter.is_some() {
+                    // Remove the 5' and clone back in
+                    sequence.cut_to_start(r.end);
+                    quality.cut_to_start(r.end);
+                } else {
+                    sequence.mask_if_exists(r, b'N');
                 }
             }
         }
