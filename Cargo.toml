@@ -9,11 +9,6 @@ edition = "2021"
 clap = { version = "4", features = ["derive"] }
 either = "1"
 indoc = "*"
-regex = { version = "*", default-features = false, features = [
-    "std",
-    "perf",
-    "unicode-perl",
-] }
 zoe = { git = "https://github.com/CDCgov/zoe.git", tag = "v0.0.8", default-features = false }
 
 
