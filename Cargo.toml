@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 either = "1"
+foldhash = "0.1.3"
 indoc = "*"
 zoe = { git = "https://github.com/CDCgov/zoe.git", tag = "v0.0.8", default-features = false }
 
