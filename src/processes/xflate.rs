@@ -1,6 +1,6 @@
 use clap::Parser;
-use foldhash::{HashMap, HashMapExt};
 use std::{
+    collections::HashMap,
     fs::OpenOptions,
     io::{BufRead, BufReader, BufWriter, Write},
     path::{Path, PathBuf},
