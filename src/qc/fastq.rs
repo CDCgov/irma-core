@@ -54,6 +54,8 @@ impl ReadTransforms for FastQ {
         {
             self.sequence.cut_to_start(n);
             self.sequence.shorten_to(self.sequence.len() - n);
+            self.quality.cut_to_start(n);
+            self.quality.shorten_to(self.quality.len() - n);
         }
         self
     }

@@ -1,7 +1,7 @@
 #![allow(unreachable_patterns)]
 
 use clap::{Parser, Subcommand};
-use irma_core::{fastq_converter::*, merge_sam_pairs::*, qc_trim_deflate::*, xflate::*};
+use irma_core::{fastq_converter::*, merge_sam_pairs::*, qc_trim_deflate::*, trimmer::*, xflate::*};
 use zoe::data::err::OrFail;
 
 #[derive(Parser)]
@@ -25,6 +25,8 @@ enum Commands {
     /// Deflates FastQ files to deduplicated Fasta files, or reinflates
     /// deduplicated Fasta files to FastQ files
     Xflate(XflateArgs),
+    /// Does simple trimming of FastQ data and prints to STDOUT.
+    Trimmer(TrimmerArgs),
 }
 
 fn main() {
@@ -38,6 +40,7 @@ fn main() {
         Commands::FastqConverter(cmd_args) => fastqc_process(cmd_args).unwrap_or_die(&format!("{module}::FastqConverter")),
         Commands::MergeSAM(cmd_args) => merge_sam_pairs_process(cmd_args),
         Commands::Xflate(cmd_args) => xflate_process(cmd_args).unwrap_or_die(&format!("{module}::Xflate")),
+        Commands::Trimmer(cmd_args) => trimmer_process(cmd_args).unwrap_or_die(&format!("{module}::trimmer")),
         _ => {
             eprintln!("IRMA-CORE: unrecognized command {:?}", &args.command);
             std::process::exit(1)
