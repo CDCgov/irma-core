@@ -2,4 +2,6 @@
 
 mod processes;
 
+pub(crate) mod qc;
+
 pub use crate::processes::*;
