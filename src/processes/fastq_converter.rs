@@ -1,5 +1,7 @@
 // Description:      Read FastQ files, applies QC filtering (quality and length),
 //                   adapter trimming, and format conversion as requested.
+//
+// DEPRECATED:       This process is deprecated and will be removed in future versions.
 
 use clap::{Args, ValueHint};
 use either::Either;
@@ -11,7 +13,7 @@ use std::{
 };
 use zoe::{data::types::nucleotides::reverse_complement, prelude::*};
 
-use crate::qc::{fastq::*, fastq_metadata::*};
+use crate::qc::fastq::*;
 
 /* Assumed args */
 
@@ -78,7 +80,7 @@ static MODULE: &str = module_path!();
 ///
 /// Sub-program for processing fastQ data.
 pub fn fastqc_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
-    let mut fastq_file_reader = if let Some(ref file_path) = args.fastq_input_file {
+    let fastq_file_reader = if let Some(ref file_path) = args.fastq_input_file {
         FastQReader::new(BufReader::new(Either::Left(OpenOptions::new().read(true).open(file_path)?)))
     } else {
         FastQReader::new(BufReader::new(Either::Right(stdin())))
@@ -109,12 +111,14 @@ pub fn fastqc_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
         _ => (Vec::new(), Vec::new()),
     };
 
-    let metadata = fastq_file_reader.try_fold(FastQMetadata::new(), |set_metadata, record| {
-        let mut fq = record?;
-        let mut item_metadata = FastQMetadata::new();
+    let (mut passed_qc_count, mut observed_reads) = (0, 0);
 
+    for record in fastq_file_reader {
+        let mut fq = record?;
+
+        observed_reads += 1;
         if fq.sequence.len() < args.min_length {
-            return Ok::<FastQMetadata, std::io::Error>(set_metadata.merge(item_metadata));
+            continue;
         }
 
         fq.to_canonical_bases(args.canonical_bases)
@@ -126,23 +130,18 @@ pub fn fastqc_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
             );
 
         if args.enforce_clipped_length && fq.sequence.len() < args.min_length {
-            return Ok::<FastQMetadata, std::io::Error>(set_metadata.merge(item_metadata));
+            continue;
         }
-
-        item_metadata.dataset_max_clipped_read_len = Some(fq.sequence.len());
-        item_metadata.passed_len_count = 1;
 
         let Some(read_q_center) = fq.get_q_center(args.use_median) else {
-            return Ok::<FastQMetadata, std::io::Error>(set_metadata.merge(item_metadata));
+            continue;
         };
 
-        item_metadata.dataset_q_max = Some(read_q_center);
-
         if read_q_center < f32::from(args.min_read_quality) {
-            return Ok::<FastQMetadata, std::io::Error>(set_metadata.merge(item_metadata));
+            continue;
         }
 
-        item_metadata.passed_qc_count = 1;
+        passed_qc_count += 1;
 
         fq.fix_header(args.read_side).keep_or_underscore_header(args.keep_header);
 
@@ -155,59 +154,17 @@ pub fn fastqc_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
                 len = fq.sequence.len()
             );
         }
-
-        Ok::<FastQMetadata, std::io::Error>(set_metadata.merge(item_metadata))
-    })?;
-
-    let FastQMetadata {
-        passed_qc_count,
-        passed_len_count,
-        dataset_q_max,
-        dataset_max_read_len,
-        dataset_max_clipped_read_len,
-    } = metadata;
+    }
 
     if let Some(ref mut w) = log_file_writer {
         writeln!(
             w,
-            "{log_name_id}\t{passed_len_count}\t{passed_qc_count}\t{}\t{}\t{}",
-            args.min_read_quality, args.min_length, args.use_median
+            "{log_name_id}\t{observed_reads}\t{passed_qc_count}\t{}\t{}\t{}",
+            args.min_read_quality, args.min_length, args.use_median as u8
         )
         .unwrap_or_else(|e| {
             eprintln!("{MODULE} Warning! Cannot write to {log_name_id}. See: {e}");
         });
-    }
-
-    if passed_qc_count == 0 {
-        let center_type = if args.use_median { "median" } else { "average" };
-        let dataset_q_max = if let Some(v) = dataset_q_max {
-            v.to_string()
-        } else {
-            String::from("NONE")
-        };
-        let dataset_max_read_len = if let Some(v) = dataset_max_read_len {
-            v.to_string()
-        } else {
-            String::from("NONE")
-        };
-        let dataset_max_clipped_read_len = if let Some(v) = dataset_max_clipped_read_len {
-            v.to_string()
-        } else {
-            String::from("NONE")
-        };
-
-        eprintln!(
-            "{MODULE} Warning! No reads passed QC.
-
-            Configuration specified minimum {center_type} read quality score: {}
-            Configuration specified minimum read length: {}
-            Configuration minimum clipped read length enforced: {}
-
-            Observed dataset read length max: {dataset_max_read_len}
-            Observed dataset clipped read length max: {dataset_max_clipped_read_len}
-            Observed dataset {center_type} read quality max: {dataset_q_max}\n",
-            args.min_read_quality, args.min_length, args.enforce_clipped_length
-        );
     }
 
     Ok(())
