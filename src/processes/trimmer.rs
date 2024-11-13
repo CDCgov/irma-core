@@ -2,16 +2,13 @@
 
 use clap::Args;
 use either::Either;
+use foldhash::HashSet;
 use std::{
-    collections::HashSet,
     fs::OpenOptions,
-    // hash::Hash,
-    io::{stdin, BufReader},
+    io::{stdin, BufReader, BufWriter, Write},
     path::PathBuf,
 };
 use zoe::{data::types::nucleotides::reverse_complement, prelude::*};
-
-use crate::qc::fastq::*;
 
 /* Assumed args */
 
@@ -51,20 +48,27 @@ pub struct TrimmerArgs {
 ///
 /// Sub-program for trimming fastQ data.
 pub fn trimmer_process(args: &TrimmerArgs) -> Result<(), std::io::Error> {
+    /*const MAP_N_TO_A: [u8; 256] = {
+        let mut out = [b'A'; 256];
+        out[b'C' as usize] = b'C';
+        out[b'G' as usize] = b'G';
+        out[b'T' as usize] = b'T';
+        out
+    };*/
+
     let fastq_file_reader = if let Some(ref file_path) = args.fastq_input_file {
         FastQReader::new(BufReader::new(Either::Left(OpenOptions::new().read(true).open(file_path)?)))
     } else {
         FastQReader::new(BufReader::new(Either::Right(stdin())))
     };
+    let mut stdout_writer = BufWriter::new(std::io::stdout());
 
     let fasta_primer_reader = FastaReader::new(BufReader::new(OpenOptions::new().read(true).open(&args.fasta_primer_file)?));
     let kmer_length = 17;
     let restrict_left = 30;
-    let mut unique_kmers = HashSet::new();
-    let bases = [b'A', b'C', b'G', b'T'];
+    let mut unique_kmers = HashSet::default();
 
     fasta_primer_reader.into_iter().for_each(|f| {
-        //let revc = reverse_complement(f);
         let seq = f.unwrap().sequence;
         if seq.len() > kmer_length {
             for i in 0..=seq.len() - kmer_length {
@@ -73,11 +77,11 @@ pub fn trimmer_process(args: &TrimmerArgs) -> Result<(), std::io::Error> {
                 unique_kmers.insert(reverse_complement(kmer));
 
                 for (pos, &original_base) in kmer.iter().enumerate() {
-                    for &base in &bases {
+                    for &base in b"ACGTN" {
                         if base != original_base {
                             let mut variant = kmer.to_vec();
                             variant[pos] = base;
-                            let revc = reverse_complement(&variant[..]);
+                            let revc = reverse_complement(&variant);
                             unique_kmers.insert(variant);
                             unique_kmers.insert(revc);
                         }
@@ -113,14 +117,16 @@ pub fn trimmer_process(args: &TrimmerArgs) -> Result<(), std::io::Error> {
         let max_index = fq.sequence[0..restrict_left]
             .windows(kmer_length)
             .enumerate()
-            .filter(|(_, k)| unique_kmers.contains(*k))
-            .max_by_key(|&(index, _)| index);
-        if let Some((max_index, _)) = max_index {
-            fq.hard_trim(Some(max_index + kmer_length));
+            .rev()
+            .find(|(_, k)| unique_kmers.contains(*k))
+            .map(|(index, _)| index);
+        if let Some(max_index) = max_index {
+            fq.sequence.cut_to_start(max_index + kmer_length);
+            fq.quality.cut_to_start(max_index + kmer_length);
             chopped += 1;
         }
         i += 1;
-        print!("{fq}");
+        write!(stdout_writer, "{fq}")?;
     }
 
     // Primer trimming to go here
