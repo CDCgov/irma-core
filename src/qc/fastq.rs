@@ -107,7 +107,7 @@ impl ReadTransforms for FastQ {
         if let Some(r) = self
             .sequence
             .find_substring(reverse)
-            .or(self.sequence.find_substring(forward))
+            .or_else(|| self.sequence.find_substring(forward))
         {
             self.sequence.mask_if_exists(r, b'N');
         }
@@ -119,9 +119,9 @@ impl ReadTransforms for FastQ {
         if let Some(r) = self
             .sequence
             .find_substring(reverse)
-            .or(self.sequence.find_substring(forward))
-            .or(self.sequence.find_fuzzy_substring::<1>(reverse))
-            .or(self.sequence.find_fuzzy_substring::<1>(forward))
+            .or_else(|| self.sequence.find_substring(forward))
+            .or_else(|| self.sequence.find_fuzzy_substring::<1>(reverse))
+            .or_else(|| self.sequence.find_fuzzy_substring::<1>(forward))
         {
             self.sequence.mask_if_exists(r, b'N');
         }
