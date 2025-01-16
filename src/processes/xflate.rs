@@ -49,7 +49,7 @@ fn inflate(table_file: &Path, fasta_files: &Vec<PathBuf>) -> Result<(), std::io:
                 && let Ok(cluster_num) = cluster_id.parse::<usize>()
             {
                 if name.ends_with("{c}") {
-                    sequence = sequence.reverse_complement();
+                    sequence.make_reverse_complement();
                 }
                 sequence_by_cluster.insert(cluster_num, sequence);
             } else {
