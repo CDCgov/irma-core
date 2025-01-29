@@ -273,8 +273,8 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
 name = "zoe"
-version = "0.0.11"
-source = "git+https://github.com/CDCgov/zoe.git?rev=c951a4f3ff7ab1291217be5bd0b63df10e3b0c3b#c951a4f3ff7ab1291217be5bd0b63df10e3b0c3b"
+version = "0.0.13"
+source = "git+https://github.com/CDCgov/zoe.git?tag=v0.0.13#bfc833a9f96e4a6c47fd36f167e86917e249fcad"
 dependencies = [
  "itoa",
 ]

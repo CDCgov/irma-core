@@ -124,7 +124,7 @@ fn deflate(table_file: &Path, fastq_files: &Vec<PathBuf>) -> Result<(), std::io:
     Ok(())
 }
 
-pub fn xflate_process(args: &XflateArgs) -> Result<(), std::io::Error> {
+pub fn xflate_process(args: XflateArgs) -> Result<(), std::io::Error> {
     if args.inflate {
         inflate(&args.table_file, &args.seq_files)
     } else {

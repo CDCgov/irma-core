@@ -79,7 +79,7 @@ static MODULE: &str = module_path!();
 /// # Panics
 ///
 /// Sub-program for processing fastQ data.
-pub fn fastqc_process(args: &FastqConverterArgs) -> Result<(), std::io::Error> {
+pub fn fastqc_process(args: FastqConverterArgs) -> Result<(), std::io::Error> {
     let fastq_file_reader = if let Some(ref file_path) = args.fastq_input_file {
         FastQReader::new(BufReader::new(Either::Left(OpenOptions::new().read(true).open(file_path)?)))
     } else {

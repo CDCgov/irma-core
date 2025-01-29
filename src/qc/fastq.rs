@@ -1,10 +1,12 @@
-use std::sync::LazyLock;
-use zoe::{data::fastq::FastQ, prelude::*};
+use foldhash::fast::RandomState;
+use std::{ops::Range, sync::LazyLock};
+use zoe::{data::fastq::FastQ, kmer::ThreeBitKmerSet, prelude::*, search::ToRangeSearch};
 
 static GIVE_WARNING_FOR_LONG_FASTQ: LazyLock<()> =
     LazyLock::new(|| eprintln!("WARNING: FASTQ headers truncated, downstream BAM format expects no more than 254 bytes!"));
 
 const BAM_QNAME_LIMIT: usize = 254;
+const MAX_KMER_LENGTH: usize = 21;
 
 pub(crate) fn fix_sra_format(header: String, read_side: char) -> String {
     let delim = if header.contains(' ') { ' ' } else { '_' };
@@ -30,9 +32,41 @@ pub(crate) fn fix_sra_format(header: String, read_side: char) -> String {
     }
 }
 
+pub trait HDistDispatch: ByteSubstring {
+    fn find_fuzzy_substring_dynamic(&self, needle: impl AsRef<[u8]>, differences_allowed: usize) -> Option<Range<usize>> {
+        match differences_allowed {
+            0 => self.find_substring(needle),
+            1 => self.find_fuzzy_substring::<1>(needle),
+            2 => self.find_fuzzy_substring::<2>(needle),
+            3 => self.find_fuzzy_substring::<3>(needle),
+            _ => unimplemented!(),
+        }
+    }
+}
+impl<T: ByteSubstring> HDistDispatch for T {}
+
 pub(crate) trait ReadTransforms {
-    #[allow(dead_code)]
-    fn hard_trim(&mut self, bases: Option<usize>) -> &mut Self;
+    fn hard_clip(&mut self, left_bases: usize, right_bases: usize) -> &mut Self;
+    fn hard_mask(&mut self, left_bases: usize, right_bases: usize) -> &mut Self;
+
+    #[inline]
+    fn hard_trim(&mut self, left_bases: usize, right_bases: usize, masking: bool) -> &mut Self {
+        if masking {
+            self.hard_mask(left_bases, right_bases)
+        } else {
+            self.hard_clip(left_bases, right_bases)
+        }
+    }
+
+    fn left_primer_trim(
+        &mut self, restrict_left: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, RandomState>, masking: bool,
+    ) -> &mut Self;
+    fn right_primer_trim(
+        &mut self, restrict_right: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, RandomState>, masking: bool,
+    ) -> &mut Self;
+    fn barcode_trim(
+        &mut self, barcode: &[u8], hdist: usize, masking: bool, b_restrict_left: usize, b_restrict_right: usize,
+    ) -> &mut Self;
     fn fix_header(&mut self, read_side: Option<char>) -> &mut Self;
     fn clip_exact(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self;
     fn clip_exact_or_fuzzy(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self;
@@ -48,14 +82,85 @@ pub(crate) trait ReadTransforms {
 
 impl ReadTransforms for FastQ {
     #[inline]
-    fn hard_trim(&mut self, bases: Option<usize>) -> &mut Self {
-        if let Some(n) = bases
-            && self.sequence.len() > 2 * n
+    fn hard_clip(&mut self, left_bases: usize, right_bases: usize) -> &mut Self {
+        if self.sequence.len() > left_bases + right_bases {
+            self.sequence.cut_to_start(left_bases);
+            self.sequence.shorten_to(self.sequence.len() - right_bases);
+            self.quality.cut_to_start(left_bases);
+            self.quality.shorten_to(self.quality.len() - right_bases);
+        }
+        self
+    }
+
+    #[inline]
+    fn hard_mask(&mut self, left_bases: usize, right_bases: usize) -> &mut Self {
+        if self.sequence.len() > left_bases + right_bases {
+            self.sequence.mask_if_exists(..left_bases);
+            self.sequence.mask_if_exists(self.sequence.len() - right_bases..);
+        }
+        self
+    }
+
+    #[inline]
+    fn left_primer_trim(
+        &mut self, restrict_left: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, RandomState>, masking: bool,
+    ) -> &mut Self {
+        if let Some(range) = self.sequence.search_in_first(restrict_left).find_kmers_rev(kmer_set) {
+            if !masking {
+                self.sequence.cut_to_start(range.end);
+                self.quality.cut_to_start(range.end);
+            } else {
+                self.sequence.mask_if_exists(..range.end);
+            }
+        }
+        self
+    }
+
+    #[inline]
+    fn right_primer_trim(
+        &mut self, restrict_right: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, RandomState>, masking: bool,
+    ) -> &mut Self {
+        if let Some(range) = self.sequence.search_in_last(restrict_right).find_kmers(kmer_set) {
+            if !masking {
+                self.sequence.shorten_to(range.start);
+                self.quality.shorten_to(range.start);
+            } else {
+                self.sequence.mask_if_exists(range.start..);
+            }
+        }
+        self
+    }
+
+    #[inline]
+    fn barcode_trim(
+        &mut self, barcode: &[u8], hdist: usize, masking: bool, b_restrict_left: usize, b_restrict_right: usize,
+    ) -> &mut Self {
+        // Left pass
+        if let Some(range) = self
+            .sequence
+            .search_in_first(b_restrict_left)
+            .find_fuzzy_substring_dynamic(barcode, hdist)
         {
-            self.sequence.cut_to_start(n);
-            self.sequence.shorten_to(self.sequence.len() - n);
-            self.quality.cut_to_start(n);
-            self.quality.shorten_to(self.quality.len() - n);
+            if !masking {
+                self.sequence.cut_to_start(range.end); // clip
+                self.quality.cut_to_start(range.end);
+            } else {
+                self.sequence.mask_if_exists(..range.end);
+            }
+        }
+
+        // Right pass
+        if let Some(range) = self
+            .sequence
+            .search_in_last(b_restrict_right)
+            .find_fuzzy_substring_dynamic(barcode, hdist)
+        {
+            if !masking {
+                self.sequence.shorten_to(range.start);
+                self.quality.shorten_to(range.start);
+            } else {
+                self.sequence.mask_if_exists(range.start..);
+            }
         }
         self
     }
@@ -178,11 +283,81 @@ impl ReadTransforms for FastQ {
 
 impl ReadTransforms for FastQViewMut<'_> {
     #[inline]
-    fn hard_trim(&mut self, bases: Option<usize>) -> &mut Self {
-        if let Some(n) = bases
-            && self.sequence.len() > 2 * n
+    fn hard_clip(&mut self, left_bases: usize, right_bases: usize) -> &mut Self {
+        if self.sequence.len() > left_bases + right_bases {
+            self.restrict(left_bases..self.len() - right_bases);
+        }
+        self
+    }
+
+    #[inline]
+    fn hard_mask(&mut self, left_bases: usize, right_bases: usize) -> &mut Self {
+        if self.sequence.len() > left_bases + right_bases {
+            self.mask_if_exists(..left_bases);
+            self.mask_if_exists(self.sequence.len() - right_bases..);
+            self.restrict(left_bases..self.len() - right_bases);
+        }
+        self
+    }
+
+    #[inline]
+    fn left_primer_trim(
+        &mut self, restrict_left: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, RandomState>, masking: bool,
+    ) -> &mut Self {
+        if let Some(range) = self.sequence.search_in_first(restrict_left).find_kmers_rev(kmer_set) {
+            if !masking {
+                self.restrict(range.end..);
+            } else {
+                self.mask_if_exists(..range.end);
+                self.restrict(range.end..);
+            }
+        }
+        self
+    }
+
+    #[inline]
+    fn right_primer_trim(
+        &mut self, restrict_right: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, RandomState>, masking: bool,
+    ) -> &mut Self {
+        if let Some(range) = self.sequence.search_in_last(restrict_right).find_kmers(kmer_set) {
+            if !masking {
+                self.restrict(..range.start);
+            } else {
+                self.mask_if_exists(range.start..);
+                self.restrict(..range.start);
+            }
+        }
+        self
+    }
+
+    #[inline]
+    fn barcode_trim(
+        &mut self, barcode: &[u8], hdist: usize, masking: bool, b_restrict_left: usize, b_restrict_right: usize,
+    ) -> &mut Self {
+        if let Some(range) = self
+            .sequence
+            .search_in_first(b_restrict_left)
+            .find_fuzzy_substring_dynamic(barcode, hdist)
         {
-            self.restrict(n..self.len() - n);
+            if !masking {
+                self.restrict(range.end..); // clip
+            } else {
+                self.sequence.mask_if_exists(..range.end);
+                self.restrict(range.end..);
+            }
+        }
+
+        if let Some(range) = self
+            .sequence
+            .search_in_last(b_restrict_right)
+            .find_fuzzy_substring_dynamic(barcode, hdist)
+        {
+            if !masking {
+                self.restrict(..range.start);
+            } else {
+                self.sequence.mask_if_exists(range.start..);
+                self.restrict(..range.start);
+            }
         }
         self
     }
@@ -230,7 +405,7 @@ impl ReadTransforms for FastQViewMut<'_> {
         if let Some(r) = self
             .sequence
             .find_substring(reverse)
-            .or(self.sequence.find_substring(forward))
+            .or_else(|| self.sequence.find_substring(forward))
         {
             self.sequence.mask_if_exists(r);
         }
@@ -242,9 +417,9 @@ impl ReadTransforms for FastQViewMut<'_> {
         if let Some(r) = self
             .sequence
             .find_substring(reverse)
-            .or(self.sequence.find_substring(forward))
-            .or(self.sequence.find_fuzzy_substring::<1>(reverse))
-            .or(self.sequence.find_fuzzy_substring::<1>(forward))
+            .or_else(|| self.sequence.find_substring(forward))
+            .or_else(|| self.sequence.find_fuzzy_substring::<1>(reverse))
+            .or_else(|| self.sequence.find_fuzzy_substring::<1>(forward))
         {
             self.sequence.mask_if_exists(r);
         }

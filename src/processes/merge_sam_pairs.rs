@@ -31,7 +31,7 @@ pub struct MergeSAMArgs {
 
 static MODULE: &str = module_path!();
 
-pub fn merge_sam_pairs_process(args: &MergeSAMArgs) {
+pub fn merge_sam_pairs_process(args: MergeSAMArgs) {
     let reference = FastaReader::from_filename(&args.fasta_reference)
         .unwrap_or_die(&format!(
             "cannot open reference file '{}'\n  In: {MODULE}",

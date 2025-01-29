@@ -25,7 +25,8 @@ enum Commands {
     /// Deflates FastQ files to deduplicated Fasta files, or reinflates
     /// deduplicated Fasta files to FastQ files
     Xflate(XflateArgs),
-    /// Does simple trimming of FastQ data and prints to STDOUT.
+    /// Trims FASTQ files for genomic analysis with support for barcodes, adapters,
+    /// and primers.
     Trimmer(TrimmerArgs),
 }
 
@@ -33,7 +34,7 @@ fn main() {
     let args = Cli::parse();
     let module = module_path!();
 
-    match &args.command {
+    match args.command {
         Commands::QcTrimDeflate(cmd_args) => {
             qc_trim_deflate_process(cmd_args).unwrap_or_die(&format!("{module}::QcTrimDeflate"))
         }
@@ -42,7 +43,7 @@ fn main() {
         Commands::Xflate(cmd_args) => xflate_process(cmd_args).unwrap_or_die(&format!("{module}::Xflate")),
         Commands::Trimmer(cmd_args) => trimmer_process(cmd_args).unwrap_or_die(&format!("{module}::trimmer")),
         _ => {
-            eprintln!("IRMA-CORE: unrecognized command {:?}", &args.command);
+            eprintln!("IRMA-CORE: unrecognized command {:?}", args.command);
             std::process::exit(1)
         }
     }

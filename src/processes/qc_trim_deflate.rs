@@ -73,7 +73,7 @@ static MODULE: &str = module_path!();
 /// # Panics
 ///
 /// Sub-program for processing fastQ data.
-pub fn qc_trim_deflate_process(args: &QcTrimDeflateArgs) -> Result<(), std::io::Error> {
+pub fn qc_trim_deflate_process(args: QcTrimDeflateArgs) -> Result<(), std::io::Error> {
     let fastq_file_reader1 = FastQReader::new(BufReader::new(OpenOptions::new().read(true).open(&args.fastq_input_file1)?));
 
     let (fastq_file_reader2, r1, r2) = if let Some(file2) = &args.fastq_input_file2 {
