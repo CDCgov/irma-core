@@ -1,6 +1,11 @@
 use foldhash::fast::RandomState;
-use std::{ops::Range, sync::LazyLock};
-use zoe::{data::fastq::FastQ, kmer::ThreeBitKmerSet, prelude::*, search::ToRangeSearch};
+use std::sync::LazyLock;
+use zoe::{
+    data::fastq::FastQ,
+    kmer::ThreeBitKmerSet,
+    prelude::*,
+    search::{RangeSearch, ToRangeSearch},
+};
 
 static GIVE_WARNING_FOR_LONG_FASTQ: LazyLock<()> =
     LazyLock::new(|| eprintln!("WARNING: FASTQ headers truncated, downstream BAM format expects no more than 254 bytes!"));
@@ -32,19 +37,6 @@ pub(crate) fn fix_sra_format(header: String, read_side: char) -> String {
     }
 }
 
-pub trait HDistDispatch: ByteSubstring {
-    fn find_fuzzy_substring_dynamic(&self, needle: impl AsRef<[u8]>, differences_allowed: usize) -> Option<Range<usize>> {
-        match differences_allowed {
-            0 => self.find_substring(needle),
-            1 => self.find_fuzzy_substring::<1>(needle),
-            2 => self.find_fuzzy_substring::<2>(needle),
-            3 => self.find_fuzzy_substring::<3>(needle),
-            _ => unimplemented!(),
-        }
-    }
-}
-impl<T: ByteSubstring> HDistDispatch for T {}
-
 pub(crate) trait ReadTransforms {
     fn hard_clip(&mut self, left_bases: usize, right_bases: usize) -> &mut Self;
     fn hard_mask(&mut self, left_bases: usize, right_bases: usize) -> &mut Self;
@@ -65,7 +57,8 @@ pub(crate) trait ReadTransforms {
         &mut self, restrict_right: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, RandomState>, masking: bool,
     ) -> &mut Self;
     fn barcode_trim(
-        &mut self, barcode: &[u8], hdist: usize, masking: bool, b_restrict_left: usize, b_restrict_right: usize,
+        &mut self, barcode: &[u8], reverse: &[u8], hdist: usize, masking: bool, b_restrict_left: Option<usize>,
+        b_restrict_right: Option<usize>,
     ) -> &mut Self;
     fn fix_header(&mut self, read_side: Option<char>) -> &mut Self;
     fn clip_exact(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self;
@@ -73,9 +66,19 @@ pub(crate) trait ReadTransforms {
     fn mask_exact(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self;
     fn mask_exact_or_fuzzy(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self;
     fn to_canonical_bases(&mut self, recode: bool) -> &mut Self;
+
+    #[inline]
     fn transform_by_reverse_forward_search(
         &mut self, is_fuzzy: bool, is_clipping: bool, reverse: &[u8], forward: &[u8],
-    ) -> &mut Self;
+    ) -> &mut Self {
+        match (is_fuzzy, is_clipping) {
+            (true, true) => self.clip_exact_or_fuzzy(reverse, forward),
+            (true, false) => self.mask_exact_or_fuzzy(reverse, forward),
+            (false, true) => self.clip_exact(reverse, forward),
+            (false, false) => self.mask_exact(reverse, forward),
+        }
+    }
+
     fn get_q_center(&self, use_median: bool) -> Option<f32>;
     fn keep_or_underscore_header(&mut self, keep_header: bool) -> &mut Self;
 }
@@ -133,33 +136,50 @@ impl ReadTransforms for FastQ {
 
     #[inline]
     fn barcode_trim(
-        &mut self, barcode: &[u8], hdist: usize, masking: bool, b_restrict_left: usize, b_restrict_right: usize,
+        &mut self, barcode: &[u8], reverse: &[u8], hdist: usize, masking: bool, b_restrict_left: Option<usize>,
+        b_restrict_right: Option<usize>,
     ) -> &mut Self {
-        // Left pass
-        if let Some(range) = self
-            .sequence
-            .search_in_first(b_restrict_left)
-            .find_fuzzy_substring_dynamic(barcode, hdist)
-        {
-            if !masking {
-                self.sequence.cut_to_start(range.end); // clip
-                self.quality.cut_to_start(range.end);
+        let restricted_substring_fn = match hdist {
+            0 => |needle: &[u8], seq: &RangeSearch<'_>| seq.find_substring(needle),
+            1 => |needle: &[u8], seq: &RangeSearch<'_>| seq.find_fuzzy_substring::<1>(needle),
+            2 => |needle: &[u8], seq: &RangeSearch<'_>| seq.find_fuzzy_substring::<2>(needle),
+            3 => |needle: &[u8], seq: &RangeSearch<'_>| seq.find_fuzzy_substring::<3>(needle),
+            _ => unreachable!(),
+        };
+
+        let substring_fn = match hdist {
+            0 => |needle: &[u8], seq: &Nucleotides| seq.find_substring(needle),
+            1 => |needle: &[u8], seq: &Nucleotides| seq.find_fuzzy_substring::<1>(needle),
+            2 => |needle: &[u8], seq: &Nucleotides| seq.find_fuzzy_substring::<2>(needle),
+            3 => |needle: &[u8], seq: &Nucleotides| seq.find_fuzzy_substring::<3>(needle),
+            _ => unreachable!(),
+        };
+
+        let left_barcode_pos = match b_restrict_left {
+            Some(b_restrict_left) => restricted_substring_fn(barcode, &self.sequence.search_in_first(b_restrict_left)),
+            None => substring_fn(barcode, &self.sequence),
+        };
+
+        if let Some(left_range) = left_barcode_pos {
+            if masking {
+                self.sequence.mask_if_exists(..left_range.end);
             } else {
-                self.sequence.mask_if_exists(..range.end);
+                self.sequence.cut_to_start(left_range.end);
+                self.quality.cut_to_start(left_range.end);
             }
         }
 
-        // Right pass
-        if let Some(range) = self
-            .sequence
-            .search_in_last(b_restrict_right)
-            .find_fuzzy_substring_dynamic(barcode, hdist)
-        {
-            if !masking {
-                self.sequence.shorten_to(range.start);
-                self.quality.shorten_to(range.start);
+        let right_barcode_pos = match b_restrict_right {
+            Some(b_restrict_right) => restricted_substring_fn(reverse, &self.sequence.search_in_last(b_restrict_right)),
+            None => substring_fn(reverse, &self.sequence),
+        };
+
+        if let Some(right_range) = right_barcode_pos {
+            if masking {
+                self.sequence.mask_if_exists(right_range.start..);
             } else {
-                self.sequence.mask_if_exists(range.start..);
+                self.sequence.shorten_to(right_range.start);
+                self.quality.shorten_to(right_range.start);
             }
         }
         self
@@ -244,18 +264,6 @@ impl ReadTransforms for FastQ {
     }
 
     #[inline]
-    fn transform_by_reverse_forward_search(
-        &mut self, is_fuzzy: bool, is_clipping: bool, reverse: &[u8], forward: &[u8],
-    ) -> &mut Self {
-        match (is_fuzzy, is_clipping) {
-            (true, true) => self.clip_exact_or_fuzzy(reverse, forward),
-            (true, false) => self.mask_exact_or_fuzzy(reverse, forward),
-            (false, true) => self.clip_exact(reverse, forward),
-            (false, false) => self.mask_exact(reverse, forward),
-        }
-    }
-
-    #[inline]
     fn get_q_center(&self, use_median: bool) -> Option<f32> {
         if use_median {
             self.quality.median()
@@ -332,32 +340,47 @@ impl ReadTransforms for FastQViewMut<'_> {
 
     #[inline]
     fn barcode_trim(
-        &mut self, barcode: &[u8], hdist: usize, masking: bool, b_restrict_left: usize, b_restrict_right: usize,
+        &mut self, barcode: &[u8], reverse: &[u8], hdist: usize, masking: bool, b_restrict_left: Option<usize>,
+        b_restrict_right: Option<usize>,
     ) -> &mut Self {
-        if let Some(range) = self
-            .sequence
-            .search_in_first(b_restrict_left)
-            .find_fuzzy_substring_dynamic(barcode, hdist)
-        {
-            if !masking {
-                self.restrict(range.end..); // clip
-            } else {
-                self.sequence.mask_if_exists(..range.end);
-                self.restrict(range.end..);
+        let substring_fn = match hdist {
+            0 => |needle: &[u8], seq: &NucleotidesViewMut<'_>| seq.find_substring(needle),
+            1 => |needle: &[u8], seq: &NucleotidesViewMut<'_>| seq.find_fuzzy_substring::<1>(needle),
+            2 => |needle: &[u8], seq: &NucleotidesViewMut<'_>| seq.find_fuzzy_substring::<2>(needle),
+            3 => |needle: &[u8], seq: &NucleotidesViewMut<'_>| seq.find_fuzzy_substring::<3>(needle),
+            _ => unreachable!(),
+        };
+
+        let restricted_substring_fn = match hdist {
+            0 => |needle: &[u8], seq: &RangeSearch<'_>| seq.find_substring(needle),
+            1 => |needle: &[u8], seq: &RangeSearch<'_>| seq.find_fuzzy_substring::<1>(needle),
+            2 => |needle: &[u8], seq: &RangeSearch<'_>| seq.find_fuzzy_substring::<2>(needle),
+            3 => |needle: &[u8], seq: &RangeSearch<'_>| seq.find_fuzzy_substring::<3>(needle),
+            _ => unreachable!(),
+        };
+
+        let left_barcode_pos = match b_restrict_left {
+            Some(b_restrict_left) => restricted_substring_fn(barcode, &self.sequence.search_in_first(b_restrict_left)),
+            None => substring_fn(barcode, &self.sequence),
+        };
+
+        if let Some(left_range) = left_barcode_pos {
+            if masking {
+                self.sequence.mask_if_exists(..left_range.end);
             }
+            self.restrict(left_range.end..);
         }
 
-        if let Some(range) = self
-            .sequence
-            .search_in_last(b_restrict_right)
-            .find_fuzzy_substring_dynamic(barcode, hdist)
-        {
-            if !masking {
-                self.restrict(..range.start);
-            } else {
-                self.sequence.mask_if_exists(range.start..);
-                self.restrict(..range.start);
+        let right_barcode_pos = match b_restrict_right {
+            Some(b_restrict_right) => restricted_substring_fn(reverse, &self.sequence.search_in_last(b_restrict_right)),
+            None => substring_fn(reverse, &self.sequence),
+        };
+
+        if let Some(right_range) = right_barcode_pos {
+            if masking {
+                self.sequence.mask_if_exists(right_range.start..);
             }
+            self.restrict(..right_range.start);
         }
         self
     }
@@ -429,21 +452,9 @@ impl ReadTransforms for FastQViewMut<'_> {
     #[inline]
     fn to_canonical_bases(&mut self, recode: bool) -> &mut Self {
         if recode {
-            self.sequence.recode_iupac_to_actgn();
+            self.sequence.recode_iupac_to_actgn_uc();
         }
         self
-    }
-
-    #[inline]
-    fn transform_by_reverse_forward_search(
-        &mut self, is_fuzzy: bool, is_clipping: bool, reverse: &[u8], forward: &[u8],
-    ) -> &mut Self {
-        match (is_fuzzy, is_clipping) {
-            (true, true) => self.clip_exact_or_fuzzy(reverse, forward),
-            (true, false) => self.mask_exact_or_fuzzy(reverse, forward),
-            (false, true) => self.clip_exact(reverse, forward),
-            (false, false) => self.mask_exact(reverse, forward),
-        }
     }
 
     #[inline]
