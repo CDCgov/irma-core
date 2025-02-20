@@ -8,7 +8,7 @@ use either::Either;
 use std::{
     borrow::Borrow,
     fs::OpenOptions,
-    io::{prelude::*, stdin, BufReader, BufWriter},
+    io::{BufReader, BufWriter, prelude::*, stdin},
     path::PathBuf,
 };
 use zoe::{data::types::nucleotides::reverse_complement, prelude::*};
@@ -103,7 +103,7 @@ pub fn fastqc_process(args: FastqConverterArgs) -> Result<(), std::io::Error> {
     };
 
     let (forward_adapter, reverse_adapter) = match (&args.mask_adapter, &args.clip_adapter) {
-        (Some(ref a), _) | (_, Some(ref a)) => {
+        (Some(a), _) | (_, Some(a)) => {
             let forward = a.as_bytes().to_ascii_uppercase();
             let reverse = reverse_complement(&forward);
             (forward, reverse)

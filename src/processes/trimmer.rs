@@ -1,89 +1,101 @@
 // Description:      Read FastQ files and trim with various options.
-use clap::{builder::PossibleValue, Args, ValueEnum};
+use crate::qc::fastq::ReadTransforms;
+use clap::{Args, ValueEnum, builder::PossibleValue};
 use either::Either;
 use foldhash::fast::RandomState;
 use std::{
     fs::{File, OpenOptions},
-    io::{stdout, BufReader, BufWriter, Stdout, Write},
+    io::{BufReader, BufWriter, Stdout, Write, stdout},
     num::NonZeroUsize,
     path::PathBuf,
 };
-use zoe::{data::types::nucleotides::reverse_complement, kmer::ThreeBitKmerSet, prelude::*};
-
-use crate::qc::fastq::ReadTransforms;
+use zoe::{data::nucleotides::CheckNucleotides, kmer::ThreeBitKmerSet, prelude::*};
 
 const MAX_KMER_LENGTH: usize = 21;
 
 #[derive(Args, Debug)]
 pub struct TrimmerArgs {
-    /// Path to .fastq file to be trimmed
+    /// Path to FASTQ file to be trimmed
     pub fastq_input_file1: PathBuf,
 
-    /// Path to optional second .fastq file to be trimmed
+    /// Path to optional second FASTQ file to be trimmed
     pub fastq_input_file2: Option<PathBuf>,
 
     #[arg(short = 'o', long)]
-    /// Output path for trimmed files. Trimmed sequences print to stdout if not provided
+    /// Output path for trimmed files. Trimmed sequences print to stdout if not
+    /// provided
     pub fastq_output_file: Option<PathBuf>,
 
     #[arg(short = 's', long)]
-    /// Preserve original formatting: disables encoding sequences into uppercase canonical bases (A, C, T, G, N)
+    /// Preserve original formatting: disables encoding sequences into uppercase
+    /// canonical bases (A, C, T, G, N)
     pub preserve_fastq: bool,
 
     #[arg(short = 'm', long)]
-    /// Perform masking with 'N' instead of clipping. Default behavior is clipping if not provided
+    /// Perform masking with 'N' instead of clipping. Default behavior is
+    /// clipping if not provided
     pub mask: bool,
 
     #[arg(short = 'n', long, default_value = "1")]
-    /// Minimum sequence length required after trimming. Shorter sequences are filtered from output.
+    /// Minimum sequence length required after trimming. Shorter sequences are
+    /// filtered from output.
     pub min_length: NonZeroUsize,
 
-    #[arg(short = 'B', long, value_parser = validate_non_empty, group = "adapter_vs_barcode")]
-    /// Trim barcodes and their reverse complements from sequence using string matching. Requires literal barcode as argument
-    pub barcode_trim: Option<String>,
+    #[arg(short = 'B', long, value_parser = validate_acgtn, group = "adapter_vs_barcode")]
+    /// Trim barcodes and their reverse complements from sequence using string
+    /// matching. Requires literal barcode as argument
+    pub barcode_trim: Option<Nucleotides>,
 
     #[arg(long, value_enum, default_value = "b", requires = "barcode_trim")]
-    /// Specifies the end of the sequence for barcode trimming : 'l' (left), 'r' (right), or 'b' (both)
+    /// Specifies the end of the sequence for barcode trimming : 'l' (left), 'r'
+    /// (right), or 'b' (both)
     pub b_end: TrimEnd,
 
     #[arg(long, requires = "barcode_trim")]
-    /// Restriction window size for barcode trimming on both ends of the sequence. If no restriction is provided, full scan is performed.
+    /// Restriction window size for barcode trimming on both ends of the
+    /// sequence. If no restriction is provided, full scan is performed
     pub b_restrict: Option<usize>,
 
     #[arg(long, requires = "barcode_trim")]
-    /// Restriction window for trimming barcodes on the left end of the sequence. Overrides --b-restrict
+    /// Restriction window for trimming barcodes on the left end of the
+    /// sequence. Overrides --b-restrict
     pub b_restrict_left: Option<usize>,
 
     #[arg(long, requires = "barcode_trim")]
-    /// Restriction window for trimming barcodes on the right end of the sequence. Overrides --b_restrict
+    /// Restriction window for trimming barcodes on the right end of the
+    /// sequence. Overrides --b_restrict
     pub b_restrict_right: Option<usize>,
 
-    #[arg(long, value_parser = validate_barcode_hdist, default_value = "0", requires = "barcode_trim")]
-    /// Accepted Hamming distance for fuzzy barcode matching and trimming, between 0 and 3
+    #[arg(long, value_parser = validate_b_hdist, default_value = "0", requires = "barcode_trim")]
+    /// Accepted Hamming distance for fuzzy barcode matching and trimming,
+    /// between 0 and 3
     pub b_hdist: usize,
 
-    #[arg(short = 'A', long, value_parser = validate_non_empty, group = "adapter_vs_barcode")]
-    /// Trim adapters and their reverse complements from sequence. Requires literal adapter as argument
-    pub adapter_trim: Option<String>,
+    #[arg(short = 'A', long, value_parser = validate_acgtn, group = "adapter_vs_barcode")]
+    /// Trim adapters and their reverse complements from sequence. Requires
+    /// literal adapter as argument
+    pub adapter_trim: Option<Nucleotides>,
 
     #[arg(long, requires = "adapter_trim")]
     /// Allow up to one mismatch during adapter matching and trimming
-    pub a_fuzzy_adapter: bool,
+    pub a_fuzzy: bool,
 
-    #[arg(short = 'P', long)]
-    /// Trim primers from sequence using kmer matching. Requires path to primer fasta file
+    #[arg(short = 'P', long, requires = "p_kmer_length")]
+    /// Trim primers from sequence using k-mer matching. Requires path to primer
+    /// fasta file and a kmer length
     pub primer_trim: Option<PathBuf>,
 
     #[arg(long, requires = "primer_trim")]
-    /// Enables fuzzy matching (one mismatch) for kmer searching of primers
-    pub p_fuzzy_kmer: bool,
+    /// Enables fuzzy matching (one mismatch) for k-mer searching of primers
+    pub p_fuzzy: bool,
 
-    #[arg(long, value_parser = validate_kmer_length, default_value = "17", requires = "primer_trim")]
+    #[arg(long, value_parser = validate_kmer_length, requires = "primer_trim")]
     /// Length of k-mer used for matching primers.
-    pub p_kmer_length: usize,
+    pub p_kmer_length: Option<usize>,
 
     #[arg(long, default_value = "b", requires = "primer_trim")]
-    /// Specifies the end of the sequence for primer trimming : 'l' (left), 'r' (right), or 'b' (both)
+    /// Specifies the end of the sequence for primer trimming : 'l' (left), 'r'
+    /// (right), or 'b' (both)
     pub p_end: TrimEnd,
 
     #[arg(long, default_value = "30", requires = "primer_trim")]
@@ -91,11 +103,13 @@ pub struct TrimmerArgs {
     pub p_restrict: usize,
 
     #[arg(long, requires = "primer_trim")]
-    /// Restriction window for trimming primer on the left end of the sequence. Overrides --p_restrict
+    /// Restriction window for trimming primer on the left end of the sequence
+    /// Overrides --p_restrict
     pub p_restrict_left: Option<usize>,
 
     #[arg(long, requires = "primer_trim")]
-    /// Restriction window for trimming barcodes on the right end of the sequence. Overrides --p_restrict
+    /// Restriction window for trimming barcodes on the right end of the
+    /// sequence. Overrides --p_restrict
     pub p_restrict_right: Option<usize>,
 
     #[arg(short = 'H', long)]
@@ -103,19 +117,21 @@ pub struct TrimmerArgs {
     pub hard_trim: Option<usize>,
 
     #[arg(long)]
-    /// Hard trim range for only the left end of the sequence. Overrides hard-trim
+    /// Hard trim range for only the left end of the sequence. Overrides
+    /// hard-trim
     pub h_left: Option<usize>,
 
     #[arg(long)]
-    /// Hard trim range for only the right end of the sequence. Overrides hard-trim
+    /// Hard trim range for only the right end of the sequence. Overrides
+    /// hard-trim
     pub h_right: Option<usize>,
 }
 
-/// Sub-program for trimming fastQ data.
+/// Sub-program for trimming FASTQ data.
 pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
     let mut args = parse_trim_args(args)?;
-    let writer = &mut args.output_writer;
 
+    let writer = &mut args.output_writer;
     let mut chained_reader = args.fastq_reader1.chain(args.fastq_reader2.into_iter().flatten());
 
     chained_reader.by_ref().try_for_each(|record| -> Result<(), std::io::Error> {
@@ -124,17 +140,23 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
         fq_view.to_canonical_bases(!args.preserve_seq);
 
         if let Some((ref forward_adapter, ref reverse_adapter)) = args.adapters {
-            fq_view.transform_by_reverse_forward_search(args.a_fuzzy_adapter, !args.mask, reverse_adapter, forward_adapter);
+            fq_view.transform_by_reverse_forward_search(
+                args.a_fuzzy,
+                !args.mask,
+                reverse_adapter.as_bytes(),
+                forward_adapter.as_bytes(),
+            );
         } else if let Some((barcode, reverse)) = &args.barcodes {
             fq_view.barcode_trim(
-                barcode,
-                reverse,
+                barcode.as_bytes(),
+                reverse.as_bytes(),
                 args.b_hdist,
                 args.mask,
                 args.b_restrict_left,
                 args.b_restrict_right,
             );
         }
+
         if let Some(ref kmers) = args.primer_kmers {
             if args.p_restrict_left > 0 {
                 fq_view.left_primer_trim(args.p_restrict_left, kmers, args.mask);
@@ -143,14 +165,17 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
                 fq_view.right_primer_trim(args.p_restrict_right, kmers, args.mask);
             }
         }
+
         if args.hard_left > 0 || args.hard_right > 0 {
             fq_view.hard_trim(args.hard_left, args.hard_right, args.mask);
         }
+
         if args.mask {
             write!(writer, "{fq}")?;
         } else if fq_view.len() >= args.min_length {
             write!(writer, "{fq_view}")?;
         }
+
         Ok(())
     })?;
     writer.flush()?;
@@ -158,7 +183,7 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
     Ok(())
 }
 
-// Enum for trimming end options
+/// Enum for trimming end options
 #[derive(Debug, Clone, Copy)]
 pub enum TrimEnd {
     L, // Left
@@ -168,10 +193,12 @@ pub enum TrimEnd {
 
 // Allows case insensitivity for trim ends
 impl ValueEnum for TrimEnd {
+    #[inline]
     fn value_variants<'a>() -> &'a [Self] {
         &[Self::L, Self::R, Self::B]
     }
 
+    #[inline]
     fn to_possible_value(&self) -> Option<PossibleValue> {
         match self {
             TrimEnd::L => Some(PossibleValue::new("l").alias("L")),
@@ -181,7 +208,7 @@ impl ValueEnum for TrimEnd {
     }
 }
 
-// Custom validator for `kmer_length`.
+/// Custom validator for `kmer_length`
 fn validate_kmer_length(value: &str) -> Result<usize, String> {
     let parsed = value
         .parse::<usize>()
@@ -190,32 +217,36 @@ fn validate_kmer_length(value: &str) -> Result<usize, String> {
         Ok(parsed)
     } else {
         Err(format!(
-            "`kmer-length` must be between 2 and {MAX_KMER_LENGTH}, but {parsed} was provided."
+            "p-kmer-length must be between 2 and {MAX_KMER_LENGTH}, but {parsed} was provided."
         ))
     }
 }
 
-// validates barcode hamming distance to be between 0 and 3
-fn validate_barcode_hdist(value: &str) -> Result<usize, String> {
+/// Validates barcode hamming distance to be between 0 and 3
+fn validate_b_hdist(value: &str) -> Result<usize, String> {
     let parsed = value
         .parse::<usize>()
         .map_err(|_| format!("`{}` is not a valid integer between 0 and 3.", value))?;
     if (0..=3).contains(&parsed) {
         Ok(parsed)
     } else {
-        Err(format!(
-            "`hamming-distance` must be between 0 and 3, but `{}` was provided.",
-            parsed
-        ))
+        Err(format!("b-hdist must be between 0 and 3, but `{}` was provided.", parsed))
     }
 }
 
-// ensures non-empty string passed to adapter and barcode (e.g. `-B ""...`)
-fn validate_non_empty(value: &str) -> Result<String, String> {
+/// Ensures user has entered valid non-empty adapter or barcode literal for
+/// trimming
+fn validate_acgtn(value: &str) -> Result<Nucleotides, String> {
     if value.trim().is_empty() {
+        // prevents panicking when `-A ""` is passed
         Err("Adapter (-A) or barcode (-B) cannot be empty!".to_string())
     } else {
-        Ok(value.to_string())
+        let forward = Nucleotides::from(value.as_bytes());
+        if forward.is_acgtn() {
+            Ok(forward)
+        } else {
+            Err("Adapter or barcode literal must only consist of canonical (ACGTN) bases".to_string())
+        }
     }
 }
 
@@ -226,12 +257,12 @@ pub struct ParsedTrimmerArgs {
     pub preserve_seq:     bool,
     pub mask:             bool,
     pub min_length:       usize,
-    pub barcodes:         Option<(Vec<u8>, Vec<u8>)>,
+    pub barcodes:         Option<(Nucleotides, Nucleotides)>,
     pub b_restrict_left:  Option<usize>,
     pub b_restrict_right: Option<usize>,
     pub b_hdist:          usize,
-    pub adapters:         Option<(Vec<u8>, Vec<u8>)>,
-    pub a_fuzzy_adapter:  bool,
+    pub adapters:         Option<(Nucleotides, Nucleotides)>,
+    pub a_fuzzy:          bool,
     pub primer_kmers:     Option<ThreeBitKmerSet<MAX_KMER_LENGTH, RandomState>>,
     pub p_restrict_left:  usize,
     pub p_restrict_right: usize,
@@ -255,14 +286,20 @@ pub fn parse_trim_args(args: TrimmerArgs) -> Result<ParsedTrimmerArgs, std::io::
 
     let adapters = args
         .adapter_trim
-        .map(|adapter| get_forward_reverse_sequence(&adapter, args.preserve_fastq));
+        .map(|adapter| get_forward_reverse_sequence(adapter, args.preserve_fastq));
 
     let barcodes = args
         .barcode_trim
-        .map(|barcode| get_forward_reverse_sequence(&barcode, args.preserve_fastq));
+        .map(|barcode| get_forward_reverse_sequence(barcode, args.preserve_fastq));
 
     let primer_kmers = if let Some(primer_path) = &args.primer_trim {
-        Some(prepare_primer_kmers(primer_path, args.p_kmer_length, args.p_fuzzy_kmer)?)
+        Some(prepare_primer_kmers(
+            primer_path,
+            args.p_kmer_length
+                // this is unreachable through clap due to being required
+                .expect("A kmer length must be provided for primer trimming"),
+            args.p_fuzzy,
+        )?)
     } else {
         None
     };
@@ -321,7 +358,7 @@ pub fn parse_trim_args(args: TrimmerArgs) -> Result<ParsedTrimmerArgs, std::io::
         b_restrict_right,
         b_hdist: args.b_hdist,
         adapters,
-        a_fuzzy_adapter: args.a_fuzzy_adapter,
+        a_fuzzy: args.a_fuzzy,
         primer_kmers,
         p_restrict_left,
         p_restrict_right,
@@ -331,14 +368,14 @@ pub fn parse_trim_args(args: TrimmerArgs) -> Result<ParsedTrimmerArgs, std::io::
     Ok(parsed_args)
 }
 
-fn get_forward_reverse_sequence(adapter: &str, preserve_seq: bool) -> (Vec<u8>, Vec<u8>) {
-    let mut forward = adapter.as_bytes().to_vec();
-    // if the user doesn't specify to preserve the original fastq, we encode to uppercase canonical bases
+/// For converting adapters and barcodes to uppercase (unless disabled) and
+/// getting reverse complements
+fn get_forward_reverse_sequence(mut adapter: Nucleotides, preserve_seq: bool) -> (Nucleotides, Nucleotides) {
     if !preserve_seq {
-        forward.make_ascii_uppercase();
+        adapter.as_mut_bytes().make_ascii_uppercase();
     }
-    let reverse = reverse_complement(&forward);
-    (forward, reverse)
+    let reverse = adapter.to_reverse_complement();
+    (adapter, reverse)
 }
 
 /// # Panics

@@ -91,6 +91,9 @@ impl ReadTransforms for FastQ {
             self.sequence.shorten_to(self.sequence.len() - right_bases);
             self.quality.cut_to_start(left_bases);
             self.quality.shorten_to(self.quality.len() - right_bases);
+        } else {
+            self.sequence.shorten_to(0);
+            self.quality.shorten_to(0);
         }
         self
     }
@@ -100,6 +103,8 @@ impl ReadTransforms for FastQ {
         if self.sequence.len() > left_bases + right_bases {
             self.sequence.mask_if_exists(..left_bases);
             self.sequence.mask_if_exists(self.sequence.len() - right_bases..);
+        } else {
+            self.sequence.mask_if_exists(..);
         }
         self
     }
@@ -108,12 +113,22 @@ impl ReadTransforms for FastQ {
     fn left_primer_trim(
         &mut self, restrict_left: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, RandomState>, masking: bool,
     ) -> &mut Self {
-        if let Some(range) = self.sequence.search_in_first(restrict_left).find_kmers_rev(kmer_set) {
-            if !masking {
+        if !masking {
+            if let Some(range) = self.sequence.search_in_first(restrict_left).find_kmers_rev(kmer_set) {
                 self.sequence.cut_to_start(range.end);
                 self.quality.cut_to_start(range.end);
-            } else {
-                self.sequence.mask_if_exists(..range.end);
+            }
+        } else {
+            let mut ranges = self.sequence.search_in_first(restrict_left).find_all_kmers_rev(kmer_set);
+            if let Some(mut masking_range) = ranges.next() {
+                for other_range in ranges {
+                    if other_range.start <= masking_range.end {
+                        masking_range.end = other_range.end;
+                    } else {
+                        break;
+                    }
+                }
+                self.mask_if_exists(masking_range);
             }
         }
         self
@@ -123,12 +138,22 @@ impl ReadTransforms for FastQ {
     fn right_primer_trim(
         &mut self, restrict_right: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, RandomState>, masking: bool,
     ) -> &mut Self {
-        if let Some(range) = self.sequence.search_in_last(restrict_right).find_kmers(kmer_set) {
-            if !masking {
+        if !masking {
+            if let Some(range) = self.sequence.search_in_last(restrict_right).find_kmers(kmer_set) {
                 self.sequence.shorten_to(range.start);
                 self.quality.shorten_to(range.start);
-            } else {
-                self.sequence.mask_if_exists(range.start..);
+            }
+        } else {
+            let mut ranges = self.sequence.search_in_last(restrict_right).find_all_kmers(kmer_set);
+            if let Some(mut masking_range) = ranges.next() {
+                for other_range in ranges {
+                    if other_range.start <= masking_range.end {
+                        masking_range.end = other_range.end;
+                    } else {
+                        break;
+                    }
+                }
+                self.mask_if_exists(masking_range);
             }
         }
         self
@@ -162,7 +187,7 @@ impl ReadTransforms for FastQ {
 
         if let Some(left_range) = left_barcode_pos {
             if masking {
-                self.sequence.mask_if_exists(..left_range.end);
+                self.sequence.mask_if_exists(left_range);
             } else {
                 self.sequence.cut_to_start(left_range.end);
                 self.quality.cut_to_start(left_range.end);
@@ -176,7 +201,7 @@ impl ReadTransforms for FastQ {
 
         if let Some(right_range) = right_barcode_pos {
             if masking {
-                self.sequence.mask_if_exists(right_range.start..);
+                self.sequence.mask_if_exists(right_range);
             } else {
                 self.sequence.shorten_to(right_range.start);
                 self.quality.shorten_to(right_range.start);
@@ -258,7 +283,7 @@ impl ReadTransforms for FastQ {
     #[inline]
     fn to_canonical_bases(&mut self, recode: bool) -> &mut Self {
         if recode {
-            self.sequence.recode_iupac_to_actgn();
+            self.sequence.recode_any_to_acgtn_uc();
         }
         self
     }
@@ -294,6 +319,8 @@ impl ReadTransforms for FastQViewMut<'_> {
     fn hard_clip(&mut self, left_bases: usize, right_bases: usize) -> &mut Self {
         if self.sequence.len() > left_bases + right_bases {
             self.restrict(left_bases..self.len() - right_bases);
+        } else {
+            self.restrict(..0);
         }
         self
     }
@@ -304,6 +331,9 @@ impl ReadTransforms for FastQViewMut<'_> {
             self.mask_if_exists(..left_bases);
             self.mask_if_exists(self.sequence.len() - right_bases..);
             self.restrict(left_bases..self.len() - right_bases);
+        } else {
+            self.mask_if_exists(..);
+            self.restrict(..0);
         }
         self
     }
@@ -312,12 +342,22 @@ impl ReadTransforms for FastQViewMut<'_> {
     fn left_primer_trim(
         &mut self, restrict_left: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, RandomState>, masking: bool,
     ) -> &mut Self {
-        if let Some(range) = self.sequence.search_in_first(restrict_left).find_kmers_rev(kmer_set) {
-            if !masking {
+        if !masking {
+            if let Some(range) = self.sequence.search_in_first(restrict_left).find_kmers_rev(kmer_set) {
                 self.restrict(range.end..);
-            } else {
-                self.mask_if_exists(..range.end);
-                self.restrict(range.end..);
+            }
+        } else {
+            let mut ranges = self.sequence.search_in_first(restrict_left).find_all_kmers_rev(kmer_set);
+            if let Some(mut masking_range) = ranges.next() {
+                for other_range in ranges {
+                    if other_range.start <= masking_range.end {
+                        masking_range.end = other_range.end;
+                    } else {
+                        break;
+                    }
+                }
+                self.mask_if_exists(masking_range.clone());
+                self.restrict(masking_range.end..);
             }
         }
         self
@@ -327,12 +367,22 @@ impl ReadTransforms for FastQViewMut<'_> {
     fn right_primer_trim(
         &mut self, restrict_right: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, RandomState>, masking: bool,
     ) -> &mut Self {
-        if let Some(range) = self.sequence.search_in_last(restrict_right).find_kmers(kmer_set) {
-            if !masking {
+        if !masking {
+            if let Some(range) = self.sequence.search_in_last(restrict_right).find_kmers(kmer_set) {
                 self.restrict(..range.start);
-            } else {
-                self.mask_if_exists(range.start..);
-                self.restrict(..range.start);
+            }
+        } else {
+            let mut ranges = self.sequence.search_in_last(restrict_right).find_all_kmers(kmer_set);
+            if let Some(mut masking_range) = ranges.next() {
+                for other_range in ranges {
+                    if other_range.start <= masking_range.end {
+                        masking_range.end = other_range.end;
+                    } else {
+                        break;
+                    }
+                }
+                self.mask_if_exists(masking_range.clone());
+                self.restrict(..masking_range.start);
             }
         }
         self
@@ -366,7 +416,7 @@ impl ReadTransforms for FastQViewMut<'_> {
 
         if let Some(left_range) = left_barcode_pos {
             if masking {
-                self.sequence.mask_if_exists(..left_range.end);
+                self.sequence.mask_if_exists(left_range.clone());
             }
             self.restrict(left_range.end..);
         }
@@ -378,7 +428,7 @@ impl ReadTransforms for FastQViewMut<'_> {
 
         if let Some(right_range) = right_barcode_pos {
             if masking {
-                self.sequence.mask_if_exists(right_range.start..);
+                self.sequence.mask_if_exists(right_range.clone());
             }
             self.restrict(..right_range.start);
         }
@@ -452,7 +502,7 @@ impl ReadTransforms for FastQViewMut<'_> {
     #[inline]
     fn to_canonical_bases(&mut self, recode: bool) -> &mut Self {
         if recode {
-            self.sequence.recode_iupac_to_actgn_uc();
+            self.sequence.recode_any_to_acgtn_uc();
         }
         self
     }

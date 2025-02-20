@@ -3,13 +3,13 @@
 
 use crate::{
     qc::{fastq::*, fastq_metadata::*},
-    utils::{get_seed, SeedableFoldHashMap},
+    utils::{SeedableFoldHashMap, get_seed},
 };
 use clap::{Args, ValueHint};
 use indoc::writedoc;
 use std::{
     fs::OpenOptions,
-    io::{prelude::*, BufReader, BufWriter},
+    io::{BufReader, BufWriter, prelude::*},
     path::PathBuf,
     simd::prelude::*,
 };
@@ -105,7 +105,7 @@ pub fn qc_trim_deflate_process(args: QcTrimDeflateArgs) -> Result<(), std::io::E
 
     // TODO: What if user passes both mask_adapter and clip_adapter? Should throw error
     let (forward_adapter, reverse_adapter) = match (&args.mask_adapter, &args.clip_adapter) {
-        (Some(ref a), _) | (_, Some(ref a)) => {
+        (Some(a), _) | (_, Some(a)) => {
             let forward = a.as_bytes().to_ascii_uppercase();
             let reverse = reverse_complement(&forward);
             (forward, reverse)

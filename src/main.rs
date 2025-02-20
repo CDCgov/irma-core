@@ -1,7 +1,8 @@
 #![allow(unreachable_patterns)]
+#![feature(let_chains, round_char_boundary, portable_simd)]
 
+use crate::processes::{fastq_converter::*, merge_sam_pairs::*, qc_trim_deflate::*, trimmer::*, xflate::*};
 use clap::{Parser, Subcommand};
-use irma_core::{fastq_converter::*, merge_sam_pairs::*, qc_trim_deflate::*, trimmer::*, xflate::*};
 use zoe::data::err::OrFail;
 
 #[derive(Parser)]
@@ -26,7 +27,9 @@ enum Commands {
     /// deduplicated Fasta files to FastQ files
     Xflate(XflateArgs),
     /// Trims FASTQ files for genomic analysis with support for barcodes, adapters,
-    /// and primers.
+    /// primers, and hard trimming. Barcode and adapter trimming are mutually exclusive.
+    /// If multiple trim operations are selected, trimming will proceed in
+    /// barcode/adapter > primer > hard trim order.
     Trimmer(TrimmerArgs),
 }
 
@@ -48,3 +51,10 @@ fn main() {
         }
     }
 }
+
+mod processes;
+
+pub(crate) mod qc;
+pub(crate) mod utils;
+
+pub use crate::processes::*;
