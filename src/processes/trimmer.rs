@@ -41,6 +41,26 @@ pub struct TrimmerArgs {
     /// filtered from output.
     pub min_length: NonZeroUsize,
 
+    #[arg(short = 'G', long)]
+    /// Trims multiple consecutive G's (a possible artifact of Illumina
+    /// sequencing) found at the ends of a sequence
+    pub polyg_trim: Option<NonZeroUsize>,
+
+    #[arg(long, default_value = "b", requires = "polyg_trim")]
+    /// Specifies the end of the sequence for poly-g trimming : 'l' (left), 'r'
+    /// (right), or 'b' (both)
+    pub g_polyg_end: TrimEnd,
+
+    #[arg(long, requires = "polyg_trim")]
+    /// Overrides the threshold for consecutive G's on the left end of the
+    /// sequence for poly-g trimming
+    pub g_polyg_left: Option<NonZeroUsize>,
+
+    #[arg(long, requires = "polyg_trim")]
+    /// Overrides the threshold for consecutive G's on the right end of the
+    /// sequence for poly-g trimming
+    pub g_polyg_right: Option<NonZeroUsize>,
+
     #[arg(short = 'B', long, value_parser = validate_acgtn, group = "adapter_vs_barcode")]
     /// Trim barcodes and their reverse complements from sequence using string
     /// matching. Requires literal barcode as argument
@@ -138,6 +158,8 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
         let mut fq = record?;
         let mut fq_view = fq.as_view_mut();
         fq_view.to_canonical_bases(!args.preserve_seq);
+
+        fq_view.process_polyg(&args.polyg_literals, args.mask);
 
         if let Some((ref forward_adapter, ref reverse_adapter)) = args.adapters {
             fq_view.transform_by_reverse_forward_search(
@@ -266,6 +288,7 @@ pub struct ParsedTrimmerArgs {
     pub primer_kmers:     Option<ThreeBitKmerSet<MAX_KMER_LENGTH, RandomState>>,
     pub p_restrict_left:  Option<usize>,
     pub p_restrict_right: Option<usize>,
+    pub polyg_literals:   (Option<Vec<u8>>, Option<Vec<u8>>),
     pub hard_left:        usize,
     pub hard_right:       usize,
 }
@@ -342,6 +365,26 @@ pub fn parse_trim_args(args: TrimmerArgs) -> Result<ParsedTrimmerArgs, std::io::
         }
     };
 
+    let default_polyg = args.polyg_trim;
+    let (polyg_left, polyg_right) = match args.g_polyg_end {
+        TrimEnd::B => {
+            let left = args.g_polyg_left.or(default_polyg); //.map(NonZeroUsize::get);
+            let right = args.g_polyg_right.or(default_polyg); //.map(NonZeroUsize::get);
+            (left, right)
+        }
+        TrimEnd::L => {
+            let left = args.g_polyg_left.or(default_polyg); //.map(NonZeroUsize::get);
+            (left, None)
+        }
+        TrimEnd::R => {
+            let right = args.g_polyg_right.or(default_polyg); //.map(NonZeroUsize::get);
+            (None, right)
+        }
+    };
+
+    let left_polyg_literal = polyg_left.map(|polyg_len| vec![b'G'; polyg_len.get()]);
+    let right_polyg_literal = polyg_right.map(|polyg_len| vec![b'G'; polyg_len.get()]);
+
     let default_hard_bases = args.hard_trim.unwrap_or(0);
     let hard_left = args.h_left.unwrap_or(default_hard_bases);
     let hard_right = args.h_right.unwrap_or(default_hard_bases);
@@ -362,6 +405,7 @@ pub fn parse_trim_args(args: TrimmerArgs) -> Result<ParsedTrimmerArgs, std::io::
         primer_kmers,
         p_restrict_left,
         p_restrict_right,
+        polyg_literals: (left_polyg_literal, right_polyg_literal),
         hard_left,
         hard_right,
     };

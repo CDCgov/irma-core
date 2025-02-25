@@ -60,6 +60,9 @@ pub(crate) trait ReadTransforms {
         &mut self, barcode: &[u8], reverse: &[u8], hdist: usize, masking: bool, b_restrict_left: Option<usize>,
         b_restrict_right: Option<usize>,
     ) -> &mut Self;
+    fn process_polyg(&mut self, polyg_literals: &(Option<Vec<u8>>, Option<Vec<u8>>), masking: bool) -> &mut Self;
+    fn process_left_polyg(&mut self, left_literal: &[u8], masking: bool) -> &mut Self;
+    fn process_right_polyg(&mut self, right_literal: &[u8], masking: bool) -> &mut Self;
     fn fix_header(&mut self, read_side: Option<char>) -> &mut Self;
     fn clip_exact(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self;
     fn clip_exact_or_fuzzy(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self;
@@ -207,6 +210,54 @@ impl ReadTransforms for FastQ {
                 self.quality.shorten_to(right_range.start);
             }
         }
+        self
+    }
+
+    fn process_polyg(&mut self, polyg_literals: &(Option<Vec<u8>>, Option<Vec<u8>>), masking: bool) -> &mut Self {
+        if let Some(left_literal) = &polyg_literals.0 {
+            self.process_left_polyg(left_literal, masking);
+        }
+        if let Some(right_literal) = &polyg_literals.1 {
+            self.process_right_polyg(right_literal, masking);
+        }
+
+        self
+    }
+
+    #[inline]
+    fn process_left_polyg(&mut self, left_literal: &[u8], masking: bool) -> &mut Self {
+        if self.sequence.as_bytes().starts_with(left_literal) {
+            let polyg_end = self
+                .sequence
+                .search_in(left_literal.len()..)
+                .position(|base| base != b'G')
+                .unwrap_or(self.sequence.len());
+            if masking {
+                self.sequence.mask_if_exists(..polyg_end);
+            } else {
+                self.sequence.cut_to_start(polyg_end);
+                self.quality.cut_to_start(polyg_end);
+            }
+        }
+        self
+    }
+
+    #[inline]
+    fn process_right_polyg(&mut self, right_literal: &[u8], masking: bool) -> &mut Self {
+        if self.sequence.as_bytes().ends_with(right_literal) {
+            let polyg_start = self
+                .sequence
+                .search_in(..self.sequence.len() - right_literal.len())
+                .rposition(|base| base != b'G')
+                .map_or(0, |pos| pos + 1);
+            if masking {
+                self.sequence.mask_if_exists(polyg_start..);
+            } else {
+                self.sequence.shorten_to(polyg_start);
+                self.quality.shorten_to(polyg_start);
+            }
+        }
+
         self
     }
 
@@ -431,6 +482,46 @@ impl ReadTransforms for FastQViewMut<'_> {
                 self.sequence.mask_if_exists(right_range.clone());
             }
             self.restrict(..right_range.start);
+        }
+        self
+    }
+
+    fn process_polyg(&mut self, polyg_literals: &(Option<Vec<u8>>, Option<Vec<u8>>), masking: bool) -> &mut Self {
+        if let Some(left_literal) = &polyg_literals.0 {
+            self.process_left_polyg(left_literal, masking);
+        }
+        if let Some(right_literal) = &polyg_literals.1 {
+            self.process_right_polyg(right_literal, masking);
+        }
+        self
+    }
+
+    fn process_left_polyg(&mut self, left_literal: &[u8], masking: bool) -> &mut Self {
+        if self.sequence.as_bytes().starts_with(left_literal) {
+            let polyg_end = self
+                .sequence
+                .search_in(left_literal.len()..)
+                .position(|base| base != b'G')
+                .unwrap_or(self.sequence.len());
+            if masking {
+                self.sequence.mask_if_exists(..polyg_end)
+            }
+            self.sequence.restrict(polyg_end..);
+        }
+        self
+    }
+
+    fn process_right_polyg(&mut self, right_literal: &[u8], masking: bool) -> &mut Self {
+        if self.sequence.as_bytes().ends_with(right_literal) {
+            let polyg_start = self
+                .sequence
+                .search_in(..self.sequence.len() - right_literal.len())
+                .rposition(|base| base != b'G')
+                .map_or(0, |pos| pos + 1);
+            if masking {
+                self.sequence.mask_if_exists(polyg_start..);
+            }
+            self.sequence.restrict(..polyg_start);
         }
         self
     }
