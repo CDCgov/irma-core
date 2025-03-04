@@ -1,7 +1,7 @@
 /target
 *gz
 *fastq
-*log*
+*.log
 *test*/
 snip.pl
 /debug
