@@ -42,7 +42,7 @@ pub(crate) trait ReadTransforms {
     fn hard_mask(&mut self, left_bases: usize, right_bases: usize) -> &mut Self;
 
     #[inline]
-    fn hard_trim(&mut self, left_bases: usize, right_bases: usize, masking: bool) -> &mut Self {
+    fn hard_clip_or_mask(&mut self, left_bases: usize, right_bases: usize, masking: bool) -> &mut Self {
         if masking {
             self.hard_mask(left_bases, right_bases)
         } else {
@@ -50,13 +50,13 @@ pub(crate) trait ReadTransforms {
         }
     }
 
-    fn left_primer_trim(
+    fn process_left_primer(
         &mut self, restrict_left: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, RandomState>, masking: bool,
     ) -> &mut Self;
-    fn right_primer_trim(
+    fn process_right_primer(
         &mut self, restrict_right: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, RandomState>, masking: bool,
     ) -> &mut Self;
-    fn barcode_trim(
+    fn process_barcode(
         &mut self, barcode: &[u8], reverse: &[u8], hdist: usize, masking: bool, b_restrict_left: Option<usize>,
         b_restrict_right: Option<usize>,
     ) -> &mut Self;
@@ -110,7 +110,7 @@ impl ReadTransforms for FastQ {
     }
 
     #[inline]
-    fn left_primer_trim(
+    fn process_left_primer(
         &mut self, restrict_left: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, RandomState>, masking: bool,
     ) -> &mut Self {
         if !masking {
@@ -135,7 +135,7 @@ impl ReadTransforms for FastQ {
     }
 
     #[inline]
-    fn right_primer_trim(
+    fn process_right_primer(
         &mut self, restrict_right: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, RandomState>, masking: bool,
     ) -> &mut Self {
         if !masking {
@@ -160,7 +160,7 @@ impl ReadTransforms for FastQ {
     }
 
     #[inline]
-    fn barcode_trim(
+    fn process_barcode(
         &mut self, barcode: &[u8], reverse: &[u8], hdist: usize, masking: bool, b_restrict_left: Option<usize>,
         b_restrict_right: Option<usize>,
     ) -> &mut Self {
@@ -339,7 +339,7 @@ impl ReadTransforms for FastQViewMut<'_> {
     }
 
     #[inline]
-    fn left_primer_trim(
+    fn process_left_primer(
         &mut self, restrict_left: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, RandomState>, masking: bool,
     ) -> &mut Self {
         if !masking {
@@ -364,7 +364,7 @@ impl ReadTransforms for FastQViewMut<'_> {
     }
 
     #[inline]
-    fn right_primer_trim(
+    fn process_right_primer(
         &mut self, restrict_right: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, RandomState>, masking: bool,
     ) -> &mut Self {
         if !masking {
@@ -389,7 +389,7 @@ impl ReadTransforms for FastQViewMut<'_> {
     }
 
     #[inline]
-    fn barcode_trim(
+    fn process_barcode(
         &mut self, barcode: &[u8], reverse: &[u8], hdist: usize, masking: bool, b_restrict_left: Option<usize>,
         b_restrict_right: Option<usize>,
     ) -> &mut Self {

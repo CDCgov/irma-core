@@ -54,17 +54,17 @@ pub struct TrimmerArgs {
     #[arg(long, requires = "barcode_trim")]
     /// Restriction window size for barcode trimming on both ends of the
     /// sequence. If no restriction is provided, full scan is performed
-    pub b_restrict: Option<usize>,
+    pub b_restrict: Option<NonZeroUsize>,
 
     #[arg(long, requires = "barcode_trim")]
     /// Restriction window for trimming barcodes on the left end of the
     /// sequence. Overrides --b-restrict
-    pub b_restrict_left: Option<usize>,
+    pub b_restrict_left: Option<NonZeroUsize>,
 
     #[arg(long, requires = "barcode_trim")]
     /// Restriction window for trimming barcodes on the right end of the
     /// sequence. Overrides --b_restrict
-    pub b_restrict_right: Option<usize>,
+    pub b_restrict_right: Option<NonZeroUsize>,
 
     #[arg(long, value_parser = validate_b_hdist, default_value = "0", requires = "barcode_trim")]
     /// Accepted Hamming distance for fuzzy barcode matching and trimming,
@@ -100,17 +100,17 @@ pub struct TrimmerArgs {
 
     #[arg(long, default_value = "30", requires = "primer_trim")]
     /// Restriction window size for primer trimming on both ends of the sequence
-    pub p_restrict: usize,
+    pub p_restrict: NonZeroUsize,
 
     #[arg(long, requires = "primer_trim")]
     /// Restriction window for trimming primer on the left end of the sequence
     /// Overrides --p_restrict
-    pub p_restrict_left: Option<usize>,
+    pub p_restrict_left: Option<NonZeroUsize>,
 
     #[arg(long, requires = "primer_trim")]
     /// Restriction window for trimming barcodes on the right end of the
     /// sequence. Overrides --p_restrict
-    pub p_restrict_right: Option<usize>,
+    pub p_restrict_right: Option<NonZeroUsize>,
 
     #[arg(short = 'H', long)]
     /// Hard trim from each end the specified number of bases
@@ -147,7 +147,7 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
                 forward_adapter.as_bytes(),
             );
         } else if let Some((barcode, reverse)) = &args.barcodes {
-            fq_view.barcode_trim(
+            fq_view.process_barcode(
                 barcode.as_bytes(),
                 reverse.as_bytes(),
                 args.b_hdist,
@@ -158,16 +158,16 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
         }
 
         if let Some(ref kmers) = args.primer_kmers {
-            if args.p_restrict_left > 0 {
-                fq_view.left_primer_trim(args.p_restrict_left, kmers, args.mask);
+            if let Some(p_restrict_left) = args.p_restrict_left {
+                fq_view.process_left_primer(p_restrict_left, kmers, args.mask);
             }
-            if args.p_restrict_right > 0 {
-                fq_view.right_primer_trim(args.p_restrict_right, kmers, args.mask);
+            if let Some(p_restrict_right) = args.p_restrict_right {
+                fq_view.process_right_primer(p_restrict_right, kmers, args.mask);
             }
         }
 
         if args.hard_left > 0 || args.hard_right > 0 {
-            fq_view.hard_trim(args.hard_left, args.hard_right, args.mask);
+            fq_view.hard_clip_or_mask(args.hard_left, args.hard_right, args.mask);
         }
 
         if args.mask {
@@ -264,8 +264,8 @@ pub struct ParsedTrimmerArgs {
     pub adapters:         Option<(Nucleotides, Nucleotides)>,
     pub a_fuzzy:          bool,
     pub primer_kmers:     Option<ThreeBitKmerSet<MAX_KMER_LENGTH, RandomState>>,
-    pub p_restrict_left:  usize,
-    pub p_restrict_right: usize,
+    pub p_restrict_left:  Option<usize>,
+    pub p_restrict_right: Option<usize>,
     pub hard_left:        usize,
     pub hard_right:       usize,
 }
@@ -309,18 +309,18 @@ pub fn parse_trim_args(args: TrimmerArgs) -> Result<ParsedTrimmerArgs, std::io::
     let (b_restrict_left, b_restrict_right) = match args.b_end {
         TrimEnd::B => {
             // Apply b_restrict to both, unless explicitly overridden
-            let left = args.b_restrict_left.or(default_b_restrict);
-            let right = args.b_restrict_right.or(default_b_restrict);
+            let left = args.b_restrict_left.or(default_b_restrict).map(NonZeroUsize::get);
+            let right = args.b_restrict_right.or(default_b_restrict).map(NonZeroUsize::get);
             (left, right)
         }
         TrimEnd::L => {
             // Left gets b_left_restrict or b_restrict, right is forced to 0
-            let left = args.b_restrict_left.or(default_b_restrict);
+            let left = args.b_restrict_left.or(default_b_restrict).map(NonZeroUsize::get);
             (left, Some(0))
         }
         TrimEnd::R => {
             // Right gets b_right_restrict or b_restrict, left is forced to 0
-            let right = args.b_restrict_right.or(default_b_restrict);
+            let right = args.b_restrict_right.or(default_b_restrict).map(NonZeroUsize::get);
             (Some(0), right)
         }
     };
@@ -330,15 +330,15 @@ pub fn parse_trim_args(args: TrimmerArgs) -> Result<ParsedTrimmerArgs, std::io::
         TrimEnd::B => {
             let left = args.p_restrict_left.unwrap_or(default_p_restrict);
             let right = args.p_restrict_right.unwrap_or(default_p_restrict);
-            (left, right)
+            (Some(left.get()), Some(right.get()))
         }
         TrimEnd::L => {
             let left = args.p_restrict_left.unwrap_or(default_p_restrict);
-            (left, 0)
+            (Some(left.get()), None)
         }
         TrimEnd::R => {
             let right = args.p_restrict_right.unwrap_or(default_p_restrict);
-            (0, right)
+            (None, Some(right.get()))
         }
     };
 
