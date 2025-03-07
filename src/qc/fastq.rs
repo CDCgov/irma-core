@@ -60,9 +60,20 @@ pub(crate) trait ReadTransforms {
         &mut self, barcode: &[u8], reverse: &[u8], hdist: usize, masking: bool, b_restrict_left: Option<usize>,
         b_restrict_right: Option<usize>,
     ) -> &mut Self;
-    fn process_polyg(&mut self, polyg_literals: &(Option<Vec<u8>>, Option<Vec<u8>>), masking: bool) -> &mut Self;
-    fn process_left_polyg(&mut self, left_literal: &[u8], masking: bool) -> &mut Self;
-    fn process_right_polyg(&mut self, right_literal: &[u8], masking: bool) -> &mut Self;
+
+    #[inline]
+    fn process_polyg(&mut self, polyg_left: Option<usize>, polyg_right: Option<usize>, masking: bool) -> &mut Self {
+        if let Some(left_threshold) = polyg_left {
+            self.process_left_polyg(left_threshold, masking);
+        }
+        if let Some(right_threshold) = polyg_right {
+            self.process_right_polyg(right_threshold, masking);
+        }
+        self
+    }
+
+    fn process_left_polyg(&mut self, left_threshold: usize, masking: bool) -> &mut Self;
+    fn process_right_polyg(&mut self, right_threshold: usize, masking: bool) -> &mut Self;
     fn fix_header(&mut self, read_side: Option<char>) -> &mut Self;
     fn clip_exact(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self;
     fn clip_exact_or_fuzzy(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self;
@@ -213,48 +224,27 @@ impl ReadTransforms for FastQ {
         self
     }
 
-    fn process_polyg(&mut self, polyg_literals: &(Option<Vec<u8>>, Option<Vec<u8>>), masking: bool) -> &mut Self {
-        if let Some(left_literal) = &polyg_literals.0 {
-            self.process_left_polyg(left_literal, masking);
-        }
-        if let Some(right_literal) = &polyg_literals.1 {
-            self.process_right_polyg(right_literal, masking);
-        }
-
-        self
-    }
-
     #[inline]
-    fn process_left_polyg(&mut self, left_literal: &[u8], masking: bool) -> &mut Self {
-        if self.sequence.as_bytes().starts_with(left_literal) {
-            let polyg_end = self
-                .sequence
-                .search_in(left_literal.len()..)
-                .position(|base| base != b'G')
-                .unwrap_or(self.sequence.len());
+    fn process_left_polyg(&mut self, left_threshold: usize, masking: bool) -> &mut Self {
+        if let Some(polyg_range) = self.sequence.find_repeating_at_start(b'G', left_threshold) {
             if masking {
-                self.sequence.mask_if_exists(..polyg_end);
+                self.sequence.mask_if_exists(..polyg_range.end);
             } else {
-                self.sequence.cut_to_start(polyg_end);
-                self.quality.cut_to_start(polyg_end);
+                self.sequence.cut_to_start(polyg_range.end);
+                self.quality.cut_to_start(polyg_range.end);
             }
         }
         self
     }
 
     #[inline]
-    fn process_right_polyg(&mut self, right_literal: &[u8], masking: bool) -> &mut Self {
-        if self.sequence.as_bytes().ends_with(right_literal) {
-            let polyg_start = self
-                .sequence
-                .search_in(..self.sequence.len() - right_literal.len())
-                .rposition(|base| base != b'G')
-                .map_or(0, |pos| pos + 1);
+    fn process_right_polyg(&mut self, right_threshold: usize, masking: bool) -> &mut Self {
+        if let Some(polyg_range) = self.sequence.find_repeating_at_end(b'G', right_threshold) {
             if masking {
-                self.sequence.mask_if_exists(polyg_start..);
+                self.sequence.mask_if_exists(polyg_range.start..);
             } else {
-                self.sequence.shorten_to(polyg_start);
-                self.quality.shorten_to(polyg_start);
+                self.sequence.shorten_to(polyg_range.start);
+                self.quality.shorten_to(polyg_range.start);
             }
         }
 
@@ -486,42 +476,22 @@ impl ReadTransforms for FastQViewMut<'_> {
         self
     }
 
-    fn process_polyg(&mut self, polyg_literals: &(Option<Vec<u8>>, Option<Vec<u8>>), masking: bool) -> &mut Self {
-        if let Some(left_literal) = &polyg_literals.0 {
-            self.process_left_polyg(left_literal, masking);
-        }
-        if let Some(right_literal) = &polyg_literals.1 {
-            self.process_right_polyg(right_literal, masking);
+    fn process_left_polyg(&mut self, left_threshold: usize, masking: bool) -> &mut Self {
+        if let Some(polyg_range) = self.sequence.find_repeating_at_start(b'G', left_threshold) {
+            if masking {
+                self.sequence.mask_if_exists(..polyg_range.end)
+            }
+            self.sequence.restrict(polyg_range.end..);
         }
         self
     }
 
-    fn process_left_polyg(&mut self, left_literal: &[u8], masking: bool) -> &mut Self {
-        if self.sequence.as_bytes().starts_with(left_literal) {
-            let polyg_end = self
-                .sequence
-                .search_in(left_literal.len()..)
-                .position(|base| base != b'G')
-                .unwrap_or(self.sequence.len());
+    fn process_right_polyg(&mut self, right_threshold: usize, masking: bool) -> &mut Self {
+        if let Some(polyg_range) = self.sequence.find_repeating_at_end(b'G', right_threshold) {
             if masking {
-                self.sequence.mask_if_exists(..polyg_end)
+                self.sequence.mask_if_exists(polyg_range.start..);
             }
-            self.sequence.restrict(polyg_end..);
-        }
-        self
-    }
-
-    fn process_right_polyg(&mut self, right_literal: &[u8], masking: bool) -> &mut Self {
-        if self.sequence.as_bytes().ends_with(right_literal) {
-            let polyg_start = self
-                .sequence
-                .search_in(..self.sequence.len() - right_literal.len())
-                .rposition(|base| base != b'G')
-                .map_or(0, |pos| pos + 1);
-            if masking {
-                self.sequence.mask_if_exists(polyg_start..);
-            }
-            self.sequence.restrict(..polyg_start);
+            self.sequence.restrict(..polyg_range.start);
         }
         self
     }
