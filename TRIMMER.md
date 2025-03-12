@@ -1,19 +1,19 @@
 # Irma-Core Trimmer README
 
 ## Motivation and Goals
-With Next Generation Sequencing (NGS) becoming more available, tools for efficient processing sequenced data are increasingly important. Different types of trimming from sequences often may require multiple types of software, and/or multiple file Input/Output (I/O) operations.
+With Next Generation Sequencing (NGS) becoming more available, tools for efficiently processing sequenced data are increasingly important. Different types of trimming from sequences often require multiple types of software and multiple file Input/Output (I/O) operations.
 
-For example, for a FASTQ file provided by an Illumina NGS pipeline, it may be necessary to find and trim adapters, primers, and finally hard trim bases on the end of the sequence. Traditionally, this would involve multiple program calls, multiple I/O operations, and result in multiple intermediate FASTQ files.
+For example, for a FASTQ file provided by an Illumina NGS pipeline, it may be necessary to find and trim adapters, remove primers, and perhaps also hard trim bases on the end of the sequence if there are other known contaminants. Traditionally, this would involve multiple program calls, multiple I/O operations, and result in multiple intermediate FASTQ files.
 
 ```mermaid
     flowchart LR
         A[Original FASTQ] -->|Adapter Trim| B[Intermediate FASTQ 1]
-        B -->|Left Trim| C[Intermediate FASTQ 2]
+        B -->|Left Primer Trim| C[Intermediate FASTQ 2]
         C -->|Right Primer Trim| D[Intermediate FASTQ 3]
         D -->|Hard Trim| E[Final FastQ]
 ```
 
-However, with IRMA-Core's trimmer process, many types of sequence trimming can be performed consecutively and rapidly, with no intermediate files.
+However, with IRMA-core's trimmer process, many types of sequence trimming can be performed consecutively and rapidly, with no intermediate files.
 
 ## Order of Operations
 
@@ -21,7 +21,7 @@ IRMA-core's trimmer process allows for multiple trimming operations to be perfor
 
 ```mermaid
     flowchart LR
-        A[Original FastQ] --> B[Base Recoding]
+        A[Original FASTQ] --> B[Base Recoding]
         B --> C[PolyG Trim]
         C --> D[Adapter Trim]
         C --> E[Barcode Trim]
@@ -29,20 +29,20 @@ IRMA-core's trimmer process allows for multiple trimming operations to be perfor
         E --> F
         F --> G[Hard Trim]
         G --> H[Length Filtering <br> and Output]
-        H --> I[Trimmed FastQ]
+        H --> I[Trimmed FASTQ]
 ```
 
-Every step in the process is optional, but if multiple operations are selected, the above chart shows the order in which trimming operations will proceed. Note that `Adapter Trim` and `Barcode Trim` are mutually exclusive, since [Adapters](https://support-docs.illumina.com/SHARE/AdapterSequences/Content/SHARE/AdapterSeq/Overview.htm), an artifact of Illumina sequencing, and [Barcodes](https://nanoporetech.com/document/chemistry-technical-document), an artifact of Oxford Nanopore Technologies sequencing, would not be expected to co-occur.
+Every step in the process is optional, but if multiple operations are selected, the above chart shows the order in which trimming operations will proceed. Note that `Adapter Trim` and `Barcode Trim` are mutually exclusive, since [adapters](https://support-docs.illumina.com/SHARE/AdapterSequences/Content/SHARE/AdapterSeq/Overview.htm), an artifact of Illumina sequencing, and [barcodes](https://nanoporetech.com/document/chemistry-technical-document), an artifact of Oxford Nanopore Technologies sequencing, would not be expected to co-occur.
 
 ## Base Recoding
 
-By default, bases in the input .fastq files are recoded into uppercase canonical (ACGTN) bases. Gaps, ambiguous IUPAC bases, and non-IUPAC characters are automatically changed to N. This behavior can be disabled with the `--preserve-fastq` flag.
+By default, bases in the input FASTQ files are recoded into uppercase canonical bases (`ACGTN`). Gaps, ambiguous IUPAC bases, and non-IUPAC characters are automatically changed to `N`. This behavior can be disabled with the `--preserve-fastq` flag.
 
 ### Arguments
 
 | Parameter          | Default | Kind    | Description                                         |
 | ------------------ | ------- | ------- | --------------------------------------------------- |
-| `--preserve-fastq` | False   | Boolean | Disables Uppercase canonical base recoding of input |
+| `--preserve-fastq` | | | Flag disabling uppercase canonical base recoding of input |
 
 ## Poly-G Trim
 
@@ -81,14 +81,14 @@ Will attempt to match the provided adapter sequence, with up to one mismatch, at
 
 ## Barcode Trim
 
-In Oxford Nanopore Technologies' sequencing workflow, short DNA sequences, or [barcodes](https://nanoporetech.com/document/chemistry-technical-document) are appended to the ends of DNA samples to help identify different DNA samples within the same run. The `barcode-trim` subprocess uses a fuzzy string search, which can be a full scan of the sequence, or constrained to the ends of the sequence, to locate and trim barcodes and their reverse complements.
+In Oxford Nanopore Technologies' sequencing workflow, short DNA sequences, or [barcodes](https://nanoporetech.com/document/chemistry-technical-document), are appended to the ends of DNA samples to help identify different DNA samples within the same run. The `barcode-trim` subprocess uses a fuzzy string search, which can be a full scan of the sequence, or constrained to the ends of the sequence, to locate and trim barcodes and their reverse complements.
 
 ### Arguments
 
 | Parameter                   | Default   | Kind                  | Description                                                                                                                                                                                |
 | --------------------------- | --------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **`--barcode-trim` (`-B`)** |           | String of Nucleotides | a literal nucleotide sequence for the barcode to be trimmed. Non-canonical (ACGTN) characters will cause an error.                                                                         |
-| `--b-end`                   | b         | l, r, b               | the end(s) of the sequence that barcode trimming should occur on.                                                                                                                          |
+| **`--barcode-trim` (`-B`)** |           | String of Nucleotides | A literal nucleotide sequence for the barcode to be trimmed. Non-canonical (ACGTN) characters will cause an error.                                                                         |
+| `--b-end`                   | b         | l, r, b               | The end(s) of the sequence that barcode trimming should occur on.                                                                                                                          |
 | `--b-restrict`              | full scan | ≥ 1                   | Restriction window size for barcode trimming on both ends of the sequence. If no restriction is provided, the trimmer will perform a full-scan barcode search, checking the full sequence. |
 | `--b-restrict-left`         |           | ≥ 1                   | Overrides `--b-restrict` for the left end.                                                                                                                                                 |
 | `--b-restrict-right`        |           | ≥ 1                   | Overrides `--b-restrict` for the right end.                                                                                                                                                |
@@ -106,8 +106,8 @@ In Oxford Nanopore Technologies' sequencing workflow, short DNA sequences, or [b
 
 | Parameter                  | Default | Kind      | Description                                                                        |
 | -------------------------- | ------- | --------- | ---------------------------------------------------------------------------------- |
-| **`--primer-trim` (`-P`)** |         | Filepath  | A path to the primer FASTA file                                                    |
-| `--p-kmer-length`          |         | [2,21]    | Size of the kmers created from the primer FASTA file for matching in the sequence. |
+| **`--primer-trim` (`-P`)** |         | Filepath  | A path to the primer FASTA file.                                                    |
+| `--p-kmer-length`          |         | [2-21]    | Size of the kmers created from the primer FASTA file for matching in the sequence. |
 | `--p-fuzzy`                | False   | Boolean   | Allows one mismatch when matching primer kmers.                                    |
 | `--p-end`                  | b       | [l, r, b] | The end(s) of the sequence that primer trimming should occur on.                   |
 | `--p-restrict`             | 30      | ≥ 1       | Restriction window size for primer trimming on both ends of the sequence.          |
