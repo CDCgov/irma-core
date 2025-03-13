@@ -10,7 +10,7 @@ clap = { version = "4", features = ["derive"] }
 either = "1"
 foldhash = "*"
 indoc = "*"
-
+num_cpus = "*"
 zoe = { git = "https://github.com/CDCgov/zoe.git", branch = "main", default-features = false, features = [
     "multiversion",
 ] }

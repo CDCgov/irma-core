@@ -1,7 +1,7 @@
 #![allow(unreachable_patterns)]
 #![feature(let_chains, round_char_boundary, portable_simd)]
 
-use crate::processes::{fastq_converter::*, merge_sam_pairs::*, qc_trim_deflate::*, trimmer::*, xflate::*};
+use crate::processes::{fastq_converter::*, merge_sam_pairs::*, num_procs::*, qc_trim_deflate::*, trimmer::*, xflate::*};
 use clap::{Parser, Subcommand};
 use zoe::data::err::OrFail;
 
@@ -26,6 +26,8 @@ enum Commands {
     /// Deflates FastQ files to deduplicated Fasta files, or reinflates
     /// deduplicated Fasta files to FastQ files
     Xflate(XflateArgs),
+    /// Provides the physical or logical cores of a CPU portably.
+    NumProcs(NumProcsArgs),
     /// Trims FASTQ files for genomic analysis with support for barcodes, adapters,
     /// primers, and hard trimming. Barcode and adapter trimming are mutually exclusive.
     /// If multiple trim operations are selected, trimming will proceed in
@@ -44,7 +46,8 @@ fn main() {
         Commands::FastqConverter(cmd_args) => fastqc_process(cmd_args).unwrap_or_die(&format!("{module}::FastqConverter")),
         Commands::MergeSAM(cmd_args) => merge_sam_pairs_process(cmd_args),
         Commands::Xflate(cmd_args) => xflate_process(cmd_args).unwrap_or_die(&format!("{module}::Xflate")),
-        Commands::Trimmer(cmd_args) => trimmer_process(cmd_args).unwrap_or_die(&format!("{module}::trimmer")),
+        Commands::Trimmer(cmd_args) => trimmer_process(cmd_args).unwrap_or_die(&format!("{module}::Trimmer")),
+        Commands::NumProcs(cmd_args) => num_procs_process(cmd_args).unwrap_or_die(&format!("{module}::NumProcs")),
         _ => {
             eprintln!("IRMA-CORE: unrecognized command {:?}", args.command);
             std::process::exit(1)
