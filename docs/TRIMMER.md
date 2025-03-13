@@ -1,9 +1,10 @@
-# Irma-Core Trimmer README
+# IRMA-core "Trimmer" README
 
 ## Motivation and Goals
-With Next Generation Sequencing (NGS) becoming more available, tools for efficiently processing sequenced data are increasingly important. Different types of trimming from sequences often require multiple types of software and multiple file Input/Output (I/O) operations.
 
-For example, for a FASTQ file provided by an Illumina NGS pipeline, it may be necessary to find and trim adapters, remove primers, and perhaps also hard trim bases on the end of the sequence if there are other known contaminants. Traditionally, this would involve multiple program calls, multiple I/O operations, and result in multiple intermediate FASTQ files.
+With Next Generation Sequencing (NGS) available on different platforms, having a portable, efficient, and customizable tool for quality control is important. FASTQ quality control can involve multiple tools and I/O operations with intermediate data left behind that may not get cleaned up (hello cloud costs).
+
+Consider a FASTQ file provided by an Illumina NGS pipeline. It may be necessary to find and trim adapters, remove primers, and perhaps also hard trim bases. This stand-alone IRMA-core process can achieve the necessary cleanup in a single pass:
 
 ```mermaid
     flowchart LR
@@ -12,8 +13,6 @@ For example, for a FASTQ file provided by an Illumina NGS pipeline, it may be ne
         C -->|Right Primer Trim| D[Intermediate FASTQ 3]
         D -->|Hard Trim| E[Final FastQ]
 ```
-
-However, with IRMA-core's trimmer process, many types of sequence trimming can be performed consecutively and rapidly, with no intermediate files.
 
 ## Order of Operations
 
@@ -32,7 +31,7 @@ IRMA-core's trimmer process allows for multiple trimming operations to be perfor
         H --> I[Trimmed FASTQ]
 ```
 
-Every step in the process is optional, but if multiple operations are selected, the above chart shows the order in which trimming operations will proceed. Note that `Adapter Trim` and `Barcode Trim` are mutually exclusive, since [adapters](https://support-docs.illumina.com/SHARE/AdapterSequences/Content/SHARE/AdapterSeq/Overview.htm), an artifact of Illumina sequencing, and [barcodes](https://nanoporetech.com/document/chemistry-technical-document), an artifact of Oxford Nanopore Technologies sequencing, would not be expected to co-occur.
+Every step in the process is optional, but if multiple operations are selected, the above chart shows the order in which trimming operations will proceed. Note that `Adapter Trim` and `Barcode Trim` are *mutually exclusive*, since [adapters](https://support-docs.illumina.com/SHARE/AdapterSequences/Content/SHARE/AdapterSeq/Overview.htm) are associated with Illumina sequencing while more error-prone [barcodes](https://nanoporetech.com/document/chemistry-technical-document) might be needed for Oxford Nanopore Technologies sequencing.
 
 ## Base Recoding
 
@@ -40,9 +39,9 @@ By default, bases in the input FASTQ files are recoded into uppercase canonical 
 
 ### Arguments
 
-| Parameter          | Default | Kind    | Description                                         |
-| ------------------ | ------- | ------- | --------------------------------------------------- |
-| `--preserve-fastq` | | | Flag disabling uppercase canonical base recoding of input |
+| Parameter          | Default | Kind | Description                                               |
+| ------------------ | ------- | ---- | --------------------------------------------------------- |
+| `--preserve-fastq` |         |      | Flag disabling uppercase canonical base recoding of input |
 
 ## Poly-G Trim
 
@@ -57,11 +56,14 @@ By default, bases in the input FASTQ files are recoded into uppercase canonical 
 | `--g-polyg-left`          |         | ≥ 1       | Overrides `--polyg-trim` for the left end of the sequence.                                |
 | `--g-polyg-right`         |         | ≥ 1       | Overrides `--polyg-trim` for the right end of the sequence.                               |
 
-
 ### Example Command
 
-`irma-core trimmer input.fastq --polyg-trim 10 --g-polyg-end b`
-Will check if the first ten bases on the left end of each sequence are `G`, then continue to attempt to match further consecutive `G`s and trim all. Then performs the same for the right ends of the sequences.
+The following checks if the first 10 bases on the left end of each sequence are `G`, then continue to attempt to match further consecutive `G`'s and trim all. Then performs the same for the right ends of the sequences.
+
+```bash
+irma-core trimmer input.fastq \
+    --polyg-trim 10 --g-polyg-end b
+```
 
 ## Adapter Trim
 
@@ -76,12 +78,16 @@ Some high-throughput sequencing processes, such as those developed by Illumina, 
 
 ### Example Command
 
-`irma-core trimmer input.fastq --adapter-trim CTGTCTCTTATACACATCT --a-fuzzy`
-Will attempt to match the provided adapter sequence, with up to one mismatch, at the left end of each read and the reverse complement of the adapter sequence at the right end of each read. If either is found, the adapter and any bases before it (or after for right end trimming) will be trimmed.
+The following will attempt to match the provided adapter sequence, with up to one mismatch, at the left end of each read and the reverse complement of the adapter sequence at the right end of each read. If either is found, the adapter and any bases before it (or after for right end trimming) will be trimmed.
+
+```bash
+irma-core trimmer input.fastq \
+    --adapter-trim CTGTCTCTTATACACATCT --a-fuzzy
+```
 
 ## Barcode Trim
 
-In Oxford Nanopore Technologies' sequencing workflow, short DNA sequences, or [barcodes](https://nanoporetech.com/document/chemistry-technical-document), are appended to the ends of DNA samples to help identify different DNA samples within the same run. The `barcode-trim` subprocess uses a fuzzy string search, which can be a full scan of the sequence, or constrained to the ends of the sequence, to locate and trim barcodes and their reverse complements.
+In Oxford Nanopore Technologies' sequencing workflow, short DNA sequences or [barcodes](https://nanoporetech.com/document/chemistry-technical-document) are appended for demultiplexing, but possibly may not be removed. The `barcode-trim` subprocess uses a fuzzy string search, which can be a full scan of the sequence, or constrained to the ends of the sequence, to locate and trim barcodes and their reverse complements.
 
 ### Arguments
 
@@ -96,7 +102,10 @@ In Oxford Nanopore Technologies' sequencing workflow, short DNA sequences, or [b
 
 ### Example Command
 
-`irma-core trimmer input.fastq --barcode-trim CACAAAGACACCGACAACTTTCTT --b-restrict 30 --b-hdist 2`
+```bash
+irma-core trimmer input.fastq \
+    --barcode-trim CACAAAGACACCGACAACTTTCTT --b-restrict 30 --b-hdist 2
+```
 
 ## Primer Trim
 
@@ -106,7 +115,7 @@ In Oxford Nanopore Technologies' sequencing workflow, short DNA sequences, or [b
 
 | Parameter                  | Default | Kind      | Description                                                                        |
 | -------------------------- | ------- | --------- | ---------------------------------------------------------------------------------- |
-| **`--primer-trim` (`-P`)** |         | Filepath  | A path to the primer FASTA file.                                                    |
+| **`--primer-trim` (`-P`)** |         | Filepath  | A path to the primer FASTA file.                                                   |
 | `--p-kmer-length`          |         | [2-21]    | Size of the kmers created from the primer FASTA file for matching in the sequence. |
 | `--p-fuzzy`                | False   | Boolean   | Allows one mismatch when matching primer kmers.                                    |
 | `--p-end`                  | b       | [l, r, b] | The end(s) of the sequence that primer trimming should occur on.                   |
@@ -116,7 +125,10 @@ In Oxford Nanopore Technologies' sequencing workflow, short DNA sequences, or [b
 
 ### Example Command
 
-`irma-core trimmer input.fastq --primer-trim primers.fasta --p-kmer-length 17 --p-fuzzy --p-restrict 30 --p-restrict-right 35`
+```bash
+irma-core trimmer input.fastq \
+    --primer-trim primers.fasta --p-kmer-length 17 --p-fuzzy --p-restrict 30 --p-restrict-right 35
+```
 
 ## Hard Trim
 
@@ -132,7 +144,10 @@ Trims a specified number of bases on one or both ends of the sequence. If `hard-
 
 ### Example Command
 
-`irma-core trimmer input.fastq --hard-trim 15 --h-right 20`
+```bash
+irma-core trimmer input.fastq \
+    --hard-trim 15 --h-right 20
+```
 
 ## Length Filtering and Output
 
@@ -142,4 +157,4 @@ Trims a specified number of bases on one or both ends of the sequence. If `hard-
 | ---------------------------- | -------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--min-length` (`-n`)        | 1        | ≥ 1      | Sequences shorter than this length, post-trimming, will be filtered from output.                                                                                |
 | `--fastq-output-file` (`-o`) | `stdout` | Filepath | Path to the output file for trimmed fastq. If none is provided, the output will print to stdout.                                                                |
-| `--mask` (`-m`)              | False    | Boolean  | Rather than removing matched bases during the trimmer process, they can instead be masked to the letter `N`. This flag is applied to _all_ trimming operations. |
+| `--mask` (`-m`)              | False    | Boolean  | Rather than removing matched bases during the trimmer process, they can instead be masked to the letter `N`. This flag is applied to *all* trimming operations. |

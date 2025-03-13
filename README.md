@@ -10,9 +10,9 @@
 
 ### Standalone subcommands
 
-| Process   | Description                                                                                        | Usage                      |
-| --------- | -------------------------------------------------------------------------------------------------- | -------------------------- |
-| `trimmer` | Used for removing adapters, barcodes, and primers among other things. [Read the docs](TRIMMER.md). | `irma-core trimmer --help` |
+| Process   | Description                                                                                             | Usage                      |
+| --------- | ------------------------------------------------------------------------------------------------------- | -------------------------- |
+| `trimmer` | Used for removing adapters, barcodes, and primers among other things. [Read the docs](docs/TRIMMER.md). | `irma-core trimmer --help` |
 
 ### Integrated with IRMA
 
@@ -23,8 +23,7 @@
 | `merge-sam`†       | Merges Illumina paired-end reads with parsimonious error correction and detection                                  | `irma-core merge-sam --help`       |
 | `xflate`†          | Deflates FastQ files to deduplicated Fasta files, or reinflates deduplicated Fasta files to FastQ files.           | `irma-core xflate --help`          |
 
-For compatibility notes between IRMA-core and IRMA, see the [version matrix](VERSION_MATRIX.md).
-
+For compatibility notes between IRMA-core and IRMA, see the [version matrix](docs/VERSION_MATRIX.md).
 
   *† May be combined into a future process, deprecated and removed.*\
   *ø Deprecated, will be removed.*
