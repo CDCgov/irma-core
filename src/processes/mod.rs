@@ -1,5 +1,5 @@
-pub mod fastq_converter;
-pub mod merge_sam_pairs;
-pub mod qc_trim_deflate;
-pub mod trimmer;
-pub mod xflate;
+pub mod integrated;
+pub mod standalone;
+
+pub use integrated::*;
+pub use standalone::*;
