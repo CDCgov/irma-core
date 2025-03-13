@@ -1,5 +1,3 @@
-***This document is under governance review. When the review completes as appropriate per local and agency processes, the project team will be allowed to remove this notice. This material is draft.***
-
 # IRMA-core
 
 **IRMA-core** is suite of subcommands for both stand-alone and integrated use with [IRMA](https://cdcgov.github.io/irma) for *select portions* of the virus sequence assembly process. Processes integrated with IRMA are subject to more rapid internal revision and change while stand-alone processes will attempt to avoid breaking CLI changes where possible. More primitive bioinformatic functionality in IRMA-core can sometimes be pushed down to [The Zoe Anthology](https://github.com/CDCgov/zoe) library for general use cases (PRs welcomed).
