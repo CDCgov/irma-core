@@ -106,9 +106,9 @@ checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 
 [[package]]
 name = "foldhash"
-version = "0.1.4"
+version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a0d2fde1f7b3d48b8395d5f2de76c18a528bd6a9cdde438df747bfcba3e05d6f"
+checksum = "d9c4f5dac5e15c24eb999c26181a6ca40b39fe946cbe4c263c7209467bc83af2"
 
 [[package]]
 name = "heck"
@@ -130,7 +130,7 @@ checksum = "f4c7245a08504955605670dbf141fceab975f15ca21570696aebe9d2e71576bd"
 
 [[package]]
 name = "irma-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "either",
@@ -324,8 +324,8 @@ checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
 
 [[package]]
 name = "zoe"
-version = "0.0.13"
-source = "git+https://github.com/CDCgov/zoe.git?branch=main#7e577c9a6a2238440382837fcf0fba9659980aee"
+version = "0.0.14"
+source = "git+https://github.com/CDCgov/zoe.git?tag=v0.0.14#fbdfdbc484d8c0eb78736f87d96579889805cb62"
 dependencies = [
  "itoa",
  "multiversion",

@@ -1,9 +1,21 @@
 [package]
 name = "irma-core"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
+description = "A tool to aid virus sequencing and accelerating IRMA."
+license = "Apache-2.0"
+rust-version = "1.87"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+# Long-term maintainers of the IRMA-core
+authors = ["Samuel S. Shepard <sshepard@cdc.gov>"]
+categories = [
+    "science::bioinformatics::sequence-analysis",
+    "science::bioinformatics::genomics",
+]
+keywords = ["sequencing", "influenza", "trimming", "qc"]
+repository = "https://github.com/CDCgov/irma-core"
+readme = "README.md"
+
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -11,7 +23,7 @@ either = "1"
 foldhash = "*"
 indoc = "*"
 num_cpus = "*"
-zoe = { git = "https://github.com/CDCgov/zoe.git", branch = "main", default-features = false, features = [
+zoe = { git = "https://github.com/CDCgov/zoe.git", tag = "v0.0.14", default-features = false, features = [
     "multiversion",
 ] }
 
