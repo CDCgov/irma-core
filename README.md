@@ -20,6 +20,7 @@
 | `fastq-converter`ø | Performs FastQ quality control, file conversions, and adapter trimming.                                            | `irma-core fastq-converter --help` |
 | `merge-sam`†       | Merges Illumina paired-end reads with parsimonious error correction and detection                                  | `irma-core merge-sam --help`       |
 | `xflate`†          | Deflates FastQ files to deduplicated Fasta files, or reinflates deduplicated Fasta files to FastQ files.           | `irma-core xflate --help`          |
+| `num-procs`        | Provides the physical or logical cores of a CPU portably.                                                          | `irma-core num-procs --help`       |
 
 For compatibility notes between IRMA-core and IRMA, see the [version matrix](docs/VERSION_MATRIX.md).
 
