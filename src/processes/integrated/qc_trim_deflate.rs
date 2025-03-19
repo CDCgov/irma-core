@@ -3,11 +3,12 @@
 
 use crate::{
     qc::{fastq::*, fastq_metadata::*},
-    utils::{SeedableFoldHashMap, get_seed},
+    utils::get_hasher,
 };
 use clap::{Args, ValueHint};
 use indoc::writedoc;
 use std::{
+    collections::HashMap,
     fs::OpenOptions,
     io::{BufReader, BufWriter, prelude::*},
     path::PathBuf,
@@ -123,7 +124,8 @@ pub fn qc_trim_deflate_process(args: QcTrimDeflateArgs) -> Result<(), std::io::E
                 .map(|r| r.map(|q| (q, r2, Simd::from_array([0, 1])))),
         );
 
-    let mut metadata_by_sequence: SeedableFoldHashMap<_, Vec<_>> = SeedableFoldHashMap::new(get_seed());
+    let mut metadata_by_sequence: HashMap<_, Vec<_>, _> = HashMap::with_hasher(get_hasher());
+
     let mut metadata = FastQMetadata::new();
 
     chained_reader.try_for_each(|record| {

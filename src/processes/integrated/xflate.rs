@@ -1,9 +1,10 @@
 // Description:     Read FastQ files and deflates into a custom XFL format,
 //                  converting to FASTA as well. Also can re-inflate back to FASTQ.
 
-use crate::utils::{get_seed, SeedableFoldHashMap};
+use crate::utils::get_hasher;
 use clap::Parser;
 use std::{
+    collections::HashMap,
     fs::OpenOptions,
     io::{BufRead, BufReader, BufWriter, Write},
     path::{Path, PathBuf},
@@ -36,7 +37,7 @@ fn inflate(table_file: &Path, fasta_files: &Vec<PathBuf>) -> Result<(), std::io:
     let table_reader = BufReader::new(OpenOptions::new().read(true).open(table_file)?);
     let mut stdout_writer = BufWriter::new(std::io::stdout());
 
-    let mut sequence_by_cluster = SeedableFoldHashMap::new(get_seed());
+    let mut sequence_by_cluster = HashMap::with_hasher(get_hasher());
 
     for file in fasta_files {
         let reader = FastaReader::new(BufReader::new(OpenOptions::new().read(true).open(file)?));
@@ -91,7 +92,7 @@ fn deflate(table_file: &Path, fastq_files: &Vec<PathBuf>) -> Result<(), std::io:
     let mut table_writer = BufWriter::new(OpenOptions::new().write(true).create(true).truncate(true).open(table_file)?);
     let mut stdout_writer = BufWriter::new(std::io::stdout());
 
-    let mut metadata_by_sequence = SeedableFoldHashMap::<Nucleotides, Vec<(String, QualityScores)>>::new(get_seed());
+    let mut metadata_by_sequence: HashMap<Nucleotides, Vec<(String, QualityScores)>, _> = HashMap::with_hasher(get_hasher());
 
     for file in fastq_files {
         let reader = FastQReader::new(BufReader::new(OpenOptions::new().read(true).open(file)?));

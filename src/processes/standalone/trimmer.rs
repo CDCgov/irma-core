@@ -1,8 +1,8 @@
 // Description:      Read FastQ files and trim with various options.
-use crate::qc::fastq::ReadTransforms;
+use crate::{qc::fastq::ReadTransforms, utils::get_hasher};
 use clap::{Args, ValueEnum, builder::PossibleValue};
 use either::Either;
-use foldhash::fast::RandomState;
+use foldhash::fast::SeedableRandomState;
 use std::{
     fs::{File, OpenOptions},
     io::{BufReader, BufWriter, Stdout, Write, stdout},
@@ -285,7 +285,7 @@ pub struct ParsedTrimmerArgs {
     pub b_hdist:          usize,
     pub adapters:         Option<(Nucleotides, Nucleotides)>,
     pub a_fuzzy:          bool,
-    pub primer_kmers:     Option<ThreeBitKmerSet<MAX_KMER_LENGTH, RandomState>>,
+    pub primer_kmers:     Option<ThreeBitKmerSet<MAX_KMER_LENGTH, SeedableRandomState>>,
     pub p_restrict_left:  Option<usize>,
     pub p_restrict_right: Option<usize>,
     pub polyg_left:       Option<usize>,
@@ -426,18 +426,20 @@ fn get_forward_reverse_sequence(mut adapter: Nucleotides, preserve_seq: bool) ->
 /// `kmer_length` must be between 2 and 21, inclusive.
 fn prepare_primer_kmers(
     primer_path: &PathBuf, kmer_length: usize, fuzzy_kmer: bool,
-) -> Result<ThreeBitKmerSet<MAX_KMER_LENGTH, RandomState>, std::io::Error> {
+) -> Result<ThreeBitKmerSet<MAX_KMER_LENGTH, SeedableRandomState>, std::io::Error> {
     let mut fasta_primer_reader = FastaReader::from_filename(primer_path)?;
 
-    let mut unique_kmers = ThreeBitKmerSet::<MAX_KMER_LENGTH, _>::with_hasher(kmer_length, RandomState::default())
-        .expect("Expected valid kmer length");
+    let mut unique_kmers =
+        ThreeBitKmerSet::<MAX_KMER_LENGTH, _>::with_hasher(kmer_length, get_hasher()).expect("Expected valid kmer length");
 
     let insert_fn = if fuzzy_kmer {
-        |kmer_set: &mut ThreeBitKmerSet<MAX_KMER_LENGTH, RandomState>, seq: &Nucleotides| {
+        |kmer_set: &mut ThreeBitKmerSet<MAX_KMER_LENGTH, SeedableRandomState>, seq: &Nucleotides| {
             kmer_set.insert_from_sequence_with_variants::<1>(seq)
         }
     } else {
-        |kmer_set: &mut ThreeBitKmerSet<MAX_KMER_LENGTH, RandomState>, seq: &Nucleotides| kmer_set.insert_from_sequence(seq)
+        |kmer_set: &mut ThreeBitKmerSet<MAX_KMER_LENGTH, SeedableRandomState>, seq: &Nucleotides| {
+            kmer_set.insert_from_sequence(seq)
+        }
     };
 
     fasta_primer_reader.try_for_each(|f| -> Result<(), std::io::Error> {
