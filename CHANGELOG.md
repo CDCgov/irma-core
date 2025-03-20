@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. The format is roughly based on [Keep a Changelog], and this project tries to adheres to [Semantic Versioning]. For IRMA vs IRMA-core compatibility, please see the [version matrix](VERSION_MATRIX.md).
 
+## [0.3.1] - 2025-03-21
+
+-- **Added**: The `num-procs` process now has the option `--cap-cores-using-env` so environmental variables like `NSLOTS` and `IFX_LOCAL_PROCS` can further cap resources. The var `LOCAL_PROCS_OVERRIDE` trumps other settings up to the available cores.
+
 ## [0.3.0] - 2025-03-18
 
 ## Added
@@ -33,6 +37,7 @@ All notable changes to this project will be documented in this file. The format 
 - **Added**: custom inexact matching algorithm from [Zoe]
 
 <!-- Versions -->
+[0.3.1]: https://github.com/CDCgov/irma-core/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/CDCgov/irma-core/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/CDCgov/irma-core/compare/v0.1.6...v0.2.0
 [0.1.6]: https://github.com/CDCgov/irma-core/compare/v0.1.5...v0.1.6
