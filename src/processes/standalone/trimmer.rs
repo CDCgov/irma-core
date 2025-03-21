@@ -1,5 +1,5 @@
 // Description:      Read FastQ files and trim with various options.
-use crate::{qc::fastq::ReadTransforms, utils::get_hasher};
+use crate::{qc::fastq::ReadTransforms, utils::get_hasher, utils::get_molecular_id_side};
 use clap::{Args, ValueEnum, builder::PossibleValue};
 use either::Either;
 use foldhash::fast::SeedableRandomState;
@@ -16,15 +16,21 @@ const MAX_KMER_LENGTH: usize = 21;
 #[derive(Args, Debug)]
 pub struct TrimmerArgs {
     /// Path to FASTQ file to be trimmed
-    pub fastq_input_file1: PathBuf,
+    pub fastq_input_file: PathBuf,
 
     /// Path to optional second FASTQ file to be trimmed
     pub fastq_input_file2: Option<PathBuf>,
 
     #[arg(short = 'o', long)]
-    /// Output path for trimmed files. Trimmed sequences print to stdout if not
+    /// Output filepath for trimmed reads. Trimmed reads print to stdout if not
     /// provided
     pub fastq_output_file: Option<PathBuf>,
+
+    #[arg(short = 'u', long, requires = "fastq_input_file2")]
+    /// Output path for secondary trimmed file if using paired reads. Trimmed
+    /// sequences from the second input fastq will be interleaved with the first
+    /// if this argument is not given
+    pub fastq_output_file2: Option<PathBuf>,
 
     #[arg(short = 's', long)]
     /// Preserve original formatting: disables encoding sequences into uppercase
@@ -40,6 +46,10 @@ pub struct TrimmerArgs {
     /// Minimum sequence length required after trimming. Shorter sequences are
     /// filtered from output.
     pub min_length: NonZeroUsize,
+
+    #[arg(short = 'f', long)]
+    /// Filter widowed reads
+    pub filter_widows: bool,
 
     #[arg(short = 'G', long)]
     /// Trims multiple consecutive G's (a possible artifact of Illumina
@@ -149,60 +159,200 @@ pub struct TrimmerArgs {
 
 /// Sub-program for trimming FASTQ data.
 pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
-    let mut args = parse_trim_args(args)?;
+    let (mut io_args, trimmer_args) = parse_trim_args(args)?;
+    let writer = &mut io_args.output_writer;
 
-    let writer = &mut args.output_writer;
-    let mut chained_reader = args.fastq_reader1.chain(args.fastq_reader2.into_iter().flatten());
-
-    chained_reader.by_ref().try_for_each(|record| -> Result<(), std::io::Error> {
-        let mut fq = record?;
-        let mut fq_view = fq.as_view_mut();
-        fq_view.to_canonical_bases(!args.preserve_seq);
-
-        fq_view.process_polyg(args.polyg_left, args.polyg_right, args.mask);
-
-        if let Some((ref forward_adapter, ref reverse_adapter)) = args.adapters {
-            fq_view.transform_by_reverse_forward_search(
-                args.a_fuzzy,
-                !args.mask,
-                reverse_adapter.as_bytes(),
-                forward_adapter.as_bytes(),
-            );
-        } else if let Some((barcode, reverse)) = &args.barcodes {
-            fq_view.process_barcode(
-                barcode.as_bytes(),
-                reverse.as_bytes(),
-                args.b_hdist,
-                args.mask,
-                args.b_restrict_left,
-                args.b_restrict_right,
-            );
+    match (io_args.fastq_reader2, io_args.output_writer2, trimmer_args.filter_widows) {
+        // Case 1: In 1, Out 1 (ONT)
+        (None, None, _) => {
+            process_and_write(&mut io_args.fastq_reader1, writer, &trimmer_args)?;
+            writer.flush()?;
         }
 
-        if let Some(ref kmers) = args.primer_kmers {
-            if let Some(p_restrict_left) = args.p_restrict_left {
-                fq_view.process_left_primer(p_restrict_left, kmers, args.mask);
+        // Case 2: In 1, In 2, Out 1 (interleaved Illumina), no widow filtering
+        (Some(mut fastq_reader2), None, false) => {
+            let mut zipped_reader = io_args.fastq_reader1.by_ref().zip(fastq_reader2.by_ref());
+            zipped_reader.try_for_each(|(r1, r2)| -> Result<(), std::io::Error> {
+                let mut read1 = r1?;
+                let mut read2 = r2?;
+
+                if let Some(trimmed1) = process_read(&mut read1, &trimmer_args) {
+                    write!(writer, "{trimmed1}")?;
+                }
+                if let Some(trimmed2) = process_read(&mut read2, &trimmer_args) {
+                    write!(writer, "{trimmed2}")?;
+                }
+
+                Ok(())
+            })?;
+            // if either reader has remaining sequences, this will trim them. (same as 1 in, 1 out)
+            let mut remaining = io_args.fastq_reader1.chain(fastq_reader2);
+            process_and_write(&mut remaining, writer, &trimmer_args)?;
+
+            writer.flush()?;
+        }
+
+        // Case 3: In 1, In 2, Out 1, Filtering widows
+        (Some(mut fastq_reader2), None, true) => {
+            let mut zipped_reader = io_args.fastq_reader1.by_ref().zip(fastq_reader2.by_ref());
+            zipped_reader.try_for_each(|(r1, r2)| -> Result<(), std::io::Error> {
+                let mut read1 = r1?;
+                let mut read2 = r2?;
+
+                if !check_paired_headers(&read1, &read2) {
+                    writer.flush()?;
+                    panic!("A mismatch in read IDs was found. Terminating.");
+                }
+
+                if let Some((trimmed1, trimmed2)) = process_paired_reads(&mut read1, &mut read2, &trimmer_args) {
+                    write!(writer, "{trimmed1}")?;
+                    write!(writer, "{trimmed2}")?;
+                }
+
+                Ok(())
+            })?;
+            writer.flush()?;
+            if io_args.fastq_reader1.next().is_some() || fastq_reader2.next().is_some() {
+                panic!("Extra read found at end of one of the input FASTQ files. Terminating");
             }
-            if let Some(p_restrict_right) = args.p_restrict_right {
-                fq_view.process_right_primer(p_restrict_right, kmers, args.mask);
+        }
+
+        // Case 4: In 1, In 2, Out 1, Out 2 (separated output Illumina), no filtering
+        (Some(mut fastq_reader2), Some(output_writer2), false) => {
+            let mut writer2 = output_writer2;
+            process_and_write(&mut io_args.fastq_reader1, writer, &trimmer_args)?;
+            process_and_write(&mut fastq_reader2, &mut writer2, &trimmer_args)?;
+
+            writer.flush()?;
+            writer2.flush()?;
+        }
+
+        // Case 5: In 1, In 2, Out 1, Out 2, filter widows
+        (Some(mut fastq_reader2), Some(mut writer2), true) => {
+            let mut zipped_reader = io_args.fastq_reader1.by_ref().zip(fastq_reader2.by_ref());
+            zipped_reader.try_for_each(|(r1, r2)| -> Result<(), std::io::Error> {
+                let mut read1 = r1?;
+                let mut read2 = r2?;
+
+                // terminates early if a mismatch is found
+                if !check_paired_headers(&read1, &read2) {
+                    writer.flush()?;
+                    writer2.flush()?;
+                    panic!("A mismatch in read IDs was found. Terminating.");
+                }
+
+                if let Some((trimmed1, trimmed2)) = process_paired_reads(&mut read1, &mut read2, &trimmer_args) {
+                    write!(writer, "{trimmed1}")?;
+                    write!(writer2, "{trimmed2}")?;
+                }
+
+                Ok(())
+            })?;
+            writer.flush()?;
+            writer2.flush()?;
+            if io_args.fastq_reader1.next().is_some() || fastq_reader2.next().is_some() {
+                panic!("Extra read found at end of one of the input FASTQ files. Terminating");
             }
         }
 
-        if args.hard_left > 0 || args.hard_right > 0 {
-            fq_view.hard_clip_or_mask(args.hard_left, args.hard_right, args.mask);
+        _ => {
+            unreachable!();
         }
-
-        if args.mask {
-            write!(writer, "{fq}")?;
-        } else if fq_view.len() >= args.min_length {
-            write!(writer, "{fq_view}")?;
-        }
-
-        Ok(())
-    })?;
-    writer.flush()?;
+    }
 
     Ok(())
+}
+
+/// Processes an iterator of reads and writes it to output
+pub fn process_and_write<I, W>(reads: &mut I, writer: &mut W, args: &ParsedTrimmerArgs) -> Result<(), std::io::Error>
+where
+    I: Iterator<Item = Result<FastQ, std::io::Error>>,
+    W: Write, {
+    reads.try_for_each(|record_res| {
+        let mut record = record_res?;
+        if let Some(trimmed) = process_read(&mut record, args) {
+            write!(writer, "{trimmed}")?;
+        }
+        Ok(())
+    })
+}
+
+/// Processes two reads together with filtering of widowed reads
+pub fn process_paired_reads<'a>(
+    record1: &'a mut FastQ, record2: &'a mut FastQ, args: &ParsedTrimmerArgs,
+) -> Option<(FastQViewMut<'a>, FastQViewMut<'a>)> {
+    let trimmed1 = process_read(record1, args)?;
+    let trimmed2 = process_read(record2, args)?;
+    Some((trimmed1, trimmed2))
+}
+
+/// Processes a single read and performs length filtering. Returns `None` if the
+/// read is too short
+pub fn process_read<'a>(record: &'a mut FastQ, args: &ParsedTrimmerArgs) -> Option<FastQViewMut<'a>> {
+    if args.mask {
+        let fq_view = record.as_view_mut();
+        edit_read(fq_view, args);
+        if record.len() >= args.min_length {
+            return Some(record.as_view_mut());
+        }
+    } else {
+        let fq_view = record.as_view_mut();
+        let edited = edit_read(fq_view, args);
+        if edited.len() >= args.min_length {
+            return Some(edited);
+        }
+    }
+    None
+}
+
+/// Trims or masks a read based on user provided arguments
+pub fn edit_read<'a>(mut fq_view: FastQViewMut<'a>, args: &ParsedTrimmerArgs) -> FastQViewMut<'a> {
+    fq_view.to_canonical_bases(!args.preserve_seq);
+
+    fq_view.process_polyg(args.polyg_left, args.polyg_right, args.mask);
+
+    if let Some((ref forward_adapter, ref reverse_adapter)) = args.adapters {
+        fq_view.transform_by_reverse_forward_search(
+            args.a_fuzzy,
+            !args.mask,
+            reverse_adapter.as_bytes(),
+            forward_adapter.as_bytes(),
+        );
+    } else if let Some((barcode, reverse)) = &args.barcodes {
+        fq_view.process_barcode(
+            barcode.as_bytes(),
+            reverse.as_bytes(),
+            args.b_hdist,
+            args.mask,
+            args.b_restrict_left,
+            args.b_restrict_right,
+        );
+    }
+
+    if let Some(ref kmers) = args.primer_kmers {
+        if let Some(p_restrict_left) = args.p_restrict_left {
+            fq_view.process_left_primer(p_restrict_left, kmers, args.mask);
+        }
+        if let Some(p_restrict_right) = args.p_restrict_right {
+            fq_view.process_right_primer(p_restrict_right, kmers, args.mask);
+        }
+    }
+
+    if args.hard_left > 0 || args.hard_right > 0 {
+        fq_view.hard_clip_or_mask(args.hard_left, args.hard_right, args.mask);
+    }
+    fq_view
+}
+
+/// Returns whether two reads have matching molecular IDs. If the IDs cannot be
+/// parsed, then `false` is returned.
+pub fn check_paired_headers(read1: &FastQ, read2: &FastQ) -> bool {
+    let h1 = &read1.header;
+    let h2 = &read2.header;
+    if let (Some((id1, _)), Some((id2, _))) = (get_molecular_id_side(h1, '0'), get_molecular_id_side(h2, '1')) {
+        return id1 == id2;
+    }
+    false
 }
 
 /// Enum for trimming end options
@@ -272,10 +422,15 @@ fn validate_acgtn(value: &str) -> Result<Nucleotides, String> {
     }
 }
 
+pub struct IOArgs {
+    pub fastq_reader1:  FastQReader<BufReader<File>>,
+    pub fastq_reader2:  Option<FastQReader<BufReader<File>>>,
+    pub output_writer:  BufWriter<Either<File, Stdout>>,
+    pub output_writer2: Option<BufWriter<File>>,
+}
+
 pub struct ParsedTrimmerArgs {
-    pub fastq_reader1:    FastQReader<BufReader<File>>,
-    pub fastq_reader2:    Option<FastQReader<BufReader<File>>>,
-    pub output_writer:    BufWriter<Either<File, Stdout>>,
+    pub filter_widows:    bool,
     pub preserve_seq:     bool,
     pub mask:             bool,
     pub min_length:       usize,
@@ -294,8 +449,8 @@ pub struct ParsedTrimmerArgs {
     pub hard_right:       usize,
 }
 
-pub fn parse_trim_args(args: TrimmerArgs) -> Result<ParsedTrimmerArgs, std::io::Error> {
-    let fastq_reader1 = FastQReader::new(BufReader::new(OpenOptions::new().read(true).open(&args.fastq_input_file1)?));
+pub fn parse_trim_args(args: TrimmerArgs) -> Result<(IOArgs, ParsedTrimmerArgs), std::io::Error> {
+    let fastq_reader1 = FastQReader::new(BufReader::new(OpenOptions::new().read(true).open(&args.fastq_input_file)?));
 
     let fastq_reader2 = if let Some(file2) = &args.fastq_input_file2 {
         Some(FastQReader::new(BufReader::new(OpenOptions::new().read(true).open(file2)?)))
@@ -306,6 +461,11 @@ pub fn parse_trim_args(args: TrimmerArgs) -> Result<ParsedTrimmerArgs, std::io::
     let output_writer = match &args.fastq_output_file {
         Some(path) => BufWriter::new(Either::Left(File::create(path)?)),
         None => BufWriter::new(Either::Right(stdout())),
+    };
+
+    let output_writer2 = match &args.fastq_output_file2 {
+        Some(path) => Some(BufWriter::new(File::create(path)?)),
+        None => None,
     };
 
     let adapters = args
@@ -387,10 +547,15 @@ pub fn parse_trim_args(args: TrimmerArgs) -> Result<ParsedTrimmerArgs, std::io::
     let hard_left = args.h_left.unwrap_or(default_hard_bases);
     let hard_right = args.h_right.unwrap_or(default_hard_bases);
 
-    let parsed_args = ParsedTrimmerArgs {
+    let io_args = IOArgs {
         fastq_reader1,
         fastq_reader2,
         output_writer,
+        output_writer2,
+    };
+
+    let parsed_args = ParsedTrimmerArgs {
+        filter_widows: args.filter_widows,
         preserve_seq: args.preserve_fastq,
         mask: args.mask,
         min_length: args.min_length.get(),
@@ -408,7 +573,7 @@ pub fn parse_trim_args(args: TrimmerArgs) -> Result<ParsedTrimmerArgs, std::io::
         hard_left,
         hard_right,
     };
-    Ok(parsed_args)
+    Ok((io_args, parsed_args))
 }
 
 /// For converting adapters and barcodes to uppercase (unless disabled) and

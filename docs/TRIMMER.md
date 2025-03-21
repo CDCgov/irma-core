@@ -48,6 +48,22 @@ irma-core trimmer input.fastq \
 
 Details about each trimming operation and their arguments are given below.
 
+## Paired Reads
+
+Some sequencers (including Illumina sequencers) generate reads from both ends of the DNA fragments, resulting in two FASTQ files of paired reads. To handle these, you can optionally include a second FASTQ file as input. For paired read output, you can include two output files, or if only a single output file is provided, the paired reads will be interleaved.
+
+### Widowed or Orphaned Reads
+
+When handling paired reads, a widowed (or orphaned) read may occur,  where one of the reads was filtered and leaves the second one behind. If it is desired to not include widowed reads in the output, IRMA-core will inspect the headers of paired reads to ensure the reads match. If this option is selected and one paired read is filtered due to post-trimming length filtering, the widowed read will not be included in the output.
+
+It is important to note that if the `--filter-widows` flag is selected, the input FASTQ files are assumed to contain reads in the same order. Therefore, if non-matching headers are found while reading through the paired inputs, the program will terminate early with an error message.
+
+### Arguments
+
+| Parameter         | Default | Kind | Description                                                           |
+| ----------------- | ------- | ---- | --------------------------------------------------------------------- |
+| `--filter-widows` |         |      | Flag enabling filtering of paired reads if a read is missing its mate |
+
 ## Base Recoding
 
 By default, bases in the input FASTQ files are recoded into uppercase canonical bases (`ACGTN`). Gaps, ambiguous IUPAC bases, and non-IUPAC characters are automatically changed to `N`. This behavior can be disabled with the `--preserve-fastq` flag.
@@ -177,5 +193,6 @@ irma-core trimmer input.fastq \
 | Parameter                    | Default  | Kind     | Description                                                                                                                                                     |
 | ---------------------------- | -------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `--min-length` (`-n`)        | 1        | ≥ 1      | Sequences shorter than this length, post-trimming, will be filtered from output.                                                                                |
-| `--fastq-output-file` (`-o`) | `stdout` | Filepath | Path to the output file for trimmed fastq. If none is provided, the output will print to stdout.                                                                |
+| `--fastq-output-file` (`-o`) | `stdout` | Filepath | Path to the output file for trimmed FASTQ. If not provided, the output will print to stdout.                                                                |
+| `--fastq-output-file2` (`-u`) | `None` | Optional Filepath | Optional path to secondary output file for paired FASTQ. If not provided, the output will be interleaved with the output of `--fastq-output-file` |
 | `--mask` (`-m`)              | False    | Boolean  | Rather than removing matched bases during the trimmer process, they can instead be masked to the letter `N`. This flag is applied to *all* trimming operations. |
