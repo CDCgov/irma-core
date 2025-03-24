@@ -45,6 +45,12 @@ cargo +nightly b -r
 ls -l target/release/irma-core
 ```
 
+For RHEL 8 compatible Linux distributions, you can also re-build IRMA-core using the [latest builder image](docs/BUILDER-README.md):
+
+```bash
+docker pull ghcr.io/your-org/irma-core/builder:latest
+```
+
 ### How should this application be cited?
 
 One can cite the IRMA [manuscript](https://bmcgenomics.biomedcentral.com/articles/10.1186/s12864-016-3030-6) in general, but a software citation of IRMA-core specifically is also possible for stand-alone use cases. We include some citations for convenience in [`CITATION.bib`](https://github.com/CDCgov/irma-core/blob/main/BIBLIOGRAPHY.bib)).

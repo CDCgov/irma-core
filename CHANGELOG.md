@@ -4,7 +4,7 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [0.3.1] - 2025-03-21
 
--- **Added**: The `num-procs` process now has the option `--cap-cores-using-env` so environmental variables like `NSLOTS` and `IFX_LOCAL_PROCS` can further cap resources. The var `LOCAL_PROCS_OVERRIDE` trumps other settings up to the available cores.
+- **Added**: The `num-procs` process now has the option `--cap-cores-using-env` so environmental variables like `NSLOTS` and `IFX_LOCAL_PROCS` can further cap resources. The var `LOCAL_PROCS_OVERRIDE` trumps other settings up to the available cores.
 
 ## [0.3.0] - 2025-03-18
 
@@ -25,8 +25,8 @@ All notable changes to this project will be documented in this file. The format 
 
 ## [0.2.0] - 2024-10-30
 
--- **Added**: Updates the new `qc-trim-deflate` (name subject to change) process with various fixes and improvements.
--- **Changed**: Slims down and corrects raw read counts in the the fastq-converter process.
+- **Added**: Updates the new `qc-trim-deflate` (name subject to change) process with various fixes and improvements.
+- **Changed**: Slims down and corrects raw read counts in the the fastq-converter process.
 
 ## [0.1.6] - 2024-10-11
 

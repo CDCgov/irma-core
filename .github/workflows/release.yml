@@ -1,0 +1,131 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+-irma-compat-v[0-9]+.[0-9]+.[0-9]+'
+      - 'IRMA@v[0-9]+.[0-9]+.[0-9]+'
+
+env:
+  CARGO_TERM_COLOR: always
+  RELEASE_BIN: irma-core
+  REGISTRY: ghcr.io
+  BUILDER_IMAGE: ${{ github.repository }}/builder:latest
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract Changelog
+        id: extract_changelog
+        shell: bash
+        run: |
+          CHANGELOG_CONTENT=$(perl -ne 'BEGIN{$/ = "## [";} my $data=<>; chomp($data); print "## [$data"; exit;' CHANGELOG.md)
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG_CONTENT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ steps.extract_changelog.outputs.changelog }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-builder:
+    name: Build Builder Image
+    uses: ./.github/workflows/builder.yml
+
+  build-rhel-compat-with-builder:
+    name: Build Ubuntu Release with Builder Image
+    needs: [create-release, build-builder]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Fix image name
+        run: echo "BUILDER_IMAGE=${BUILDER_IMAGE,,}" >> "${GITHUB_ENV}"
+
+      - name: Build with Builder Image
+        run: |
+          docker run --rm -v ${{ github.workspace }}:/app -w /app \
+            ${{ env.REGISTRY }}/${{ env.BUILDER_IMAGE }} \
+            cargo build --release --target x86_64-unknown-linux-gnu
+
+      - name: Package Binary
+        shell: bash
+        run: |
+          cd target/x86_64-unknown-linux-gnu/release
+          tar -czf ../../../irma-core-linux-x86_64-${{ github.ref_name }}.tar.gz ${{ env.RELEASE_BIN }}
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: irma-core-linux-x86_64-${{ github.ref_name }}.*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-others-for-release:
+    name: Build Release
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            artifact_name: irma-core-macos-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            artifact_name: irma-core-macos-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: irma-core-windows-x86_64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install latest nightly Rust
+        run: |
+          rustup update nightly
+          rustup default nightly
+          rustup target add ${{ matrix.target }}
+
+      - name: Build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release --target ${{ matrix.target }}
+
+      - name: Package Binary
+        shell: bash
+        run: |
+          cd target/${{ matrix.target }}/release
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            7z a ../../../${{ matrix.artifact_name }}-${{ github.ref_name }}.zip ${{ env.RELEASE_BIN }}.exe
+          else
+            tar -czf ../../../${{ matrix.artifact_name }}-${{ github.ref_name }}.tar.gz ${{ env.RELEASE_BIN }}
+          fi
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact_name }}-${{ github.ref_name }}.*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
