@@ -47,6 +47,7 @@ pub fn num_procs_process(args: NumProcsArgs) -> Result<(), std::io::Error> {
                 "IRMA-core WARNING! Requested 'LOCAL_PROCS_OVERRIDE={n}' but only {a} cores available. Setting to {a}.",
                 a = available
             );
+            cores = available;
         } else if n == 0 {
             eprintln!("IRMA-core WARNING! The requested 'LOCAL_PROCS_OVERRIDE={s}' is not valid, ignoring.");
         } else {
