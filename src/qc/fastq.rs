@@ -323,8 +323,8 @@ impl ReadTransforms for FastQ {
 
     #[inline]
     fn to_canonical_bases(&mut self, recode: bool) -> &mut Self {
-        if recode {
-            self.sequence.recode_any_to_acgtn_uc();
+        if recode && !self.sequence.is_acgtn_uc() {
+            self.sequence.recode_dna_reads();
         }
         self
     }
@@ -562,8 +562,8 @@ impl ReadTransforms for FastQViewMut<'_> {
 
     #[inline]
     fn to_canonical_bases(&mut self, recode: bool) -> &mut Self {
-        if recode {
-            self.sequence.recode_any_to_acgtn_uc();
+        if recode && !self.sequence.is_acgtn_uc() {
+            self.sequence.recode_dna_reads();
         }
         self
     }

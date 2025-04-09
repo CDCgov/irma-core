@@ -1,11 +1,10 @@
-// Description:      Read FastQ files and trim with various options.
 use crate::{qc::fastq::ReadTransforms, utils::get_hasher, utils::get_molecular_id_side};
 use clap::{Args, ValueEnum, builder::PossibleValue};
 use either::Either;
 use foldhash::fast::SeedableRandomState;
 use std::{
     fs::{File, OpenOptions},
-    io::{BufReader, BufWriter, Stdout, Write, stdout},
+    io::{BufReader, BufWriter, Error as IOError, ErrorKind, Stdout, Write, stdout},
     num::NonZeroUsize,
     path::PathBuf,
 };
@@ -21,15 +20,14 @@ pub struct TrimmerArgs {
     /// Path to optional second FASTQ file to be trimmed
     pub fastq_input_file2: Option<PathBuf>,
 
-    #[arg(short = 'o', long)]
-    /// Output filepath for trimmed reads. Trimmed reads print to stdout if not
-    /// provided
+    #[arg(short = '1', short_alias = 'o', long = "fastq-output1")]
+    /// Output filepath for trimmed reads. Trimmed reads print to STDOUT if not
+    /// provided. May also use '-o'.
     pub fastq_output_file: Option<PathBuf>,
 
-    #[arg(short = 'u', long, requires = "fastq_input_file2")]
-    /// Output path for secondary trimmed file if using paired reads. Trimmed
-    /// sequences from the second input fastq will be interleaved with the first
-    /// if this argument is not given
+    #[arg(short = '2', long = "fastq-output2", requires = "fastq_input_file2")]
+    /// Output path for secondary trimmed file if using paired reads. If this
+    /// argument is omitted, output is interleaved.
     pub fastq_output_file2: Option<PathBuf>,
 
     #[arg(short = 's', long)]
@@ -162,102 +160,94 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
     let (mut io_args, trimmer_args) = parse_trim_args(args)?;
     let writer = &mut io_args.output_writer;
 
-    match (io_args.fastq_reader2, io_args.output_writer2, trimmer_args.filter_widows) {
-        // Case 1: In 1, Out 1 (ONT)
-        (None, None, _) => {
-            process_and_write(&mut io_args.fastq_reader1, writer, &trimmer_args)?;
-            writer.flush()?;
-        }
+    if let Some(mut reader2) = io_args.fastq_reader2 {
+        match (io_args.output_writer2, trimmer_args.filter_widows) {
+            // Case 2: In 1, In 2, Out 1 (interleaved Illumina), no widow filtering
+            (None, false) => {
+                for r1 in io_args.fastq_reader1.by_ref() {
+                    let mut read1 = r1?;
+                    if let Some(trimmed1) = process_read(&mut read1, &trimmer_args) {
+                        write!(writer, "{trimmed1}")?;
+                    }
 
-        // Case 2: In 1, In 2, Out 1 (interleaved Illumina), no widow filtering
-        (Some(mut fastq_reader2), None, false) => {
-            let mut zipped_reader = io_args.fastq_reader1.by_ref().zip(fastq_reader2.by_ref());
-            zipped_reader.try_for_each(|(r1, r2)| -> Result<(), std::io::Error> {
-                let mut read1 = r1?;
-                let mut read2 = r2?;
+                    let Some(r2) = reader2.next() else {
+                        break;
+                    };
+                    let mut read2 = r2?;
 
-                if let Some(trimmed1) = process_read(&mut read1, &trimmer_args) {
-                    write!(writer, "{trimmed1}")?;
-                }
-                if let Some(trimmed2) = process_read(&mut read2, &trimmer_args) {
-                    write!(writer, "{trimmed2}")?;
-                }
-
-                Ok(())
-            })?;
-            // if either reader has remaining sequences, this will trim them. (same as 1 in, 1 out)
-            let mut remaining = io_args.fastq_reader1.chain(fastq_reader2);
-            process_and_write(&mut remaining, writer, &trimmer_args)?;
-
-            writer.flush()?;
-        }
-
-        // Case 3: In 1, In 2, Out 1, Filtering widows
-        (Some(mut fastq_reader2), None, true) => {
-            let mut zipped_reader = io_args.fastq_reader1.by_ref().zip(fastq_reader2.by_ref());
-            zipped_reader.try_for_each(|(r1, r2)| -> Result<(), std::io::Error> {
-                let mut read1 = r1?;
-                let mut read2 = r2?;
-
-                if !check_paired_headers(&read1, &read2) {
-                    writer.flush()?;
-                    panic!("A mismatch in read IDs was found. Terminating.");
+                    if let Some(trimmed2) = process_read(&mut read2, &trimmer_args) {
+                        write!(writer, "{trimmed2}")?;
+                    }
                 }
 
-                if let Some((trimmed1, trimmed2)) = process_paired_reads(&mut read1, &mut read2, &trimmer_args) {
-                    write!(writer, "{trimmed1}")?;
-                    write!(writer, "{trimmed2}")?;
+                // if either reader has remaining sequences, this will trim them. (same as 1 in, 1 out)
+                let mut remaining = io_args.fastq_reader1.chain(reader2);
+                process_and_write(&mut remaining, writer, &trimmer_args)?;
+
+                writer.flush()?;
+            }
+
+            // Case 3: In 1, In 2, Out 1, Filtering widows / orphan reads
+            (None, true) => {
+                for r1 in io_args.fastq_reader1 {
+                    let mut read1 = r1?;
+                    let Some(r2) = reader2.next() else {
+                        return error_extra_read();
+                    };
+                    let mut read2 = r2?;
+                    check_paired_headers(&read1, &read2)?;
+
+                    if let Some((trimmed1, trimmed2)) = process_paired_reads(&mut read1, &mut read2, &trimmer_args) {
+                        write!(writer, "{trimmed1}")?;
+                        write!(writer, "{trimmed2}")?;
+                    }
                 }
 
-                Ok(())
-            })?;
-            writer.flush()?;
-            if io_args.fastq_reader1.next().is_some() || fastq_reader2.next().is_some() {
-                panic!("Extra read found at end of one of the input FASTQ files. Terminating");
+                writer.flush()?;
+
+                if reader2.next().is_some() {
+                    return error_extra_read();
+                }
+            }
+
+            // Case 4: In 1, In 2, Out 1, Out 2 (separated output Illumina), no filtering
+            (Some(output_writer2), false) => {
+                let mut writer2 = output_writer2;
+                process_and_write(&mut io_args.fastq_reader1, writer, &trimmer_args)?;
+                process_and_write(&mut reader2, &mut writer2, &trimmer_args)?;
+
+                writer.flush()?;
+                writer2.flush()?;
+            }
+
+            // Case 5: In 1, In 2, Out 1, Out 2, filter widows
+            (Some(mut writer2), true) => {
+                for r1 in io_args.fastq_reader1 {
+                    let mut read1 = r1?;
+                    let Some(r2) = reader2.next() else {
+                        return error_extra_read();
+                    };
+                    let mut read2 = r2?;
+                    check_paired_headers(&read1, &read2)?;
+
+                    if let Some((trimmed1, trimmed2)) = process_paired_reads(&mut read1, &mut read2, &trimmer_args) {
+                        write!(writer, "{trimmed1}")?;
+                        write!(writer2, "{trimmed2}")?;
+                    }
+                }
+
+                writer.flush()?;
+                writer2.flush()?;
+
+                if reader2.next().is_some() {
+                    return error_extra_read();
+                }
             }
         }
-
-        // Case 4: In 1, In 2, Out 1, Out 2 (separated output Illumina), no filtering
-        (Some(mut fastq_reader2), Some(output_writer2), false) => {
-            let mut writer2 = output_writer2;
-            process_and_write(&mut io_args.fastq_reader1, writer, &trimmer_args)?;
-            process_and_write(&mut fastq_reader2, &mut writer2, &trimmer_args)?;
-
-            writer.flush()?;
-            writer2.flush()?;
-        }
-
-        // Case 5: In 1, In 2, Out 1, Out 2, filter widows
-        (Some(mut fastq_reader2), Some(mut writer2), true) => {
-            let mut zipped_reader = io_args.fastq_reader1.by_ref().zip(fastq_reader2.by_ref());
-            zipped_reader.try_for_each(|(r1, r2)| -> Result<(), std::io::Error> {
-                let mut read1 = r1?;
-                let mut read2 = r2?;
-
-                // terminates early if a mismatch is found
-                if !check_paired_headers(&read1, &read2) {
-                    writer.flush()?;
-                    writer2.flush()?;
-                    panic!("A mismatch in read IDs was found. Terminating.");
-                }
-
-                if let Some((trimmed1, trimmed2)) = process_paired_reads(&mut read1, &mut read2, &trimmer_args) {
-                    write!(writer, "{trimmed1}")?;
-                    write!(writer2, "{trimmed2}")?;
-                }
-
-                Ok(())
-            })?;
-            writer.flush()?;
-            writer2.flush()?;
-            if io_args.fastq_reader1.next().is_some() || fastq_reader2.next().is_some() {
-                panic!("Extra read found at end of one of the input FASTQ files. Terminating");
-            }
-        }
-
-        _ => {
-            unreachable!();
-        }
+    } else {
+        // Case 1: In 1, Out 1 (ONT, single-end, PacBio)
+        process_and_write(&mut io_args.fastq_reader1, writer, &trimmer_args)?;
+        writer.flush()?;
     }
 
     Ok(())
@@ -344,15 +334,35 @@ pub fn edit_read<'a>(mut fq_view: FastQViewMut<'a>, args: &ParsedTrimmerArgs) ->
     fq_view
 }
 
-/// Returns whether two reads have matching molecular IDs. If the IDs cannot be
-/// parsed, then `false` is returned.
-pub fn check_paired_headers(read1: &FastQ, read2: &FastQ) -> bool {
-    let h1 = &read1.header;
-    let h2 = &read2.header;
-    if let (Some((id1, _)), Some((id2, _))) = (get_molecular_id_side(h1, '0'), get_molecular_id_side(h2, '1')) {
-        return id1 == id2;
+/// Returns whether two reads have matching molecular IDs. Errors if the read
+/// ID's don't match or can't be parsed.
+pub fn check_paired_headers(read1: &FastQ, read2: &FastQ) -> Result<(), std::io::Error> {
+    if let Some((id1, _)) = get_molecular_id_side(&read1.header, '0')
+        && let Some((id2, _)) = get_molecular_id_side(&read2.header, '0')
+    {
+        if id1 == id2 {
+            Ok(())
+        } else {
+            Err(IOError::new(
+                ErrorKind::InvalidInput,
+                format!(
+                    "Paired read IDs out of sync:\n\t{h1}\n\t{h2}\n",
+                    h1 = read1.header,
+                    h2 = read2.header
+                ),
+            ))
+        }
+    } else {
+        Err(IOError::new(ErrorKind::InvalidInput, "Could not parse the read IDs."))
     }
-    false
+}
+
+#[inline]
+fn error_extra_read() -> Result<(), std::io::Error> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        "Extra unpaired read(s) found at end of one of the input FASTQ files.",
+    ))
 }
 
 /// Enum for trimming end options
@@ -412,13 +422,10 @@ fn validate_acgtn(value: &str) -> Result<Nucleotides, String> {
     if value.trim().is_empty() {
         // prevents panicking when `-A ""` is passed
         Err("Adapter (-A) or barcode (-B) cannot be empty!".to_string())
+    } else if value.as_bytes().is_valid_dna(IsValidDNA::AcgtnNoGaps) {
+        Ok(value.as_bytes().into())
     } else {
-        let forward = Nucleotides::from(value.as_bytes());
-        if forward.is_acgtn() {
-            Ok(forward)
-        } else {
-            Err("Adapter or barcode literal must only consist of canonical (ACGTN) bases".to_string())
-        }
+        Err("Adapter or barcode literal must only consist of canonical (ACGTN) bases".to_string())
     }
 }
 

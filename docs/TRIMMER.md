@@ -50,7 +50,7 @@ Details about each trimming operation and their arguments are given below.
 
 ## Paired Reads
 
-Some sequencers (including Illumina sequencers) generate reads from both ends of the DNA fragments, resulting in two FASTQ files of paired reads. To handle these, you can optionally include a second FASTQ file as input. For paired read output, you can include two output files, or if only a single output file is provided, the paired reads will be interleaved.
+Some sequencers (including Illumina sequencers) generate reads from both ends of the DNA fragments, resulting in two FASTQ files of paired reads. To handle these, you can optionally include a second FASTQ file as *input*. For paired read *output*, you can include two output files, or if only a single output file is provided, the paired reads will be interleaved.
 
 ### Widowed or Orphaned Reads
 
@@ -102,10 +102,10 @@ Some high-throughput sequencing processes, such as those developed by Illumina, 
 
 ### Arguments
 
-| Parameter                   | Default | Kind                  | Description                                                                                                        |
-| --------------------------- | ------- | --------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| **`--adapter-trim` (`-A`)** |         | String | A literal nucleotide sequence for the adapter to be trimmed. Non-canonical (ACGTN) characters will cause an error. |
-| `--a-fuzzy`                 | False   | Boolean               | Allows one mismatch (hamming distance 1) when matching adapters.                                                   |
+| Parameter                   | Default | Kind    | Description                                                                                                        |
+| --------------------------- | ------- | ------- | ------------------------------------------------------------------------------------------------------------------ |
+| **`--adapter-trim` (`-A`)** |         | String  | A literal nucleotide sequence for the adapter to be trimmed. Non-canonical (ACGTN) characters will cause an error. |
+| `--a-fuzzy`                 | False   | Boolean | Allows one mismatch (hamming distance 1) when matching adapters.                                                   |
 
 ### Example Command
 
@@ -122,14 +122,14 @@ In Oxford Nanopore Technologies' sequencing workflow, short DNA sequences or [ba
 
 ### Arguments
 
-| Parameter                   | Default   | Kind                  | Description                                                                                                                                                                                |
-| --------------------------- | --------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **`--barcode-trim` (`-B`)** |           | String | A literal nucleotide sequence for the barcode to be trimmed. Non-canonical (ACGTN) characters will cause an error.                                                                         |
-| `--b-end`                   | b         | l, r, b               | The end(s) of the sequence that barcode trimming should occur on.                                                                                                                          |
-| `--b-restrict`              | full scan | ≥ 1                   | Restriction window size for barcode trimming on both ends of the sequence. If no restriction is provided, the trimmer will perform a full-scan barcode search, checking the full sequence. |
-| `--b-restrict-left`         |           | ≥ 1                   | Overrides `--b-restrict` for the left end.                                                                                                                                                 |
-| `--b-restrict-right`        |           | ≥ 1                   | Overrides `--b-restrict` for the right end.                                                                                                                                                |
-| `--b-hdist`                 | 0         | [0-3]                 | Number of allowed mismatches for barcode matching and trimming.                                                                                                                            |
+| Parameter                   | Default   | Kind    | Description                                                                                                                                                             |
+| --------------------------- | --------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`--barcode-trim` (`-B`)** |           | String  | A literal nucleotide sequence for the barcode to be trimmed. Non-canonical (ACGTN) characters will cause an error.                                                      |
+| `--b-end`                   | b         | l, r, b | The end(s) of the sequence that barcode trimming should occur on.                                                                                                       |
+| `--b-restrict`              | full scan | ≥ 1     | Window size for barcode trimming on both ends of the sequence. If no size is provided, the trimmer will perform a full-scan barcode search, checking the full sequence. |
+| `--b-restrict-left`         |           | ≥ 1     | Overrides `--b-restrict` for the left end.                                                                                                                              |
+| `--b-restrict-right`        |           | ≥ 1     | Overrides `--b-restrict` for the right end.                                                                                                                             |
+| `--b-hdist`                 | 0         | [0-3]   | Number of allowed mismatches for barcode matching and trimming.                                                                                                         |
 
 ### Example Command
 
@@ -190,9 +190,9 @@ irma-core trimmer input.fastq \
 
 ### Arguments
 
-| Parameter                    | Default  | Kind     | Description                                                                                                                                                     |
-| ---------------------------- | -------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--min-length` (`-n`)        | 1        | ≥ 1      | Sequences shorter than this length, post-trimming, will be filtered from output.                                                                                |
-| `--fastq-output-file` (`-o`) | `stdout` | Filepath | Path to the output file for trimmed FASTQ. If not provided, the output will print to stdout.                                                                |
-| `--fastq-output-file2` (`-u`) | `None` | Optional Filepath | Optional path to secondary output file for paired FASTQ. If not provided, the output will be interleaved with the output of `--fastq-output-file` |
-| `--mask` (`-m`)              | False    | Boolean  | Rather than removing matched bases during the trimmer process, they can instead be masked to the letter `N`. This flag is applied to *all* trimming operations. |
+| Parameter                        | Default  | Kind              | Description                                                                                                                          |
+| -------------------------------- | -------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `--min-length` (`-n`)            | 1        | ≥ 1               | Sequences shorter than this length, post-trimming, will be filtered from output.                                                     |
+| `--fastq-output1` (`-1` or `-o`) | `STDOUT` | Filepath          | Path to the output file for trimmed FASTQ. If not provided, the output will print to STDOUT.                                         |
+| `--fastq-output2` (`-2`)         | `None`   | Optional Filepath | Optional path to secondary output file for paired FASTQ. If this argument is omitted, output is interleaved.                         |
+| `--mask` (`-m`)                  | False    | Boolean           | Rather than trimming matched bases, they can instead be masked to the letter `N`. This flag is applied to *all* trimming operations. |
