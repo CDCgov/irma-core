@@ -54,7 +54,7 @@ pub struct TrimmerArgs {
 
 #[derive(Args, Debug)]
 pub struct ClippingArgs {
-    #[arg(short = 's', long)]
+    #[arg(short = 's', long, alias = "preserve_fastq")]
     /// Preserve original formatting: disables encoding sequences into uppercase
     /// canonical bases (A, C, T, G, N)
     pub preserve_bases: bool,
