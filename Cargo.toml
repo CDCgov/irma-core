@@ -1,10 +1,10 @@
 [package]
 name = "irma-core"
-version = "0.4.3"
+version = "0.4.3-dev"
 edition = "2024"
 description = "A tool to aid virus sequencing and accelerating IRMA."
 license = "Apache-2.0"
-rust-version = "1.87"
+rust-version = "1.88"
 
 # Long-term maintainers of the IRMA-core
 authors = ["Samuel S. Shepard <sshepard@cdc.gov>"]

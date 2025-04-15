@@ -149,7 +149,7 @@ checksum = "d231dfb89cfffdbc30e7fc41579ed6066ad03abda9e567ccafae602b97ec5024"
 
 [[package]]
 name = "irma-core"
-version = "0.4.3"
+version = "0.4.3-dev"
 dependencies = [
  "clap",
  "flate2",

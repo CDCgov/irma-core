@@ -2,12 +2,13 @@
 //                   correction and detection.
 //
 
-use crate::utils::get_molecular_id_side;
 use clap::Args;
 use std::collections::HashMap;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use zoe::data::{err::OrFail, fasta::FastaReader, sam::*};
+
+use crate::utils::paired_reads::get_molecular_id_side;
 
 #[derive(Args, Debug)]
 pub struct MergeSAMArgs {

@@ -1,9 +1,9 @@
 // Description:      Read FastQ files, applies QC filtering (quality and length),
 //                   adapter trimming, and format conversion as requested.
 //
-// DEPRECATED:       This process is deprecated and will be removed in future versions.
+// DEPRECATED:       This process is deprecated and will be removed in the next version.
 
-use crate::utils::io::ReadFileStdin;
+use crate::{io::ReadFileStdin, qc::fastq::*};
 use clap::{Args, ValueHint};
 use std::{
     borrow::Borrow,
@@ -12,8 +12,6 @@ use std::{
     path::PathBuf,
 };
 use zoe::{data::types::nucleotides::reverse_complement, prelude::*};
-
-use crate::qc::fastq::*;
 
 /* Assumed args */
 

@@ -593,3 +593,17 @@ impl ReadTransforms for FastQViewMut<'_> {
         self
     }
 }
+
+pub fn keep_or_underscore_header(mut header: String, keep_header: bool) -> String {
+    if !keep_header {
+        if header.len() > BAM_QNAME_LIMIT {
+            // Cannot panic given use of `floor_char_boundary`
+            header.truncate(header.floor_char_boundary(BAM_QNAME_LIMIT));
+            // Print warning once
+            *GIVE_WARNING_FOR_LONG_FASTQ;
+        }
+
+        header = header.replace(' ', "_");
+    }
+    header
+}

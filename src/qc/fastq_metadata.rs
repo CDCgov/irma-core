@@ -1,7 +1,7 @@
 use std::simd::prelude::*;
 
 #[derive(Debug)]
-pub(crate) struct FastQMetadata {
+pub struct FastQMetadata {
     pub(crate) passed_qc_count:               usize,
     pub(crate) passed_len_count:              usize,
     pub(crate) observed_q_max:                Option<f32>,
@@ -10,8 +10,8 @@ pub(crate) struct FastQMetadata {
     pub(crate) observed_max_clipped_read_len: usize,
 }
 
-impl FastQMetadata {
-    pub(crate) fn new() -> Self {
+impl Default for FastQMetadata {
+    fn default() -> Self {
         FastQMetadata {
             passed_qc_count:               0,
             passed_len_count:              0,

@@ -20,6 +20,7 @@ define_whichever! {
 
 define_whichever! {
     #[doc="An enum for the different acceptable output types"]
+    #[derive(Debug)]
     pub(crate) enum  WriteFileZipStdout {
         File(BufWriter<File>),
         Zipped(GzEncoder<BufWriter<File>>),

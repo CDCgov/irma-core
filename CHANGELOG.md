@@ -1,12 +1,19 @@
 # IRMA-core Changelog
 
-All notable changes to this project will be documented in this file. The format is roughly based on [Keep a Changelog], and this project tries to adheres to [Semantic Versioning]. For IRMA vs IRMA-core compatibility, please see the [version matrix](VERSION_MATRIX.md).
+All notable changes to this project will be documented in this file. The format
+is roughly based on [Keep a Changelog], and this project tries to adheres to
+[Semantic Versioning]. For IRMA vs IRMA-core compatibility, please see the
+[version matrix](VERSION_MATRIX.md).
 
-## [0.4.4] - TBD
+## [0.5.0] - TBD
 
 ### Changed
 
 - Re-factor and specify dependencies.
+- The process `qc-trim-deflate` is now called `preprocess` and its arguments
+  have been conformed to match `trimmer` rather than the legacy
+  `fastq_converter` process.
+- The deprecated `fastq_converter` will be removed in the next version.
 
 ## [0.4.3] - 2025-05-01
 
@@ -49,11 +56,15 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Fixes
 
-- For `num-procs`, the environemntal var `LOCAL_PROCS_OVERRIDE` now caps at the max available cores, consistent with the warning message.
+- For `num-procs`, the environemntal var `LOCAL_PROCS_OVERRIDE` now caps at the
+  max available cores, consistent with the warning message.
 
 ## [0.3.1] - 2025-03-21
 
-- **Added**: The `num-procs` process now has the option `--cap-cores-using-env` so environmental variables like `NSLOTS` and `IFX_LOCAL_PROCS` can further cap resources. The var `LOCAL_PROCS_OVERRIDE` trumps other settings up to the available cores.
+- **Added**: The `num-procs` process now has the option `--cap-cores-using-env`
+  so environmental variables like `NSLOTS` and `IFX_LOCAL_PROCS` can further cap
+  resources. The var `LOCAL_PROCS_OVERRIDE` trumps other settings up to the
+  available cores.
 
 ## [0.3.0] - 2025-03-18
 
@@ -86,7 +97,7 @@ All notable changes to this project will be documented in this file. The format 
 - **Added**: custom inexact matching algorithm from [Zoe]
 
 <!-- Versions -->
-[0.4.4]: https://github.com/CDCgov/irma-core/compare/v0.4.3...v0.4.4
+[0.5.0]: https://github.com/CDCgov/irma-core/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/CDCgov/irma-core/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/CDCgov/irma-core/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/CDCgov/irma-core/compare/v0.4.0...v0.4.1

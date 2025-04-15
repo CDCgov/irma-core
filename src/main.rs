@@ -57,6 +57,8 @@ fn main() {
 
 mod processes;
 
+pub(crate) mod args;
+pub(crate) mod io;
 pub(crate) mod qc;
 pub(crate) mod utils;
 
