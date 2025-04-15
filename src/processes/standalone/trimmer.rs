@@ -12,9 +12,9 @@ use std::{
     num::NonZeroUsize,
     path::PathBuf,
 };
-use zoe::{data::nucleotides::CheckNucleotides, kmer::ThreeBitKmerSet, prelude::*};
+use zoe::{kmer::ThreeBitKmerSet, prelude::*};
 
-const MAX_KMER_LENGTH: usize = 21;
+pub const MAX_KMER_LENGTH: usize = 21;
 
 #[derive(Args, Debug)]
 pub struct TrimmerArgs {
@@ -34,11 +34,6 @@ pub struct TrimmerArgs {
     /// argument is omitted, output is interleaved.
     pub fastq_output_file2: Option<PathBuf>,
 
-    #[arg(short = 's', long)]
-    /// Preserve original formatting: disables encoding sequences into uppercase
-    /// canonical bases (A, C, T, G, N)
-    pub preserve_fastq: bool,
-
     #[arg(short = 'm', long)]
     /// Perform masking with 'N' instead of clipping. Default behavior is
     /// clipping if not provided
@@ -52,6 +47,17 @@ pub struct TrimmerArgs {
     #[arg(short = 'f', long)]
     /// Filter widowed reads
     pub filter_widows: bool,
+
+    #[command(flatten)]
+    pub clipping_args: ClippingArgs,
+}
+
+#[derive(Args, Debug)]
+pub struct ClippingArgs {
+    #[arg(short = 's', long)]
+    /// Preserve original formatting: disables encoding sequences into uppercase
+    /// canonical bases (A, C, T, G, N)
+    pub preserve_bases: bool,
 
     #[arg(short = 'G', long)]
     /// Trims multiple consecutive G's (a possible artifact of Illumina
@@ -161,17 +167,25 @@ pub struct TrimmerArgs {
 
 /// Sub-program for trimming FASTQ data.
 pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
-    let (mut io_args, trimmer_args) = parse_trim_args(args)?;
-    let writer = &mut io_args.output_writer;
+    let ParsedTrimmerArgs {
+        io_args:
+            ParsedPairedIoArgs {
+                mut reader1,
+                reader2,
+                mut writer1,
+                writer2,
+            },
+        trimming_args,
+    } = parse_trimmer_args(args)?;
 
-    if let Some(mut reader2) = io_args.fastq_reader2 {
-        match (io_args.output_writer2, trimmer_args.filter_widows) {
+    if let Some(mut reader2) = reader2 {
+        match (writer2, trimming_args.filter_widows) {
             // Case 2: In 1, In 2, Out 1 (interleaved Illumina), no widow filtering
             (None, false) => {
-                for r1 in io_args.fastq_reader1.by_ref() {
+                for r1 in reader1.by_ref() {
                     let mut read1 = r1?;
-                    if let Some(trimmed1) = process_read(&mut read1, &trimmer_args) {
-                        write!(writer, "{trimmed1}")?;
+                    if let Some(trimmed1) = process_read(&mut read1, &trimming_args) {
+                        write!(writer1, "{trimmed1}")?;
                     }
 
                     let Some(r2) = reader2.next() else {
@@ -179,21 +193,21 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
                     };
                     let mut read2 = r2?;
 
-                    if let Some(trimmed2) = process_read(&mut read2, &trimmer_args) {
-                        write!(writer, "{trimmed2}")?;
+                    if let Some(trimmed2) = process_read(&mut read2, &trimming_args) {
+                        write!(writer1, "{trimmed2}")?;
                     }
                 }
 
-                // if either reader has remaining sequences, this will trim them. (same as 1 in, 1 out)
-                let mut remaining = io_args.fastq_reader1.chain(reader2);
-                process_and_write(&mut remaining, writer, &trimmer_args)?;
+                // If either reader has remaining sequences, this will trim them. (same as 1 in, 1 out)
+                let mut remaining = reader1.chain(reader2);
+                process_and_write(&mut remaining, &mut writer1, &trimming_args)?;
 
-                writer.flush()?;
+                writer1.flush()?;
             }
 
             // Case 3: In 1, In 2, Out 1, Filtering widows / orphan reads
             (None, true) => {
-                for r1 in io_args.fastq_reader1 {
+                for r1 in reader1 {
                     let mut read1 = r1?;
                     let Some(r2) = reader2.next() else {
                         return error_extra_read();
@@ -201,13 +215,13 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
                     let mut read2 = r2?;
                     check_paired_headers(&read1, &read2)?;
 
-                    if let Some((trimmed1, trimmed2)) = process_paired_reads(&mut read1, &mut read2, &trimmer_args) {
-                        write!(writer, "{trimmed1}")?;
-                        write!(writer, "{trimmed2}")?;
+                    if let Some((trimmed1, trimmed2)) = process_paired_reads(&mut read1, &mut read2, &trimming_args) {
+                        write!(writer1, "{trimmed1}")?;
+                        write!(writer1, "{trimmed2}")?;
                     }
                 }
 
-                writer.flush()?;
+                writer1.flush()?;
 
                 if reader2.next().is_some() {
                     return error_extra_read();
@@ -215,18 +229,17 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
             }
 
             // Case 4: In 1, In 2, Out 1, Out 2 (separated output Illumina), no filtering
-            (Some(output_writer2), false) => {
-                let mut writer2 = output_writer2;
-                process_and_write(&mut io_args.fastq_reader1, writer, &trimmer_args)?;
-                process_and_write(&mut reader2, &mut writer2, &trimmer_args)?;
+            (Some(mut writer2), false) => {
+                process_and_write(&mut reader1, &mut writer1, &trimming_args)?;
+                process_and_write(&mut reader2, &mut writer2, &trimming_args)?;
 
-                writer.flush()?;
+                writer1.flush()?;
                 writer2.flush()?;
             }
 
             // Case 5: In 1, In 2, Out 1, Out 2, filter widows
             (Some(mut writer2), true) => {
-                for r1 in io_args.fastq_reader1 {
+                for r1 in reader1 {
                     let mut read1 = r1?;
                     let Some(r2) = reader2.next() else {
                         return error_extra_read();
@@ -234,13 +247,13 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
                     let mut read2 = r2?;
                     check_paired_headers(&read1, &read2)?;
 
-                    if let Some((trimmed1, trimmed2)) = process_paired_reads(&mut read1, &mut read2, &trimmer_args) {
-                        write!(writer, "{trimmed1}")?;
+                    if let Some((trimmed1, trimmed2)) = process_paired_reads(&mut read1, &mut read2, &trimming_args) {
+                        write!(writer1, "{trimmed1}")?;
                         write!(writer2, "{trimmed2}")?;
                     }
                 }
 
-                writer.flush()?;
+                writer1.flush()?;
                 writer2.flush()?;
 
                 if reader2.next().is_some() {
@@ -250,15 +263,15 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
         }
     } else {
         // Case 1: In 1, Out 1 (ONT, single-end, PacBio)
-        process_and_write(&mut io_args.fastq_reader1, writer, &trimmer_args)?;
-        writer.flush()?;
+        process_and_write(&mut reader1, &mut writer1, &trimming_args)?;
+        writer1.flush()?;
     }
 
     Ok(())
 }
 
 /// Processes an iterator of reads and writes it to output
-fn process_and_write<I, W>(reads: &mut I, writer: &mut W, args: &ParsedTrimmerArgs) -> Result<(), std::io::Error>
+fn process_and_write<I, W>(reads: &mut I, writer: &mut W, args: &ParsedTrimmingArgs) -> Result<(), std::io::Error>
 where
     I: Iterator<Item = Result<FastQ, std::io::Error>>,
     W: Write, {
@@ -273,7 +286,7 @@ where
 
 /// Processes two reads together with filtering of widowed reads
 fn process_paired_reads<'a>(
-    record1: &'a mut FastQ, record2: &'a mut FastQ, args: &ParsedTrimmerArgs,
+    record1: &'a mut FastQ, record2: &'a mut FastQ, args: &ParsedTrimmingArgs,
 ) -> Option<(FastQViewMut<'a>, FastQViewMut<'a>)> {
     let trimmed1 = process_read(record1, args)?;
     let trimmed2 = process_read(record2, args)?;
@@ -282,16 +295,16 @@ fn process_paired_reads<'a>(
 
 /// Processes a single read and performs length filtering. Returns `None` if the
 /// read is too short
-fn process_read<'a>(record: &'a mut FastQ, args: &ParsedTrimmerArgs) -> Option<FastQViewMut<'a>> {
+fn process_read<'a>(record: &'a mut FastQ, args: &ParsedTrimmingArgs) -> Option<FastQViewMut<'a>> {
     if args.mask {
         let fq_view = record.as_view_mut();
-        edit_read(fq_view, args);
+        edit_read(fq_view, args.mask, &args.clipping_args);
         if record.len() >= args.min_length {
             return Some(record.as_view_mut());
         }
     } else {
         let fq_view = record.as_view_mut();
-        let edited = edit_read(fq_view, args);
+        let edited = edit_read(fq_view, args.mask, &args.clipping_args);
         if edited.len() >= args.min_length {
             return Some(edited);
         }
@@ -300,15 +313,15 @@ fn process_read<'a>(record: &'a mut FastQ, args: &ParsedTrimmerArgs) -> Option<F
 }
 
 /// Trims or masks a read based on user provided arguments
-fn edit_read<'a>(mut fq_view: FastQViewMut<'a>, args: &ParsedTrimmerArgs) -> FastQViewMut<'a> {
-    fq_view.to_canonical_bases(!args.preserve_seq);
+pub fn edit_read<'a>(mut fq_view: FastQViewMut<'a>, mask: bool, args: &ParsedClippingArgs) -> FastQViewMut<'a> {
+    fq_view.to_canonical_bases(!args.preserve_bases);
 
-    fq_view.process_polyg(args.polyg_left, args.polyg_right, args.mask);
+    fq_view.process_polyg(args.polyg_left, args.polyg_right, mask);
 
     if let Some((ref forward_adapter, ref reverse_adapter)) = args.adapters {
         fq_view.transform_by_reverse_forward_search(
             args.a_fuzzy,
-            !args.mask,
+            !mask,
             reverse_adapter.as_bytes(),
             forward_adapter.as_bytes(),
         );
@@ -317,7 +330,7 @@ fn edit_read<'a>(mut fq_view: FastQViewMut<'a>, args: &ParsedTrimmerArgs) -> Fas
             barcode.as_bytes(),
             reverse.as_bytes(),
             args.b_hdist,
-            args.mask,
+            mask,
             args.b_restrict_left,
             args.b_restrict_right,
         );
@@ -325,15 +338,15 @@ fn edit_read<'a>(mut fq_view: FastQViewMut<'a>, args: &ParsedTrimmerArgs) -> Fas
 
     if let Some(ref kmers) = args.primer_kmers {
         if let Some(p_restrict_left) = args.p_restrict_left {
-            fq_view.process_left_primer(p_restrict_left, kmers, args.mask);
+            fq_view.process_left_primer(p_restrict_left, kmers, mask);
         }
         if let Some(p_restrict_right) = args.p_restrict_right {
-            fq_view.process_right_primer(p_restrict_right, kmers, args.mask);
+            fq_view.process_right_primer(p_restrict_right, kmers, mask);
         }
     }
 
     if args.hard_left > 0 || args.hard_right > 0 {
-        fq_view.hard_clip_or_mask(args.hard_left, args.hard_right, args.mask);
+        fq_view.hard_clip_or_mask(args.hard_left, args.hard_right, mask);
     }
     fq_view
 }
@@ -433,18 +446,32 @@ fn validate_acgtn(value: &str) -> Result<Nucleotides, String> {
     }
 }
 
-struct IOArgs {
-    fastq_reader1:  FastQReader<ReadFileZip>,
-    fastq_reader2:  Option<FastQReader<ReadFileZip>>,
-    output_writer:  WriteFileZipStdout,
-    output_writer2: Option<WriteFileZipStdout>,
+/// Parsed arguments for the `trimmer` subprocess
+struct ParsedTrimmerArgs {
+    pub io_args:       ParsedPairedIoArgs,
+    pub trimming_args: ParsedTrimmingArgs,
 }
 
-struct ParsedTrimmerArgs {
-    pub filter_widows:    bool,
-    pub preserve_seq:     bool,
-    pub mask:             bool,
-    pub min_length:       usize,
+/// Parsed IO arguments for single or paired reads
+struct ParsedPairedIoArgs {
+    reader1: FastQReader<ReadFileZip>,
+    reader2: Option<FastQReader<ReadFileZip>>,
+    writer1: WriteFileZipStdout,
+    writer2: Option<WriteFileZipStdout>,
+}
+
+/// Arguments related to clipping/masking reads, including length/widow
+/// filtering
+pub struct ParsedTrimmingArgs {
+    pub mask:          bool,
+    pub filter_widows: bool,
+    pub min_length:    usize,
+    pub clipping_args: ParsedClippingArgs,
+}
+
+/// Arguments specifying the types of clipping to be performed
+pub struct ParsedClippingArgs {
+    pub preserve_bases:   bool,
     pub barcodes:         Option<(Nucleotides, Nucleotides)>,
     pub b_restrict_left:  Option<usize>,
     pub b_restrict_right: Option<usize>,
@@ -460,116 +487,160 @@ struct ParsedTrimmerArgs {
     pub hard_right:       usize,
 }
 
-fn parse_trim_args(args: TrimmerArgs) -> Result<(IOArgs, ParsedTrimmerArgs), std::io::Error> {
-    let fastq_reader1 = open_fastq_file(&args.fastq_input_file)?;
-    let fastq_reader2 = match &args.fastq_input_file2 {
+fn parse_trimmer_args(args: TrimmerArgs) -> Result<ParsedTrimmerArgs, std::io::Error> {
+    let TrimmerArgs {
+        fastq_input_file,
+        fastq_input_file2,
+        fastq_output_file,
+        fastq_output_file2,
+        mask,
+        filter_widows,
+        min_length,
+        clipping_args,
+    } = args;
+
+    let reader1 = open_fastq_file(fastq_input_file)?;
+    let reader2 = match fastq_input_file2 {
         Some(file2) => Some(open_fastq_file(file2)?),
         None => None,
     };
 
-    let output_writer = create_writer(args.fastq_output_file.clone())?;
-    let output_writer2 = match &args.fastq_output_file2 {
+    let writer1 = create_writer(fastq_output_file.clone())?;
+    let writer2 = match fastq_output_file2 {
         Some(path) => Some(create_writer(Some(path))?),
         None => None,
     };
 
-    let adapters = args
-        .adapter_trim
-        .map(|adapter| get_forward_reverse_sequence(adapter, args.preserve_fastq));
+    let min_length = min_length.get();
 
-    let barcodes = args
-        .barcode_trim
-        .map(|barcode| get_forward_reverse_sequence(barcode, args.preserve_fastq));
+    let clipping_args = parse_clipping_args(clipping_args)?;
 
-    let primer_kmers = if let Some(primer_path) = &args.primer_trim {
+    let parsed = ParsedTrimmerArgs {
+        io_args:       ParsedPairedIoArgs {
+            reader1,
+            reader2,
+            writer1,
+            writer2,
+        },
+        trimming_args: ParsedTrimmingArgs {
+            mask,
+            filter_widows,
+            min_length,
+            clipping_args,
+        },
+    };
+
+    Ok(parsed)
+}
+
+pub fn parse_clipping_args(args: ClippingArgs) -> Result<ParsedClippingArgs, std::io::Error> {
+    let ClippingArgs {
+        preserve_bases,
+        polyg_trim,
+        g_polyg_end,
+        g_polyg_left,
+        g_polyg_right,
+        barcode_trim,
+        b_end,
+        b_restrict,
+        b_restrict_left,
+        b_restrict_right,
+        b_hdist,
+        adapter_trim,
+        a_fuzzy,
+        primer_trim,
+        p_fuzzy,
+        p_kmer_length,
+        p_end,
+        p_restrict,
+        p_restrict_left,
+        p_restrict_right,
+        hard_trim,
+        h_left,
+        h_right,
+    } = args;
+
+    let adapters = adapter_trim.map(|adapter| get_forward_reverse_sequence(adapter, preserve_bases));
+    let barcodes = barcode_trim.map(|barcode| get_forward_reverse_sequence(barcode, preserve_bases));
+
+    let primer_kmers = if let Some(primer_path) = &primer_trim {
         Some(prepare_primer_kmers(
             primer_path,
-            args.p_kmer_length
-                // this is unreachable through clap due to being required
-                .expect("A kmer length must be provided for primer trimming"),
-            args.p_fuzzy,
+            // This is unreachable through clap due to being required
+            p_kmer_length.expect("A kmer length must be provided for primer trimming"),
+            p_fuzzy,
         )?)
     } else {
         None
     };
 
     // A value of None for left or right restricts will do full scan barcoding
-    let default_b_restrict = args.b_restrict;
-    let (b_restrict_left, b_restrict_right) = match args.b_end {
+    let default_b_restrict = b_restrict;
+    let (b_restrict_left, b_restrict_right) = match b_end {
         TrimEnd::B => {
             // Apply b_restrict to both, unless explicitly overridden
-            let left = args.b_restrict_left.or(default_b_restrict).map(NonZeroUsize::get);
-            let right = args.b_restrict_right.or(default_b_restrict).map(NonZeroUsize::get);
+            let left = b_restrict_left.or(default_b_restrict).map(NonZeroUsize::get);
+            let right = b_restrict_right.or(default_b_restrict).map(NonZeroUsize::get);
             (left, right)
         }
         TrimEnd::L => {
             // Left gets b_left_restrict or b_restrict, right is forced to 0
-            let left = args.b_restrict_left.or(default_b_restrict).map(NonZeroUsize::get);
+            let left = b_restrict_left.or(default_b_restrict).map(NonZeroUsize::get);
             (left, Some(0))
         }
         TrimEnd::R => {
             // Right gets b_right_restrict or b_restrict, left is forced to 0
-            let right = args.b_restrict_right.or(default_b_restrict).map(NonZeroUsize::get);
+            let right = b_restrict_right.or(default_b_restrict).map(NonZeroUsize::get);
             (Some(0), right)
         }
     };
 
-    let default_p_restrict = args.p_restrict;
-    let (p_restrict_left, p_restrict_right) = match args.p_end {
+    let default_p_restrict = p_restrict;
+    let (p_restrict_left, p_restrict_right) = match p_end {
         TrimEnd::B => {
-            let left = args.p_restrict_left.unwrap_or(default_p_restrict);
-            let right = args.p_restrict_right.unwrap_or(default_p_restrict);
+            let left = p_restrict_left.unwrap_or(default_p_restrict);
+            let right = p_restrict_right.unwrap_or(default_p_restrict);
             (Some(left.get()), Some(right.get()))
         }
         TrimEnd::L => {
-            let left = args.p_restrict_left.unwrap_or(default_p_restrict);
+            let left = p_restrict_left.unwrap_or(default_p_restrict);
             (Some(left.get()), None)
         }
         TrimEnd::R => {
-            let right = args.p_restrict_right.unwrap_or(default_p_restrict);
+            let right = p_restrict_right.unwrap_or(default_p_restrict);
             (None, Some(right.get()))
         }
     };
 
-    let default_polyg = args.polyg_trim;
-    let (polyg_left, polyg_right) = match args.g_polyg_end {
+    let default_polyg = polyg_trim;
+    let (polyg_left, polyg_right) = match g_polyg_end {
         TrimEnd::B => {
-            let left = args.g_polyg_left.or(default_polyg).map(NonZeroUsize::get);
-            let right = args.g_polyg_right.or(default_polyg).map(NonZeroUsize::get);
+            let left = g_polyg_left.or(default_polyg).map(NonZeroUsize::get);
+            let right = g_polyg_right.or(default_polyg).map(NonZeroUsize::get);
             (left, right)
         }
         TrimEnd::L => {
-            let left = args.g_polyg_left.or(default_polyg).map(NonZeroUsize::get);
+            let left = g_polyg_left.or(default_polyg).map(NonZeroUsize::get);
             (left, None)
         }
         TrimEnd::R => {
-            let right = args.g_polyg_right.or(default_polyg).map(NonZeroUsize::get);
+            let right = g_polyg_right.or(default_polyg).map(NonZeroUsize::get);
             (None, right)
         }
     };
 
-    let default_hard_bases = args.hard_trim.unwrap_or(0);
-    let hard_left = args.h_left.unwrap_or(default_hard_bases);
-    let hard_right = args.h_right.unwrap_or(default_hard_bases);
+    let default_hard_bases = hard_trim.unwrap_or(0);
+    let hard_left = h_left.unwrap_or(default_hard_bases);
+    let hard_right = h_right.unwrap_or(default_hard_bases);
 
-    let io_args = IOArgs {
-        fastq_reader1,
-        fastq_reader2,
-        output_writer,
-        output_writer2,
-    };
-
-    let parsed_args = ParsedTrimmerArgs {
-        filter_widows: args.filter_widows,
-        preserve_seq: args.preserve_fastq,
-        mask: args.mask,
-        min_length: args.min_length.get(),
+    let parsed_args = ParsedClippingArgs {
+        preserve_bases,
         barcodes,
         b_restrict_left,
         b_restrict_right,
-        b_hdist: args.b_hdist,
+        b_hdist,
         adapters,
-        a_fuzzy: args.a_fuzzy,
+        a_fuzzy,
         primer_kmers,
         p_restrict_left,
         p_restrict_right,
@@ -578,12 +649,13 @@ fn parse_trim_args(args: TrimmerArgs) -> Result<(IOArgs, ParsedTrimmerArgs), std
         hard_left,
         hard_right,
     };
-    Ok((io_args, parsed_args))
+
+    Ok(parsed_args)
 }
 
 /// For converting adapters and barcodes to uppercase (unless disabled) and
 /// getting reverse complements
-fn get_forward_reverse_sequence(mut adapter: Nucleotides, preserve_seq: bool) -> (Nucleotides, Nucleotides) {
+pub fn get_forward_reverse_sequence(mut adapter: Nucleotides, preserve_seq: bool) -> (Nucleotides, Nucleotides) {
     if !preserve_seq {
         adapter.as_mut_bytes().make_ascii_uppercase();
     }
@@ -594,7 +666,7 @@ fn get_forward_reverse_sequence(mut adapter: Nucleotides, preserve_seq: bool) ->
 /// # Panics
 ///
 /// `kmer_length` must be between 2 and 21, inclusive.
-fn prepare_primer_kmers(
+pub fn prepare_primer_kmers(
     primer_path: &PathBuf, kmer_length: usize, fuzzy_kmer: bool,
 ) -> Result<ThreeBitKmerSet<MAX_KMER_LENGTH, SeedableRandomState>, std::io::Error> {
     let mut fasta_primer_reader = FastaReader::from_filename(primer_path)?;
