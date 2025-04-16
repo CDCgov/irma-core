@@ -20,7 +20,7 @@ pub struct TrimmerArgs {
     /// Path to optional second FASTQ file to be trimmed
     pub fastq_input_file2: Option<PathBuf>,
 
-    #[arg(short = '1', short_alias = 'o', long = "fastq-output1")]
+    #[arg(short = '1', short_alias = 'o', long = "fastq-output")]
     /// Output filepath for trimmed reads. Trimmed reads print to STDOUT if not
     /// provided. May also use '-o'.
     pub fastq_output_file: Option<PathBuf>,

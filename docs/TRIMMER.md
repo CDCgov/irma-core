@@ -190,9 +190,9 @@ irma-core trimmer input.fastq \
 
 ### Arguments
 
-| Parameter                        | Default  | Kind              | Description                                                                                                                          |
-| -------------------------------- | -------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `--min-length` (`-n`)            | 1        | ≥ 1               | Sequences shorter than this length, post-trimming, will be filtered from output.                                                     |
-| `--fastq-output1` (`-1` or `-o`) | `STDOUT` | Filepath          | Path to the output file for trimmed FASTQ. If not provided, the output will print to STDOUT.                                         |
-| `--fastq-output2` (`-2`)         | `None`   | Optional Filepath | Optional path to secondary output file for paired FASTQ. If this argument is omitted, output is interleaved.                         |
-| `--mask` (`-m`)                  | False    | Boolean           | Rather than trimming matched bases, they can instead be masked to the letter `N`. This flag is applied to *all* trimming operations. |
+| Parameter                       | Default  | Kind              | Description                                                                                                                          |
+| ------------------------------- | -------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `--min-length` (`-n`)           | 1        | ≥ 1               | Sequences shorter than this length, post-trimming, will be filtered from output.                                                     |
+| `--fastq-output` (`-1` or `-o`) | `STDOUT` | Filepath          | Path to the output file for trimmed FASTQ. If not provided, the output will print to STDOUT.                                         |
+| `--fastq-output2` (`-2`)        | `None`   | Optional Filepath | Optional path to secondary output file for paired FASTQ. If this argument is omitted, output is interleaved.                         |
+| `--mask` (`-m`)                 | False    | Boolean           | Rather than trimming matched bases, they can instead be masked to the letter `N`. This flag is applied to *all* trimming operations. |
