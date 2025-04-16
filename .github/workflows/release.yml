@@ -26,7 +26,7 @@ jobs:
         id: extract_changelog
         shell: bash
         run: |
-          CHANGELOG_CONTENT=$(perl -ne 'BEGIN{$/ = "## [";} my $data=<>; chomp($data); print "## [$data"; exit;' CHANGELOG.md)
+          CHANGELOG_CONTENT=$(perl .github/scripts/last_release_notes.pl)
           echo "changelog<<EOF" >> $GITHUB_OUTPUT
           echo "$CHANGELOG_CONTENT" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
