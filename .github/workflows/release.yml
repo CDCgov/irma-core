@@ -5,18 +5,21 @@ on:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
       - 'v[0-9]+.[0-9]+.[0-9]+-irma-compat-v[0-9]+.[0-9]+.[0-9]+'
-      - 'IRMA@v[0-9]+.[0-9]+.[0-9]+'
+
+# Define default permissions at workflow level (restricting by default)
+permissions: {}
 
 env:
   CARGO_TERM_COLOR: always
   RELEASE_BIN: irma-core
   REGISTRY: ghcr.io
-  BUILDER_IMAGE: ${{ github.repository }}/builder:latest
 
 jobs:
   create-release:
     name: Create Release
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
     steps:
@@ -41,45 +44,92 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  build-builder:
-    name: Build Builder Image
-    uses: ./.github/workflows/builder.yml
-
-  build-rhel-compat-with-builder:
-    name: Build Ubuntu Release with Builder Image
-    needs: [create-release, build-builder]
-    runs-on: ubuntu-latest
+  build-release-image-and-rhel8-artifact:
+    name: Build and Push Release Image
+    needs: [create-release]
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm # Or another ARM runner if available
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Login to GitHub Container Registry
+      - name: Log in to the Container registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Fix image name
-        run: echo "BUILDER_IMAGE=${BUILDER_IMAGE,,}" >> "${GITHUB_ENV}"
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}
+          tags: |
+            type=raw,value=latest-${{ matrix.arch }}
 
-      - name: Build with Builder Image
-        run: |
-          docker run --rm -v ${{ github.workspace }}:/app -w /app \
-            ${{ env.REGISTRY }}/${{ env.BUILDER_IMAGE }} \
-            cargo build --release --target x86_64-unknown-linux-gnu
+      - name: Build and push Docker image
+        id: buildpush
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
 
-      - name: Package Binary
+      - name: Prepare Linux x86_64 Binary
+        if: matrix.arch == 'amd64'
         shell: bash
         run: |
-          cd target/x86_64-unknown-linux-gnu/release
-          tar -czf ../../../irma-core-linux-x86_64-${{ github.ref_name }}.tar.gz ${{ env.RELEASE_BIN }}
+          AMD64_TAG=$(echo "${{ steps.meta.outputs.tags }}" | grep -- '-amd64$' | head -n 1)
+          docker create --name temp-container $AMD64_TAG \
+          && docker cp temp-container:/app/irma-core ./ \
+          && docker rm temp-container \
+          && tar -czf irma-core-linux-x86_64-${{ github.ref_name }}.tar.gz irma-core
 
-      - name: Upload Release Asset
+      - name: Upload Linux x86_64 Release Asset
+        if: matrix.arch == 'amd64'
         uses: softprops/action-gh-release@v2
         with:
-          files: irma-core-linux-x86_64-${{ github.ref_name }}.*
+          files: irma-core-linux-x86_64-${{ github.ref_name }}.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  create-release-manifest:
+    name: Create Release Manifest
+    needs: build-release-image-and-rhel8-artifact
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    steps:
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push manifests
+        shell: bash
+        run: |
+          REPO=$(echo "${{ env.REGISTRY }}/${{ github.repository }}" | tr '[A-Z]' '[a-z]')
+          VERSION=${REPO}:${{ github.ref_name }}
+          LATEST=${REPO}:latest
+
+          docker manifest create $VERSION --amend ${LATEST}-amd64 --amend ${LATEST}-arm64 \
+            && docker manifest push $VERSION
+
+          docker manifest create $LATEST --amend ${LATEST}-amd64 --amend ${LATEST}-arm64 \
+            && docker manifest push $LATEST
 
   build-others-for-release:
     name: Build Release
@@ -97,6 +147,9 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact_name: irma-core-windows-x86_64
+
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4

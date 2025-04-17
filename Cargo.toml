@@ -1,6 +1,6 @@
 [package]
 name = "irma-core"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 description = "A tool to aid virus sequencing and accelerating IRMA."
 license = "Apache-2.0"
@@ -24,7 +24,7 @@ foldhash = "*"
 indoc = "*"
 num_cpus = "*"
 flate2 = "*"
-zoe = { git = "https://github.com/CDCgov/zoe.git", tag = "v0.0.15", default-features = false, features = [
+zoe = { git = "https://github.com/CDCgov/zoe.git", tag = "v0.0.16", default-features = false, features = [
     "multiversion",
 ] }
 

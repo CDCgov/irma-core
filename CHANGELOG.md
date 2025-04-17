@@ -6,12 +6,12 @@ All notable changes to this project will be documented in this file. The format 
 
 ### Added
 
-- `trimmer` now supports compressed `fastq.gz` files for both input and output.
+- The `trimmer` process now supports compressed `fastq.gz` files for both input and output.
 - Adds `flate2` crate as a dependency for handling `.gz` files
 
 ### Changed
 
-- Updated `TRIMMER` docs
+- The release process has been improved to produce better and more artifacts.
 
 ## [0.4.0] - 2025-04-16
 
@@ -64,6 +64,7 @@ All notable changes to this project will be documented in this file. The format 
 - **Added**: custom inexact matching algorithm from [Zoe]
 
 <!-- Versions -->
+[0.4.1]: https://github.com/CDCgov/irma-core/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/CDCgov/irma-core/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/CDCgov/irma-core/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/CDCgov/irma-core/compare/v0.2.0...v0.3.0
