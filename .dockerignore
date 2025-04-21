@@ -1,0 +1,7 @@
+/target
+/.github
+/.vscode
+/debug
+.gitignore
+.gitlab-ci.yml
+*test
