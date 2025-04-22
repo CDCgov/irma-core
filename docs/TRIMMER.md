@@ -98,7 +98,7 @@ irma-core trimmer input.fastq \
 
 ## Adapter Trim
 
-Some high-throughput sequencing processes, such as those developed by Illumina, use [adapters](https://support-docs.illumina.com/SHARE/AdapterSequences/Content/SHARE/AdapterSeq/Overview.htm) to allow DNA fragments to bind to the flow cell where the sequencing reaction occurs. The `adapter-trim` subprocess uses a string search to search the left end of each sequence for the provided adapter, and the right end of each sequence for the adapter's reverse complement.
+Some high-throughput sequencing processes, such as those developed by Illumina, use [adapters](https://support-docs.illumina.com/SHARE/AdapterSequences/Content/SHARE/AdapterSeq/Overview.htm) to allow DNA fragments to bind to the flow cell where the sequencing reaction occurs. The `adapter-trim` subprocess uses a string search starting from the left end to search the sequence for the provided adapter, and starts at the right end of each sequence searching for the adapter's **reverse complement**.
 
 ### Arguments
 
@@ -118,14 +118,14 @@ irma-core trimmer input.fastq \
 
 ## Barcode Trim
 
-In Oxford Nanopore Technologies' sequencing workflow, short DNA sequences or [barcodes](https://nanoporetech.com/document/chemistry-technical-document) are appended for demultiplexing, but possibly may not be removed. The `barcode-trim` subprocess uses a fuzzy string search, which can be a full scan of the sequence, or constrained to the ends of the sequence, to locate and trim barcodes and their reverse complements.
+In Oxford Nanopore Technologies' sequencing workflow, short DNA sequences or [barcodes](https://nanoporetech.com/document/chemistry-technical-document) are appended for demultiplexing, but possibly may not be removed. The `barcode-trim` subprocess uses a fuzzy string search, which can be a full scan of the sequence, or constrained to the ends of the sequence, to locate and trim barcodes. If the option `--b-end b` (both) or `--b-end r` (right) is selected, IRMA-core will automatically compute the **reverse complement** of the provided barcode for searching and trimming on the right end.
 
 ### Arguments
 
 | Parameter                   | Default   | Kind    | Description                                                                                                                                                             |
 | --------------------------- | --------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **`--barcode-trim` (`-B`)** |           | String  | A literal nucleotide sequence for the barcode to be trimmed. Non-canonical (ACGTN) characters will cause an error.                                                      |
-| `--b-end`                   | b         | l, r, b | The end(s) of the sequence that barcode trimming should occur on.                                                                                                       |
+| `--b-end`                   | b         | l, r, b | The end(s) of the sequence that barcode trimming should occur on. If `b` or `r` is selected, the reverse complement of the provided barcode will be computed and used for right-end barcode trimming.                                                                                                      |
 | `--b-restrict`              | full scan | ≥ 1     | Window size for barcode trimming on both ends of the sequence. If no size is provided, the trimmer will perform a full-scan barcode search, checking the full sequence. |
 | `--b-restrict-left`         |           | ≥ 1     | Overrides `--b-restrict` for the left end.                                                                                                                              |
 | `--b-restrict-right`        |           | ≥ 1     | Overrides `--b-restrict` for the right end.                                                                                                                             |
