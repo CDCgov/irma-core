@@ -23,6 +23,7 @@ either = "1"
 foldhash = "*"
 indoc = "*"
 num_cpus = "*"
+flate2 = "*"
 zoe = { git = "https://github.com/CDCgov/zoe.git", tag = "v0.0.15", default-features = false, features = [
     "multiversion",
 ] }

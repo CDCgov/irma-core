@@ -1,12 +1,12 @@
 use crate::{qc::fastq::ReadTransforms, utils::get_hasher, utils::get_molecular_id_side};
 use clap::{Args, ValueEnum, builder::PossibleValue};
-use either::Either;
+use flate2::{Compression, bufread::GzDecoder, write::GzEncoder};
 use foldhash::fast::SeedableRandomState;
 use std::{
-    fs::{File, OpenOptions},
-    io::{BufReader, BufWriter, Error as IOError, ErrorKind, Stdout, Write, stdout},
+    fs::File,
+    io::{self, BufRead, BufReader, BufWriter, Error as IOError, ErrorKind, Write, stdout},
     num::NonZeroUsize,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 use zoe::{data::nucleotides::CheckNucleotides, kmer::ThreeBitKmerSet, prelude::*};
 
@@ -14,10 +14,10 @@ const MAX_KMER_LENGTH: usize = 21;
 
 #[derive(Args, Debug)]
 pub struct TrimmerArgs {
-    /// Path to FASTQ file to be trimmed
+    /// Path to .fastq or .fastq.gz file to be trimmed
     pub fastq_input_file: PathBuf,
 
-    /// Path to optional second FASTQ file to be trimmed
+    /// Path to optional second .fastq or .fastq.gz file to be trimmed
     pub fastq_input_file2: Option<PathBuf>,
 
     #[arg(short = '1', short_alias = 'o', long = "fastq-output")]
@@ -429,11 +429,49 @@ fn validate_acgtn(value: &str) -> Result<Nucleotides, String> {
     }
 }
 
+fn open_fastq_file<P: AsRef<Path>>(path: P) -> io::Result<Box<dyn BufRead>> {
+    let file = File::open(&path)?;
+    let buf_reader = BufReader::new(file);
+
+    let is_gz = path.as_ref().extension().is_some_and(|ext| ext == "gz");
+
+    let reader: Box<dyn BufRead> = if is_gz {
+        let gz_decoder = GzDecoder::new(buf_reader);
+        Box::new(BufReader::new(gz_decoder))
+    } else {
+        Box::new(buf_reader)
+    };
+
+    Ok(reader)
+}
+
+fn create_writer<P: AsRef<Path>>(path: Option<P>) -> io::Result<Box<dyn Write>> {
+    let writer: Box<dyn Write> = match path {
+        Some(ref p) => {
+            let is_gz = p.as_ref().extension().is_some_and(|ext| ext == "gz");
+            let file = File::create(p)?;
+            let buf_writer = BufWriter::new(file);
+
+            if is_gz {
+                Box::new(GzEncoder::new(buf_writer, Compression::default()))
+            } else {
+                Box::new(buf_writer)
+            }
+        }
+        None => {
+            let buf_writer = BufWriter::new(stdout());
+            Box::new(buf_writer)
+        }
+    };
+
+    Ok(writer)
+}
+
 pub struct IOArgs {
-    pub fastq_reader1:  FastQReader<BufReader<File>>,
-    pub fastq_reader2:  Option<FastQReader<BufReader<File>>>,
-    pub output_writer:  BufWriter<Either<File, Stdout>>,
-    pub output_writer2: Option<BufWriter<File>>,
+    pub fastq_reader1:  FastQReader<std::boxed::Box<dyn BufRead>>,
+    pub fastq_reader2:  Option<FastQReader<std::boxed::Box<dyn BufRead>>>,
+    pub output_writer:  Box<dyn Write>,
+    pub output_writer2: Option<Box<dyn Write>>,
 }
 
 pub struct ParsedTrimmerArgs {
@@ -457,21 +495,19 @@ pub struct ParsedTrimmerArgs {
 }
 
 pub fn parse_trim_args(args: TrimmerArgs) -> Result<(IOArgs, ParsedTrimmerArgs), std::io::Error> {
-    let fastq_reader1 = FastQReader::new(BufReader::new(OpenOptions::new().read(true).open(&args.fastq_input_file)?));
+    let reader1 = open_fastq_file(&args.fastq_input_file)?;
+    let fastq_reader1 = FastQReader::new(reader1);
 
     let fastq_reader2 = if let Some(file2) = &args.fastq_input_file2 {
-        Some(FastQReader::new(BufReader::new(OpenOptions::new().read(true).open(file2)?)))
+        let reader2 = open_fastq_file(file2)?;
+        Some(FastQReader::new(reader2))
     } else {
         None
     };
 
-    let output_writer = match &args.fastq_output_file {
-        Some(path) => BufWriter::new(Either::Left(File::create(path)?)),
-        None => BufWriter::new(Either::Right(stdout())),
-    };
-
+    let output_writer = create_writer(args.fastq_output_file.clone())?;
     let output_writer2 = match &args.fastq_output_file2 {
-        Some(path) => Some(BufWriter::new(File::create(path)?)),
+        Some(path) => Some(create_writer(Some(path))?),
         None => None,
     };
 

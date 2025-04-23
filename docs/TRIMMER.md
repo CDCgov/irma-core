@@ -39,7 +39,7 @@ The following will perform poly-g trimming, followed by barcode trimming, primer
 
 ```bash
 irma-core trimmer input.fastq \
-    --fastq-output-file trimmed.fastq \
+    --fastq-output trimmed.fastq \
     --polyg-trim 10 \
     --barcode-trim CACAAAGACACCGACAACTTTCTT \
     --primer-trim primers.fasta --p-kmer-length 17 \
@@ -47,6 +47,25 @@ irma-core trimmer input.fastq \
 ```
 
 Details about each trimming operation and their arguments are given below.
+
+## Input, Output, and Compressed Files
+
+IRMA-core takes `.fastq` files as inputs and outputs. IRMA-core is also able to handle compressed input and output files for files compressed with `gzip`. For the both, simply include the path to your `.fastq` or `.fastq.gz` input and output filepaths. Inputs are taken as positional arguments, and outputs use `-o` or `-1` and `-2`.
+
+| Parameter                       | Default  | Kind              | Description                                                                                                                          |
+| ------------------------------- | -------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `--fastq-output` (`-1` or `-o`) | `STDOUT` | Filepath          | Path to the output file for trimmed FASTQ. If not provided, the output will print to STDOUT.                                         |
+| `--fastq-output2` (`-2`)        | `None`   | Optional Filepath | Optional path to secondary output file for paired FASTQ. If this argument is omitted, output is interleaved.                         |
+
+### Example Zipped Input/Output
+
+The following will take a zipped `.fastq.gz` input, perform hard trimming, and output a standard `.fastq` file.
+
+```bash
+irma-core trimmer input.fastq.gz \
+    --fastq-output trimmed.fastq \
+    --hard-trim 10
+```
 
 ## Paired Reads
 
@@ -188,11 +207,11 @@ irma-core trimmer input.fastq \
 
 ## Length Filtering and Output
 
+IRMA-core will filter reads from the output that have fewer than the set `--min-length` amount of bases. Additionally, the `--mask` flag will mask bases with `N`, rather than trimming them from the reads. Masking will ***not*** alter the quality scores of the masked bases.
+
 ### Arguments
 
 | Parameter                       | Default  | Kind              | Description                                                                                                                          |
 | ------------------------------- | -------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `--min-length` (`-n`)           | 1        | ≥ 1               | Sequences shorter than this length, post-trimming, will be filtered from output.                                                     |
-| `--fastq-output` (`-1` or `-o`) | `STDOUT` | Filepath          | Path to the output file for trimmed FASTQ. If not provided, the output will print to STDOUT.                                         |
-| `--fastq-output2` (`-2`)        | `None`   | Optional Filepath | Optional path to secondary output file for paired FASTQ. If this argument is omitted, output is interleaved.                         |
 | `--mask` (`-m`)                 | False    | Boolean           | Rather than trimming matched bases, they can instead be masked to the letter `N`. This flag is applied to *all* trimming operations. |
