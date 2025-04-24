@@ -1,10 +1,13 @@
-use crate::{qc::fastq::ReadTransforms, utils::get_hasher, utils::get_molecular_id_side};
+use crate::{
+    qc::fastq::ReadTransforms,
+    utils::{get_hasher, get_molecular_id_side, whichever::define_whichever},
+};
 use clap::{Args, ValueEnum, builder::PossibleValue};
 use flate2::{Compression, bufread::GzDecoder, write::GzEncoder};
 use foldhash::fast::SeedableRandomState;
 use std::{
     fs::File,
-    io::{self, BufRead, BufReader, BufWriter, Error as IOError, ErrorKind, Write, stdout},
+    io::{BufReader, BufWriter, Error as IOError, ErrorKind, Stdout, Write, stdout},
     num::NonZeroUsize,
     path::{Path, PathBuf},
 };
@@ -254,7 +257,7 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
 }
 
 /// Processes an iterator of reads and writes it to output
-pub fn process_and_write<I, W>(reads: &mut I, writer: &mut W, args: &ParsedTrimmerArgs) -> Result<(), std::io::Error>
+fn process_and_write<I, W>(reads: &mut I, writer: &mut W, args: &ParsedTrimmerArgs) -> Result<(), std::io::Error>
 where
     I: Iterator<Item = Result<FastQ, std::io::Error>>,
     W: Write, {
@@ -268,7 +271,7 @@ where
 }
 
 /// Processes two reads together with filtering of widowed reads
-pub fn process_paired_reads<'a>(
+fn process_paired_reads<'a>(
     record1: &'a mut FastQ, record2: &'a mut FastQ, args: &ParsedTrimmerArgs,
 ) -> Option<(FastQViewMut<'a>, FastQViewMut<'a>)> {
     let trimmed1 = process_read(record1, args)?;
@@ -278,7 +281,7 @@ pub fn process_paired_reads<'a>(
 
 /// Processes a single read and performs length filtering. Returns `None` if the
 /// read is too short
-pub fn process_read<'a>(record: &'a mut FastQ, args: &ParsedTrimmerArgs) -> Option<FastQViewMut<'a>> {
+fn process_read<'a>(record: &'a mut FastQ, args: &ParsedTrimmerArgs) -> Option<FastQViewMut<'a>> {
     if args.mask {
         let fq_view = record.as_view_mut();
         edit_read(fq_view, args);
@@ -296,7 +299,7 @@ pub fn process_read<'a>(record: &'a mut FastQ, args: &ParsedTrimmerArgs) -> Opti
 }
 
 /// Trims or masks a read based on user provided arguments
-pub fn edit_read<'a>(mut fq_view: FastQViewMut<'a>, args: &ParsedTrimmerArgs) -> FastQViewMut<'a> {
+fn edit_read<'a>(mut fq_view: FastQViewMut<'a>, args: &ParsedTrimmerArgs) -> FastQViewMut<'a> {
     fq_view.to_canonical_bases(!args.preserve_seq);
 
     fq_view.process_polyg(args.polyg_left, args.polyg_right, args.mask);
@@ -429,52 +432,73 @@ fn validate_acgtn(value: &str) -> Result<Nucleotides, String> {
     }
 }
 
-fn open_fastq_file<P: AsRef<Path>>(path: P) -> io::Result<Box<dyn BufRead>> {
+define_whichever! {
+    @match_reader
+
+    #[doc="An enum for the different acceptable input types"]
+    enum Reader {
+        File(BufReader<File>),
+        Zipped(GzDecoder<BufReader<File>>),
+    }
+
+    impl Read for Reader {}
+}
+
+fn open_fastq_file<P: AsRef<Path>>(path: P) -> Result<Reader, IOError> {
     let file = File::open(&path)?;
     let buf_reader = BufReader::new(file);
 
     let is_gz = path.as_ref().extension().is_some_and(|ext| ext == "gz");
 
-    let reader: Box<dyn BufRead> = if is_gz {
-        let gz_decoder = GzDecoder::new(buf_reader);
-        Box::new(BufReader::new(gz_decoder))
+    let reader = if is_gz {
+        Reader::Zipped(GzDecoder::new(buf_reader))
     } else {
-        Box::new(buf_reader)
+        Reader::File(buf_reader)
     };
 
     Ok(reader)
 }
 
-fn create_writer<P: AsRef<Path>>(path: Option<P>) -> io::Result<Box<dyn Write>> {
-    let writer: Box<dyn Write> = match path {
+define_whichever! {
+    @match_writer
+
+    #[doc="An enum for the different acceptable output types"]
+    enum Writer {
+        File(BufWriter<File>),
+        Zipped(GzEncoder<BufWriter<File>>),
+        Stdout(BufWriter<Stdout>),
+    }
+
+    impl Write for Writer {}
+}
+
+fn create_writer<P: AsRef<Path>>(path: Option<P>) -> Result<Writer, IOError> {
+    let writer = match path {
         Some(ref p) => {
             let is_gz = p.as_ref().extension().is_some_and(|ext| ext == "gz");
             let file = File::create(p)?;
             let buf_writer = BufWriter::new(file);
 
             if is_gz {
-                Box::new(GzEncoder::new(buf_writer, Compression::default()))
+                Writer::Zipped(GzEncoder::new(buf_writer, Compression::default()))
             } else {
-                Box::new(buf_writer)
+                Writer::File(buf_writer)
             }
         }
-        None => {
-            let buf_writer = BufWriter::new(stdout());
-            Box::new(buf_writer)
-        }
+        None => Writer::Stdout(BufWriter::new(stdout())),
     };
 
     Ok(writer)
 }
 
-pub struct IOArgs {
-    pub fastq_reader1:  FastQReader<std::boxed::Box<dyn BufRead>>,
-    pub fastq_reader2:  Option<FastQReader<std::boxed::Box<dyn BufRead>>>,
-    pub output_writer:  Box<dyn Write>,
-    pub output_writer2: Option<Box<dyn Write>>,
+struct IOArgs {
+    fastq_reader1:  FastQReader<Reader>,
+    fastq_reader2:  Option<FastQReader<Reader>>,
+    output_writer:  Writer,
+    output_writer2: Option<Writer>,
 }
 
-pub struct ParsedTrimmerArgs {
+struct ParsedTrimmerArgs {
     pub filter_widows:    bool,
     pub preserve_seq:     bool,
     pub mask:             bool,
@@ -494,7 +518,7 @@ pub struct ParsedTrimmerArgs {
     pub hard_right:       usize,
 }
 
-pub fn parse_trim_args(args: TrimmerArgs) -> Result<(IOArgs, ParsedTrimmerArgs), std::io::Error> {
+fn parse_trim_args(args: TrimmerArgs) -> Result<(IOArgs, ParsedTrimmerArgs), std::io::Error> {
     let reader1 = open_fastq_file(&args.fastq_input_file)?;
     let fastq_reader1 = FastQReader::new(reader1);
 

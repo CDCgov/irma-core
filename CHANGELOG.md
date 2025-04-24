@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file. The format is roughly based on [Keep a Changelog], and this project tries to adheres to [Semantic Versioning]. For IRMA vs IRMA-core compatibility, please see the [version matrix](VERSION_MATRIX.md).
 
+## [0.4.1] - 2025-04-28
+
+### Added
+
+- `trimmer` now supports compressed `fastq.gz` files for both input and output.
+- Adds `flate2` crate as a dependency for handling `.gz` files
+
+### Changed
+
+- Updated `TRIMMER` docs
+
 ## [0.4.0] - 2025-04-16
 
 ### Added
