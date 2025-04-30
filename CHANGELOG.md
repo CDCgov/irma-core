@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file. The format is roughly based on [Keep a Changelog], and this project tries to adheres to [Semantic Versioning]. For IRMA vs IRMA-core compatibility, please see the [version matrix](VERSION_MATRIX.md).
 
+## [0.4.2] - 2025-04-30
+
+### Changed
+
+- The `Dockerfile` has been updated for nextflow compatibility (it currently
+  needed: awk, grep, ps, sed)
+- The `num-procs` process now allows `LOCAL_PROCS_OVERRIDE` to be greater than
+  the available cores. Use `IFX_LOCAL_PROCS` if you would like it capped at the
+  available cores.
+
 ## [0.4.1] - 2025-04-28
 
 ### Added
@@ -64,6 +74,7 @@ All notable changes to this project will be documented in this file. The format 
 - **Added**: custom inexact matching algorithm from [Zoe]
 
 <!-- Versions -->
+[0.4.2]: https://github.com/CDCgov/irma-core/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/CDCgov/irma-core/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/CDCgov/irma-core/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/CDCgov/irma-core/compare/v0.3.0...v0.3.1

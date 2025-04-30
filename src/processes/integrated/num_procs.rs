@@ -24,34 +24,33 @@ pub struct NumProcsArgs {
 }
 
 pub fn num_procs_process(args: NumProcsArgs) -> Result<(), std::io::Error> {
-    let available = if args.physical {
+    let mut cores = if args.physical {
         num_cpus::get_physical()
     } else {
         num_cpus::get()
     };
 
-    let mut cores = available;
     if args.cap_cores_using_env
         && let Some(n) = ["NSLOTS", "IFX_LOCAL_PROCS"]
             .into_iter()
             .find_map(|v| env::var(v).ok().and_then(|v| v.parse::<usize>().ok()))
     {
-        cores = cores.min(n.max(1));
+        if n > 0 {
+            cores = cores.min(n);
+        } else {
+            eprintln!("IRMA-core WARNING! The requested core cap {n} is not valid, ignoring and using {cores} cores.");
+        }
     }
 
     if let Ok(s) = env::var("LOCAL_PROCS_OVERRIDE")
         && let Ok(n) = s.parse::<usize>()
     {
-        if n > available {
-            eprintln!(
-                "IRMA-core WARNING! Requested 'LOCAL_PROCS_OVERRIDE={n}' but only {a} cores available. Setting to {a}.",
-                a = available
-            );
-            cores = available;
-        } else if n == 0 {
-            eprintln!("IRMA-core WARNING! The requested 'LOCAL_PROCS_OVERRIDE={s}' is not valid, ignoring.");
-        } else {
+        if n > 0 {
             cores = n;
+        } else {
+            eprintln!(
+                "IRMA-core WARNING! The requested 'LOCAL_PROCS_OVERRIDE={s}' is not valid, ignoring and using {cores} cores."
+            );
         }
     }
 
