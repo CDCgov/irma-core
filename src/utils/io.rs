@@ -1,18 +1,20 @@
 use crate::utils::whichever::define_whichever;
-use flate2::{Compression, bufread::MultiGzDecoder, write::GzEncoder};
+use flate2::{Compression, read::MultiGzDecoder, write::GzEncoder};
 use std::{
     fs::File,
-    io::{BufReader, BufWriter, Error as IOError, Stdin, Stdout, stdout},
+    io::{BufWriter, Error as IOError, Stdin, Stdout, stdout},
     path::Path,
 };
+use zoe::prelude::FastQReader;
 
 define_whichever! {
     @match_compressed_reader
 
+    #[allow(clippy::large_enum_variant)]
     #[doc="An enum for the different acceptable input types"]
     pub(crate) enum ReadFileZip {
-        File(BufReader<File>),
-        Zipped(MultiGzDecoder<BufReader<File>>),
+        File(File),
+        Zipped(MultiGzDecoder<File>),
     }
 
     impl Read for ReadFileZip {}
@@ -42,19 +44,18 @@ define_whichever! {
     impl Read for ReadFileStdin {}
 }
 
-pub(crate) fn open_fastq_file<P: AsRef<Path>>(path: P) -> Result<ReadFileZip, IOError> {
+pub(crate) fn open_fastq_file<P: AsRef<Path>>(path: P) -> Result<FastQReader<ReadFileZip>, IOError> {
     let file = File::open(&path)?;
-    let buf_reader = BufReader::new(file);
 
     let is_gz = path.as_ref().extension().is_some_and(|ext| ext == "gz");
 
     let reader = if is_gz {
-        ReadFileZip::Zipped(MultiGzDecoder::new(buf_reader))
+        ReadFileZip::Zipped(MultiGzDecoder::new(file))
     } else {
-        ReadFileZip::File(buf_reader)
+        ReadFileZip::File(file)
     };
 
-    Ok(reader)
+    Ok(FastQReader::new(reader))
 }
 
 pub(crate) fn create_writer<P: AsRef<Path>>(path: Option<P>) -> Result<WriteFileZipStdout, IOError> {

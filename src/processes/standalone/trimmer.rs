@@ -461,14 +461,10 @@ struct ParsedTrimmerArgs {
 }
 
 fn parse_trim_args(args: TrimmerArgs) -> Result<(IOArgs, ParsedTrimmerArgs), std::io::Error> {
-    let reader1 = open_fastq_file(&args.fastq_input_file)?;
-    let fastq_reader1 = FastQReader::new(reader1);
-
-    let fastq_reader2 = if let Some(file2) = &args.fastq_input_file2 {
-        let reader2 = open_fastq_file(file2)?;
-        Some(FastQReader::new(reader2))
-    } else {
-        None
+    let fastq_reader1 = open_fastq_file(&args.fastq_input_file)?;
+    let fastq_reader2 = match &args.fastq_input_file2 {
+        Some(file2) => Some(open_fastq_file(file2)?),
+        None => None,
     };
 
     let output_writer = create_writer(args.fastq_output_file.clone())?;

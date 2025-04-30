@@ -94,14 +94,14 @@ macro_rules! define_whichever {
     (
         @$match_macro_name:ident
 
-        $(#[doc = $doc:literal])?
+        $(#[$meta:meta])*
         $vis:vis enum $struct_name:ident {
             $($variant:ident($ty:ty)),+
             $(,)?
         }
         $(impl $trait:ident for $struct_name2:ident {}),*
     ) => {
-        $(#[doc = $doc])?
+        $(#[$meta])*
         $vis enum $struct_name {
             $(
                 $variant($ty),
