@@ -3,7 +3,7 @@ use crate::{
     utils::{get_hasher, get_molecular_id_side, whichever::define_whichever},
 };
 use clap::{Args, ValueEnum, builder::PossibleValue};
-use flate2::{Compression, bufread::GzDecoder, write::GzEncoder};
+use flate2::{Compression, bufread::MultiGzDecoder, write::GzEncoder};
 use foldhash::fast::SeedableRandomState;
 use std::{
     fs::File,
@@ -438,7 +438,7 @@ define_whichever! {
     #[doc="An enum for the different acceptable input types"]
     enum Reader {
         File(BufReader<File>),
-        Zipped(GzDecoder<BufReader<File>>),
+        Zipped(MultiGzDecoder<BufReader<File>>),
     }
 
     impl Read for Reader {}
@@ -451,7 +451,7 @@ fn open_fastq_file<P: AsRef<Path>>(path: P) -> Result<Reader, IOError> {
     let is_gz = path.as_ref().extension().is_some_and(|ext| ext == "gz");
 
     let reader = if is_gz {
-        Reader::Zipped(GzDecoder::new(buf_reader))
+        Reader::Zipped(MultiGzDecoder::new(buf_reader))
     } else {
         Reader::File(buf_reader)
     };

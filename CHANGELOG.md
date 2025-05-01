@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. The format is roughly based on [Keep a Changelog], and this project tries to adheres to [Semantic Versioning]. For IRMA vs IRMA-core compatibility, please see the [version matrix](VERSION_MATRIX.md).
 
+## [0.4.3] - 2025-05-01
+
+### Fixes
+
+- Fixed bug in `trimmer` to allow handling of multi-member `fastq.gz` files
+
 ## [0.4.2] - 2025-04-30
 
 ### Changed
