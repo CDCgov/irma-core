@@ -293,6 +293,8 @@ fn process_read<'a>(record: &'a mut FastQ, args: &ParsedTrimmerArgs) -> Option<F
         let edited = edit_read(fq_view, args);
         if edited.len() >= args.min_length {
             return Some(edited);
+        } else {
+            eprintln!("{}: {}", edited.header, edited.len());
         }
     }
     None
@@ -397,7 +399,7 @@ impl ValueEnum for TrimEnd {
 fn validate_kmer_length(value: &str) -> Result<usize, String> {
     let parsed = value
         .parse::<usize>()
-        .map_err(|_| format!("`{}` is not a valid integer.", value))?;
+        .map_err(|_| format!("`{value}` is not a valid integer."))?;
     if (2..=MAX_KMER_LENGTH).contains(&parsed) {
         Ok(parsed)
     } else {
@@ -411,11 +413,11 @@ fn validate_kmer_length(value: &str) -> Result<usize, String> {
 fn validate_b_hdist(value: &str) -> Result<usize, String> {
     let parsed = value
         .parse::<usize>()
-        .map_err(|_| format!("`{}` is not a valid integer between 0 and 3.", value))?;
+        .map_err(|_| format!("`{value}` is not a valid integer between 0 and 3."))?;
     if (0..=3).contains(&parsed) {
         Ok(parsed)
     } else {
-        Err(format!("b-hdist must be between 0 and 3, but `{}` was provided.", parsed))
+        Err(format!("b-hdist must be between 0 and 3, but `{parsed}` was provided."))
     }
 }
 
