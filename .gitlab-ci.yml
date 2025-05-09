@@ -24,7 +24,7 @@ irma-test:
     - scicomp
   script:
     - perl -ne 'BEGIN { $/ = undef } if (/^## \[(.*?)\]/m) { if (! /<!-- Versions -->.*?^\[$1\]:/ms) { die "Version $1 not linked!\n"; } }' CHANGELOG.md
-    - "perl -ne 'BEGIN { $/ = undef; my $cargo = <>; $cargo =~ /^version\\s*=\\s*\"([^\\\"]+)\"/m or die \"No version in Cargo.toml\\n\"; my $toml_version = $1; chomp(my $pkgid = `cargo pkgid`); $pkgid =~ /#(.+)$/ or die \"Bad pkgid\\n\"; my $pkgid_version = $1; $pkgid_version eq $toml_version or die \"Mismatch: [$toml_version] != [$pkgid_version]\\n\"; exit }' Cargo.toml"
+    - perl -ne 'BEGIN { $/ = undef; $ver = shift @ARGV; } if (/^## \[(.*?)\] - \d{4}-\d{2}-\d{2}/m) { if ( $1 ne $ver) { die "Cargo.toml version is not latest!\n"; } }' "$(cargo pkgid|cut -f2 -d'#')" CHANGELOG.md
     - cargo test --verbose
 
 pages:

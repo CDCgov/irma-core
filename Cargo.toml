@@ -18,13 +18,11 @@ readme = "README.md"
 
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
-either = "1"
-foldhash = "*"
-indoc = "*"
-num_cpus = "*"
-flate2 = "*"
-zoe = { git = "https://github.com/CDCgov/zoe.git", tag = "v0.0.16", default-features = false, features = [
+clap = { version = "4.5", features = ["derive"] }
+foldhash = "0.1.5"
+num_cpus = "1.16"
+flate2 = "1.1"
+zoe = { version = "0.0.18", default-features = false, features = [
     "multiversion",
 ] }
 

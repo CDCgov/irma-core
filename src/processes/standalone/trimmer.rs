@@ -1,15 +1,16 @@
 use crate::{
     qc::fastq::ReadTransforms,
-    utils::{get_hasher, get_molecular_id_side, whichever::define_whichever},
+    utils::{
+        get_hasher, get_molecular_id_side,
+        io::{ReadFileZip, WriteFileZipStdout, create_writer, open_fastq_file},
+    },
 };
 use clap::{Args, ValueEnum, builder::PossibleValue};
-use flate2::{Compression, bufread::MultiGzDecoder, write::GzEncoder};
 use foldhash::fast::SeedableRandomState;
 use std::{
-    fs::File,
-    io::{BufReader, BufWriter, Error as IOError, ErrorKind, Stdout, Write, stdout},
+    io::{Error as IOError, ErrorKind, Write},
     num::NonZeroUsize,
-    path::{Path, PathBuf},
+    path::PathBuf,
 };
 use zoe::{data::nucleotides::CheckNucleotides, kmer::ThreeBitKmerSet, prelude::*};
 
@@ -293,8 +294,6 @@ fn process_read<'a>(record: &'a mut FastQ, args: &ParsedTrimmerArgs) -> Option<F
         let edited = edit_read(fq_view, args);
         if edited.len() >= args.min_length {
             return Some(edited);
-        } else {
-            eprintln!("{}: {}", edited.header, edited.len());
         }
     }
     None
@@ -434,70 +433,11 @@ fn validate_acgtn(value: &str) -> Result<Nucleotides, String> {
     }
 }
 
-define_whichever! {
-    @match_reader
-
-    #[doc="An enum for the different acceptable input types"]
-    enum Reader {
-        File(BufReader<File>),
-        Zipped(MultiGzDecoder<BufReader<File>>),
-    }
-
-    impl Read for Reader {}
-}
-
-fn open_fastq_file<P: AsRef<Path>>(path: P) -> Result<Reader, IOError> {
-    let file = File::open(&path)?;
-    let buf_reader = BufReader::new(file);
-
-    let is_gz = path.as_ref().extension().is_some_and(|ext| ext == "gz");
-
-    let reader = if is_gz {
-        Reader::Zipped(MultiGzDecoder::new(buf_reader))
-    } else {
-        Reader::File(buf_reader)
-    };
-
-    Ok(reader)
-}
-
-define_whichever! {
-    @match_writer
-
-    #[doc="An enum for the different acceptable output types"]
-    enum Writer {
-        File(BufWriter<File>),
-        Zipped(GzEncoder<BufWriter<File>>),
-        Stdout(BufWriter<Stdout>),
-    }
-
-    impl Write for Writer {}
-}
-
-fn create_writer<P: AsRef<Path>>(path: Option<P>) -> Result<Writer, IOError> {
-    let writer = match path {
-        Some(ref p) => {
-            let is_gz = p.as_ref().extension().is_some_and(|ext| ext == "gz");
-            let file = File::create(p)?;
-            let buf_writer = BufWriter::new(file);
-
-            if is_gz {
-                Writer::Zipped(GzEncoder::new(buf_writer, Compression::default()))
-            } else {
-                Writer::File(buf_writer)
-            }
-        }
-        None => Writer::Stdout(BufWriter::new(stdout())),
-    };
-
-    Ok(writer)
-}
-
 struct IOArgs {
-    fastq_reader1:  FastQReader<Reader>,
-    fastq_reader2:  Option<FastQReader<Reader>>,
-    output_writer:  Writer,
-    output_writer2: Option<Writer>,
+    fastq_reader1:  FastQReader<ReadFileZip>,
+    fastq_reader2:  Option<FastQReader<ReadFileZip>>,
+    output_writer:  WriteFileZipStdout,
+    output_writer2: Option<WriteFileZipStdout>,
 }
 
 struct ParsedTrimmerArgs {

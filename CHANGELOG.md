@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. The format is roughly based on [Keep a Changelog], and this project tries to adheres to [Semantic Versioning]. For IRMA vs IRMA-core compatibility, please see the [version matrix](VERSION_MATRIX.md).
 
+## [0.4.4] - TBD
+
+### Changed
+
+- Re-factor and specify dependencies.
+
 ## [0.4.3] - 2025-05-01
 
 ### Fixes
@@ -80,6 +86,7 @@ All notable changes to this project will be documented in this file. The format 
 - **Added**: custom inexact matching algorithm from [Zoe]
 
 <!-- Versions -->
+[0.4.4]: https://github.com/CDCgov/irma-core/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/CDCgov/irma-core/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/CDCgov/irma-core/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/CDCgov/irma-core/compare/v0.4.0...v0.4.1

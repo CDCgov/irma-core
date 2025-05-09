@@ -3,12 +3,12 @@
 //
 // DEPRECATED:       This process is deprecated and will be removed in future versions.
 
+use crate::utils::io::ReadFileStdin;
 use clap::{Args, ValueHint};
-use either::Either;
 use std::{
     borrow::Borrow,
-    fs::OpenOptions,
-    io::{BufReader, BufWriter, prelude::*, stdin},
+    fs::{File, OpenOptions},
+    io::{BufWriter, prelude::*, stdin},
     path::PathBuf,
 };
 use zoe::{data::types::nucleotides::reverse_complement, prelude::*};
@@ -80,11 +80,12 @@ static MODULE: &str = module_path!();
 ///
 /// Sub-program for processing fastQ data.
 pub fn fastqc_process(args: FastqConverterArgs) -> Result<(), std::io::Error> {
-    let fastq_file_reader = if let Some(ref file_path) = args.fastq_input_file {
-        FastQReader::new(BufReader::new(Either::Left(OpenOptions::new().read(true).open(file_path)?)))
+    let source_reader = if let Some(ref file_path) = args.fastq_input_file {
+        ReadFileStdin::File(File::open(file_path)?)
     } else {
-        FastQReader::new(BufReader::new(Either::Right(stdin())))
+        ReadFileStdin::Stdin(stdin())
     };
+    let fastq_file_reader = FastQReader::new(source_reader);
 
     let (mut log_file_writer, log_name_id) = if let Some(ref file_path) = args.log_file {
         let mut log_id = String::new();

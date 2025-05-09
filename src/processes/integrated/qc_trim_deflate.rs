@@ -6,7 +6,6 @@ use crate::{
     utils::get_hasher,
 };
 use clap::{Args, ValueHint};
-use indoc::writedoc;
 use std::{
     collections::HashMap,
     fs::OpenOptions,
@@ -222,21 +221,21 @@ pub fn qc_trim_deflate_process(args: QcTrimDeflateArgs) -> Result<(), std::io::E
     stdout_writer.flush()?;
 
     if let Some(ref mut w) = log_file_writer {
-        writedoc!(
+        writeln!(
             w,
-            "
-            NUMBER_INPUT_FILES\t{num_files}
-            OBSERVED_RAW_READS_OR_R1\t{r1_raw_reads}
-            OBSERVED_R2_READS\t{r2_raw_reads}
-            OBSERVED_MAX_READ_LEN\t{observed_max_read_len}
-            OBSERVED_MAX_CLIPPED_READ_LENGTH\t{observed_max_clipped_read_len}
-            OBSERVED_MAX_QUALITY\t{observed_q_max}
-            READ_COUNT_PASSING_ONLY_LENGTH_FILTER\t{passed_len_count}
-            READ_COUNT_PASSING_ALL_QUALITY_CONTROL_FILTERS\t{passed_qc_count}
-            READ_PATTERN_COUNT_PASSING\t{read_pattern_number}
-            MIN_PHRED_QUALITY_THRESHOLD\t{min_read_quality_threshold}
-            MIN_READ_LENGTH_THRESHOLD\t{min_length_threshold}
-            QUALITY_MEASURE\t{center_type}
+            "\n\
+            NUMBER_INPUT_FILES\t{num_files}\n\
+            OBSERVED_RAW_READS_OR_R1\t{r1_raw_reads}\n\
+            OBSERVED_R2_READS\t{r2_raw_reads}\n\
+            OBSERVED_MAX_READ_LEN\t{observed_max_read_len}\n\
+            OBSERVED_MAX_CLIPPED_READ_LENGTH\t{observed_max_clipped_read_len}\n\
+            OBSERVED_MAX_QUALITY\t{observed_q_max}\n\
+            READ_COUNT_PASSING_ONLY_LENGTH_FILTER\t{passed_len_count}\n\
+            READ_COUNT_PASSING_ALL_QUALITY_CONTROL_FILTERS\t{passed_qc_count}\n\
+            READ_PATTERN_COUNT_PASSING\t{read_pattern_number}\n\
+            MIN_PHRED_QUALITY_THRESHOLD\t{min_read_quality_threshold}\n\
+            MIN_READ_LENGTH_THRESHOLD\t{min_length_threshold}\n\
+            QUALITY_MEASURE\t{center_type}\n\
             ",
             num_files = args.fastq_input_file2.is_some() as u8 + 1,
             r1_raw_reads = observed_raw_reads[0],

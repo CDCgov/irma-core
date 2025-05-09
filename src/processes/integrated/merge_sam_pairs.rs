@@ -4,7 +4,6 @@
 
 use crate::utils::get_molecular_id_side;
 use clap::Args;
-use indoc::writedoc;
 use std::collections::HashMap;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
@@ -162,14 +161,14 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) {
             insert_errors,
         } = paired_merging_stats;
 
-        writedoc!(
+        writeln!(
             &mut w,
-            "{name}\tobs\t{observations}
-             {name}\ttmv\t{true_variations}
-             {name}\tfmv\t{variant_errors}
-             {name}\tdmv\t{deletion_errors}
-             {name}\tinsObs\t{insert_obs}
-             {name}\tinsErr\t{insert_errors}\n",
+            "{name}\tobs\t{observations}\n\
+             {name}\ttmv\t{true_variations}\n\
+             {name}\tfmv\t{variant_errors}\n\
+             {name}\tdmv\t{deletion_errors}\n\
+             {name}\tinsObs\t{insert_obs}\n\
+             {name}\tinsErr\t{insert_errors}",
             name = reference.name
         )
         .unwrap_or_die(&format!(

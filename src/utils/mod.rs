@@ -1,6 +1,7 @@
 use foldhash::{SharedSeed, fast::SeedableRandomState};
 use std::env;
 
+pub(crate) mod io;
 pub(crate) mod whichever;
 
 const SEED_ENV_VAR: &str = "IRMA_SEED";
