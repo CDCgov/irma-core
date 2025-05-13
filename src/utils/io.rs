@@ -8,8 +8,6 @@ use std::{
 use zoe::prelude::FastQReader;
 
 define_whichever! {
-    @match_compressed_reader
-
     #[allow(clippy::large_enum_variant)]
     #[doc="An enum for the different acceptable input types"]
     pub(crate) enum ReadFileZip {
@@ -21,8 +19,6 @@ define_whichever! {
 }
 
 define_whichever! {
-    @match_compressed_writer
-
     #[doc="An enum for the different acceptable output types"]
     pub(crate) enum  WriteFileZipStdout {
         File(BufWriter<File>),
@@ -34,8 +30,6 @@ define_whichever! {
 }
 
 define_whichever! {
-    @match_file_stdin
-
     pub(crate) enum ReadFileStdin {
         File(File),
         Stdin(Stdin),
