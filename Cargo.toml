@@ -25,6 +25,8 @@ flate2 = "1.1"
 zoe = { git = "https://github.com/CDCgov/zoe.git", branch = "main", default-features = false, features = [
     "multiversion",
 ] }
+rand_xoshiro = "0.7.0"
+rand = "0.9.1"
 
 [profile.dev]
 opt-level = 1

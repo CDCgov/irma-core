@@ -3,6 +3,7 @@
 
 use crate::processes::{fastq_converter::*, merge_sam_pairs::*, num_procs::*, preprocess::*, trimmer::*, xflate::*};
 use clap::{Parser, Subcommand};
+use processes::sampler::{SamplerArgs, sampler_process};
 use zoe::data::err::OrFail;
 
 #[derive(Parser)]
@@ -35,6 +36,8 @@ enum Commands {
     )]
     /// Read FastQ files and trim with various options.
     Trimmer(TrimmerArgs),
+    /// Downsample FastQ files
+    Sampler(SamplerArgs),
 }
 
 fn main() {
@@ -47,6 +50,7 @@ fn main() {
         Commands::MergeSAM(cmd_args) => merge_sam_pairs_process(cmd_args),
         Commands::Xflate(cmd_args) => xflate_process(cmd_args).unwrap_or_die(&format!("{module}::Xflate")),
         Commands::Trimmer(cmd_args) => trimmer_process(cmd_args).unwrap_or_die(&format!("{module}::Trimmer")),
+        Commands::Sampler(cmd_args) => sampler_process(cmd_args).unwrap_or_die(&format!("{module}::Sampler")),
         Commands::NumProcs(cmd_args) => num_procs_process(cmd_args).unwrap_or_die(&format!("{module}::NumProcs")),
         _ => {
             eprintln!("IRMA-CORE: unrecognized command {:?}", args.command);
