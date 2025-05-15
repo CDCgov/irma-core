@@ -18,7 +18,7 @@ use std::{
 use zoe::prelude::*;
 
 #[derive(Args, Debug)]
-pub struct QcTrimDeflateArgs {
+pub struct PreprocessArgs {
     /// Location to store the XFL file.
     pub table_file: PathBuf,
 
@@ -59,7 +59,7 @@ pub struct QcTrimDeflateArgs {
 const CLUSTER_PREFIX: &str = "C";
 static MODULE: &str = module_path!();
 
-pub struct ParsedQcTrimDeflateIoArgs {
+pub struct ParsedPreprocessIoArgs {
     pub table_writer: BufWriter<File>,
     pub reader1:      FastQReader<BufReader<File>>,
     pub reader2:      Option<FastQReader<BufReader<File>>>,
@@ -67,8 +67,8 @@ pub struct ParsedQcTrimDeflateIoArgs {
     pub log_file:     Option<PathBuf>,
 }
 
-pub struct ParsedQcTrimDeflateArgs {
-    pub io_args:                ParsedQcTrimDeflateIoArgs,
+pub struct ParsedPreprocessArgs {
+    pub io_args:                ParsedPreprocessIoArgs,
     pub keep_header:            bool,
     pub min_read_quality:       u8,
     pub use_median:             bool,
@@ -77,8 +77,8 @@ pub struct ParsedQcTrimDeflateArgs {
     pub clipping_args:          ParsedClippingArgs,
 }
 
-pub fn parse_qc_trim_deflate_args(args: QcTrimDeflateArgs) -> Result<ParsedQcTrimDeflateArgs, std::io::Error> {
-    let QcTrimDeflateArgs {
+pub fn parse_preprocess_args(args: PreprocessArgs) -> Result<ParsedPreprocessArgs, std::io::Error> {
+    let PreprocessArgs {
         table_file,
         fastq_input_file1,
         fastq_input_file2,
@@ -91,14 +91,14 @@ pub fn parse_qc_trim_deflate_args(args: QcTrimDeflateArgs) -> Result<ParsedQcTri
         clipping_args,
     } = args;
 
-    let fastq_file_reader1 = FastQReader::new(BufReader::new(OpenOptions::new().read(true).open(fastq_input_file1)?));
+    let reader1 = FastQReader::new(BufReader::new(OpenOptions::new().read(true).open(fastq_input_file1)?));
 
-    let fastq_file_reader2 = match fastq_input_file2 {
+    let reader2 = match fastq_input_file2 {
         Some(file2) => Some(FastQReader::new(BufReader::new(OpenOptions::new().read(true).open(file2)?))),
         None => None,
     };
 
-    let log_file_writer = match log_file {
+    let log_writer = match log_file {
         Some(ref file_path) => Some(BufWriter::new(
             OpenOptions::new().write(true).create(true).truncate(true).open(file_path)?,
         )),
@@ -111,12 +111,12 @@ pub fn parse_qc_trim_deflate_args(args: QcTrimDeflateArgs) -> Result<ParsedQcTri
 
     let clipping_args = parse_clipping_args(clipping_args)?;
 
-    let parsed = ParsedQcTrimDeflateArgs {
-        io_args: ParsedQcTrimDeflateIoArgs {
+    let parsed = ParsedPreprocessArgs {
+        io_args: ParsedPreprocessIoArgs {
             table_writer,
-            reader1: fastq_file_reader1,
-            reader2: fastq_file_reader2,
-            log_writer: log_file_writer,
+            reader1,
+            reader2,
+            log_writer,
             log_file,
         },
         keep_header,
@@ -133,10 +133,10 @@ pub fn parse_qc_trim_deflate_args(args: QcTrimDeflateArgs) -> Result<ParsedQcTri
 /// # Panics
 ///
 /// Sub-program for processing fastQ data.
-pub fn qc_trim_deflate_process(args: QcTrimDeflateArgs) -> Result<(), std::io::Error> {
-    let ParsedQcTrimDeflateArgs {
+pub fn preprocess_process(args: PreprocessArgs) -> Result<(), std::io::Error> {
+    let ParsedPreprocessArgs {
         io_args:
-            ParsedQcTrimDeflateIoArgs {
+            ParsedPreprocessIoArgs {
                 mut table_writer,
                 reader1,
                 reader2,
@@ -149,7 +149,7 @@ pub fn qc_trim_deflate_process(args: QcTrimDeflateArgs) -> Result<(), std::io::E
         min_length,
         enforce_clipped_length,
         clipping_args,
-    } = parse_qc_trim_deflate_args(args)?;
+    } = parse_preprocess_args(args)?;
 
     let (r1, r2) = if reader2.is_some() {
         (Some('1'), Some('2'))

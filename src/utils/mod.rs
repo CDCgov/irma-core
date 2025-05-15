@@ -12,7 +12,7 @@ fn get_seed() -> Option<u64> {
 
 pub fn get_hasher() -> SeedableRandomState {
     match get_seed() {
-        Some(seed) => SeedableRandomState::with_seed(seed, SharedSeed::global_random()),
+        Some(seed) => SeedableRandomState::with_seed(seed, SharedSeed::global_fixed()),
         None => SeedableRandomState::random(),
     }
 }
