@@ -4,9 +4,7 @@ on:
   push:
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
-      - 'v[0-9]+.[0-9]+.[0-9]+-irma-compat-v[0-9]+.[0-9]+.[0-9]+'
 
-# Define default permissions at workflow level (restricting by default)
 permissions: {}
 
 env:
@@ -36,24 +34,24 @@ jobs:
 
       - name: Create Release
         id: create_release
-        uses: softprops/action-gh-release@v2
-        with:
-          body: ${{ steps.extract_changelog.outputs.changelog }}
-          draft: false
-          prerelease: false
+        shell: bash
+        run: |
+          gh release create "${{ github.ref_name }}" \
+          --title "${{ github.ref_name }}" \
+          --notes "${{ steps.extract_changelog.outputs.changelog }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  build-release-image-and-rhel8-artifact:
+  build-release-image-and-rhel8-artifacts:
     name: Build and Push Release Image
     needs: [create-release]
     strategy:
       matrix:
         include:
-          - arch: amd64
+          - arch: x86_64
             runner: ubuntu-latest
-          - arch: arm64
-            runner: ubuntu-24.04-arm # Or another ARM runner if available
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: write
@@ -85,27 +83,25 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
 
-      - name: Prepare Linux x86_64 Binary
-        if: matrix.arch == 'amd64'
+      - name: Prepare Linux Binary
         shell: bash
         run: |
-          AMD64_TAG=$(echo "${{ steps.meta.outputs.tags }}" | grep -- '-amd64$' | head -n 1)
-          docker create --name temp-container $AMD64_TAG \
-          && docker cp temp-container:/app/irma-core ./ \
+          IMAGE_TAG=$(echo "${{ steps.meta.outputs.tags }}" | grep -- '-${{ matrix.arch }}$' | head -n 1)
+          docker create --name temp-container $IMAGE_TAG \
+          && docker cp temp-container:/app/irma-core ./irma-core \
           && docker rm temp-container \
-          && tar -czf irma-core-linux-x86_64-${{ github.ref_name }}.tar.gz irma-core
+          && tar -czf irma-core-linux-${{ matrix.arch }}-${{ github.ref_name }}.tar.gz irma-core
 
-      - name: Upload Linux x86_64 Release Asset
-        if: matrix.arch == 'amd64'
-        uses: softprops/action-gh-release@v2
-        with:
-          files: irma-core-linux-x86_64-${{ github.ref_name }}.tar.gz
+      - name: Upload Linux Release Asset
+        shell: bash
+        run: |
+          gh release upload "${{ github.ref_name }}" irma-core-linux-${{ matrix.arch }}-${{ github.ref_name }}.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  create-release-manifest:
-    name: Create Release Manifest
-    needs: build-release-image-and-rhel8-artifact
+  create-image-manifest:
+    name: Create Image Manifest
+    needs: build-release-image-and-rhel8-artifacts
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -125,13 +121,13 @@ jobs:
           VERSION=${REPO}:${{ github.ref_name }}
           LATEST=${REPO}:latest
 
-          docker manifest create $VERSION --amend ${LATEST}-amd64 --amend ${LATEST}-arm64 \
+          docker manifest create $VERSION --amend ${LATEST}-x86_64 --amend ${LATEST}-aarch64 \
             && docker manifest push $VERSION
 
-          docker manifest create $LATEST --amend ${LATEST}-amd64 --amend ${LATEST}-arm64 \
+          docker manifest create $LATEST --amend ${LATEST}-x86_64 --amend ${LATEST}-aarch64 \
             && docker manifest push $LATEST
 
-  build-others-for-release:
+  build-mac-windows-for-release:
     name: Build Release
     needs: create-release
     runs-on: ${{ matrix.os }}
@@ -143,7 +139,7 @@ jobs:
             artifact_name: irma-core-macos-x86_64
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact_name: irma-core-macos-arm64
+            artifact_name: irma-core-macos-aarch64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             artifact_name: irma-core-windows-x86_64
@@ -177,8 +173,42 @@ jobs:
           fi
 
       - name: Upload Release Asset
-        uses: softprops/action-gh-release@v2
-        with:
-          files: ${{ matrix.artifact_name }}-${{ github.ref_name }}.*
+        shell: bash
+        run: |
+          gh release upload "${{ github.ref_name }}" ${{ matrix.artifact_name }}-${{ github.ref_name }}.*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  create-integrated-package:
+    name: Create Integrated Package
+    needs: [build-mac-windows-for-release, build-release-image-and-rhel8-artifacts]
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download Release Assets
+        shell: bash
+        run: |
+          gh release download "${{ github.ref_name }}" -p irma-core-*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Binaries and Create Integrated Package
+        shell: bash
+        run: |
+          tar -xzf irma-core-macos-x86_64-${{ github.ref_name }}.tar.gz && mv irma-core x86_gz \
+          && tar -xzf irma-core-macos-aarch64-${{ github.ref_name }}.tar.gz && mv irma-core arm_gz \
+          && lipo -create -output irma-core_Darwin x86_gz arm_gz \
+          && tar -xzf irma-core-linux-x86_64-${{ github.ref_name }}.tar.gz && mv irma-core irma-core_Linux_x86_64 \
+          && tar -xzf irma-core-linux-aarch64-${{ github.ref_name }}.tar.gz && mv irma-core irma-core_Linux_aarch64  \
+          && rm *gz \
+          && zip irma-core-integrated-${{ github.ref_name }}.zip irma-core_*
+
+      - name: Upload Integrated Package
+        shell: bash
+        run: |
+          gh release upload "${{ github.ref_name }}" irma-core-integrated-${{ github.ref_name }}.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
