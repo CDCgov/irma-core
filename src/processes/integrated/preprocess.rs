@@ -4,6 +4,7 @@
 
 use crate::{
     args::clipping::{ClippingArgs, ParsedClippingArgs, parse_clipping_args},
+    io::{ReadFileZip, open_fastq_file},
     qc::{
         fastq::{ReadTransforms, fix_sra_format, keep_or_underscore_header},
         fastq_metadata::*,
@@ -19,7 +20,7 @@ use foldhash::fast::SeedableRandomState;
 use std::{
     collections::HashMap,
     fs::{File, OpenOptions},
-    io::{BufReader, BufWriter, prelude::*},
+    io::{BufWriter, prelude::*},
     num::NonZeroUsize,
     path::PathBuf,
 };
@@ -108,8 +109,8 @@ pub fn preprocess_process(args: PreprocessArgs) -> Result<(), std::io::Error> {
 
 struct ParsedPreprocessIoArgs {
     table_writer: BufWriter<File>,
-    reader1:      FastQReader<BufReader<File>>,
-    reader2:      Option<FastQReader<BufReader<File>>>,
+    reader1:      FastQReader<ReadFileZip>,
+    reader2:      Option<FastQReader<ReadFileZip>>,
     log_writer:   Option<BufWriter<File>>,
     log_file:     Option<PathBuf>,
 }
@@ -145,10 +146,10 @@ fn parse_preprocess_args(args: PreprocessArgs) -> Result<ParsedPreprocessArgs, s
         clipping_args,
     } = args;
 
-    let reader1 = FastQReader::new(BufReader::new(OpenOptions::new().read(true).open(fastq_input_file1)?));
+    let reader1 = open_fastq_file(fastq_input_file1)?;
 
     let reader2 = match fastq_input_file2 {
-        Some(file2) => Some(FastQReader::new(BufReader::new(OpenOptions::new().read(true).open(file2)?))),
+        Some(file2) => Some(open_fastq_file(file2)?),
         None => None,
     };
 
