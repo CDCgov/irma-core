@@ -5,7 +5,7 @@ use std::{
 };
 use zoe::prelude::FastQ;
 
-/// Takes a fastq header and returns the molecular ID and side (for paired
+/// Takes a FASTQ header and returns the molecular ID and side (for paired
 /// reads)
 pub fn get_molecular_id_side(s: &str, default_side: char) -> Option<(&str, char)> {
     let (the_id, the_side) = if s.contains(' ') {
@@ -102,6 +102,7 @@ pub enum ReadSide {
 }
 
 impl ReadSide {
+    #[inline]
     pub fn to_idx(self) -> usize {
         match self {
             ReadSide::R1 => 0,
@@ -262,21 +263,22 @@ pub trait PairedReadFilterer: Debug {
     /// Handles all reads with widow filtering. Weak checking is performed: if
     /// any mismatch is found between the headers, a warning is issued and
     /// processing continues without widow filtering.
-    fn handle_paired_reads_with_filter_weak<I, M>(
-        &mut self, mut reader1: I, mut reader2: I, header_mismatch: M, extra_read: &'static str,
+    fn handle_paired_reads_with_filter_weak<I, M, X>(
+        &mut self, mut reader1: I, mut reader2: I, header_mismatch_warning: M, extra_read_warning: X,
     ) -> std::io::Result<&mut Self>
     where
         I: Iterator<Item = Result<FastQ, std::io::Error>>,
-        M: FnOnce(std::io::Error) -> String, {
+        M: FnOnce(std::io::Error) -> String,
+        X: FnOnce() -> String, {
         for r1 in reader1.by_ref() {
             let Some(r2) = reader2.next() else {
-                eprintln!("{extra_read}");
+                eprintln!("{}", extra_read_warning());
                 return self.handle_single_reads(std::iter::once(r1).chain(reader1), ReadSide::R1);
             };
             let r1 = r1?;
             let r2 = r2?;
             if let Err(e) = check_paired_headers(&r1, &r2) {
-                header_mismatch(e);
+                eprintln!("{}", header_mismatch_warning(e));
                 return self.handle_paired_reads_no_filter(
                     std::iter::once(Ok(r1)).chain(reader1),
                     std::iter::once(Ok(r2)).chain(reader2),
@@ -286,7 +288,7 @@ pub trait PairedReadFilterer: Debug {
         }
 
         if let Some(r2) = reader2.next() {
-            eprintln!("{extra_read}");
+            eprintln!("{}", extra_read_warning());
             self.handle_single_reads(std::iter::once(r2).chain(reader2), ReadSide::R2)?;
         }
 

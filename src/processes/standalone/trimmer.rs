@@ -13,37 +13,37 @@ use zoe::prelude::*;
 #[derive(Args, Debug)]
 pub struct TrimmerArgs {
     /// Path to .fastq or .fastq.gz file to be trimmed
-    pub fastq_input_file: PathBuf,
+    fastq_input_file: PathBuf,
 
     /// Path to optional second .fastq or .fastq.gz file to be trimmed
-    pub fastq_input_file2: Option<PathBuf>,
+    fastq_input_file2: Option<PathBuf>,
 
     #[arg(short = '1', short_alias = 'o', long = "fastq-output")]
     /// Output filepath for trimmed reads. Trimmed reads print to STDOUT if not
     /// provided. May also use '-o'.
-    pub fastq_output_file: Option<PathBuf>,
+    fastq_output_file: Option<PathBuf>,
 
     #[arg(short = '2', long = "fastq-output2", requires = "fastq_input_file2")]
     /// Output path for secondary trimmed file if using paired reads. If this
     /// argument is omitted, output is interleaved.
-    pub fastq_output_file2: Option<PathBuf>,
+    fastq_output_file2: Option<PathBuf>,
 
     #[arg(short = 'm', long)]
     /// Perform masking with 'N' instead of clipping. Default behavior is
     /// clipping if not provided
-    pub mask: bool,
+    mask: bool,
 
     #[arg(short = 'n', long, default_value = "1")]
     /// Minimum sequence length required after trimming. Shorter sequences are
     /// filtered from output.
-    pub min_length: NonZeroUsize,
+    min_length: NonZeroUsize,
 
     #[arg(short = 'f', long)]
     /// Filter widowed reads
-    pub filter_widows: bool,
+    filter_widows: bool,
 
     #[command(flatten)]
-    pub clipping_args: ClippingArgs,
+    clipping_args: ClippingArgs,
 }
 
 /// Sub-program for trimming FASTQ data.
@@ -88,8 +88,8 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
     }
 }
 
-/// A [`PairedReadFilterer`] struct used by the trimmer process to perform its core
-/// logic. Trimmed sequences are output to 1 (`N=1`) or 2 (`N=2`) files.
+/// A [`PairedReadFilterer`] struct used by the trimmer process to perform its
+/// core logic. Trimmed sequences are output to 1 (`N=1`) or 2 (`N=2`) files.
 #[derive(Debug)]
 struct Trimmer<'a, const N: usize> {
     args:    &'a ParsedTrimmerOptions,
@@ -155,8 +155,8 @@ fn error_extra_read() -> std::io::Error {
 
 /// Parsed arguments for the `trimmer` subprocess
 struct ParsedTrimmerArgs {
-    pub io_args:       ParsedPairedIoArgs,
-    pub trimming_args: ParsedTrimmerOptions,
+    io_args:       ParsedPairedIoArgs,
+    trimming_args: ParsedTrimmerOptions,
 }
 
 /// Parsed IO arguments for single or paired reads
@@ -170,11 +170,11 @@ struct ParsedPairedIoArgs {
 /// Arguments related to clipping/masking reads, including length/widow
 /// filtering
 #[derive(Debug)]
-pub struct ParsedTrimmerOptions {
-    pub mask:          bool,
-    pub filter_widows: bool,
-    pub min_length:    usize,
-    pub clipping_args: ParsedClippingArgs,
+struct ParsedTrimmerOptions {
+    mask:          bool,
+    filter_widows: bool,
+    min_length:    usize,
+    clipping_args: ParsedClippingArgs,
 }
 
 fn parse_trimmer_args(args: TrimmerArgs) -> Result<ParsedTrimmerArgs, std::io::Error> {
