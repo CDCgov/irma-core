@@ -6,7 +6,7 @@ use crate::{
     args::clipping::{ClippingArgs, ParsedClippingArgs, parse_clipping_args},
     io::{ReadFileZip, open_fastq_file},
     qc::{
-        fastq::{ReadTransforms, fix_sra_format, keep_or_underscore_header},
+        fastq::{ReadTransforms, fix_sra_format},
         fastq_metadata::*,
     },
     utils::{
@@ -42,10 +42,6 @@ pub struct PreprocessArgs {
     #[arg(short = 'L', long, value_hint = ValueHint::FilePath)]
     /// Quality control log path and filename.
     log_file: Option<PathBuf>,
-
-    #[arg(short = 'K', long)]
-    /// Keep the fastq header as usual.
-    keep_header: bool,
 
     #[arg(short = 'T', long, default_value_t = 0)]
     /// Specify the read quality threshold (geometric mean, median).
@@ -117,7 +113,6 @@ struct ParsedPreprocessIoArgs {
 
 #[derive(Debug)]
 struct ParsedPreprocessOptions {
-    keep_header:            bool,
     min_read_quality:       u8,
     use_median:             bool,
     min_length:             usize,
@@ -137,7 +132,6 @@ fn parse_preprocess_args(args: PreprocessArgs) -> Result<ParsedPreprocessArgs, s
         fastq_input_file1,
         fastq_input_file2,
         log_file,
-        keep_header,
         min_read_quality,
         use_median,
         min_length,
@@ -175,7 +169,6 @@ fn parse_preprocess_args(args: PreprocessArgs) -> Result<ParsedPreprocessArgs, s
             log_file,
         },
         options: ParsedPreprocessOptions {
-            keep_header,
             min_read_quality,
             use_median,
             min_length,
@@ -260,7 +253,7 @@ fn write_log(
 
     writeln!(
         log_writer,
-        "\n\
+        "\
         NUMBER_INPUT_FILES\t{num_files}\n\
         OBSERVED_RAW_READS_OR_R1\t{r1_raw_reads}\n\
         OBSERVED_R2_READS\t{r2_raw_reads}\n\
@@ -272,7 +265,7 @@ fn write_log(
         READ_PATTERN_COUNT_PASSING\t{read_pattern_count_passing}\n\
         MIN_PHRED_QUALITY_THRESHOLD\t{min_read_quality}\n\
         MIN_READ_LENGTH_THRESHOLD\t{min_length}\n\
-        QUALITY_MEASURE\t{center_type}\n\
+        QUALITY_MEASURE\t{center_type}\
         ",
         num_files = if paired_reads { 2 } else { 1 },
         r1_raw_reads = observed_raw_reads[0],
@@ -426,7 +419,7 @@ impl<'a> PairedReadFilterer for Preprocessor<'a> {
             if let Some(side) = side.to_char() {
                 trimmed.header = fix_sra_format(trimmed.header, side);
             }
-            keep_or_underscore_header(trimmed.header, self.args.keep_header)
+            trimmed.header
         };
 
         let sequence = trimmed.sequence.to_owned_data();

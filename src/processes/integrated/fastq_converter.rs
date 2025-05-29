@@ -23,10 +23,6 @@ pub struct FastqConverterArgs {
     /// Outputs fastQ instead of fastA format.
     pub fastq_output: bool,
 
-    #[arg(short = 'H', long)]
-    /// Keep the fastq header as usual.
-    pub keep_header: bool,
-
     #[arg(short = 'T', long, default_value_t = 0)]
     /// Specify the read quality threshold (geometric mean, median).
     pub min_read_quality: u8,
@@ -142,7 +138,7 @@ pub fn fastqc_process(args: FastqConverterArgs) -> Result<(), std::io::Error> {
 
         passed_qc_count += 1;
 
-        fq.fix_header(args.read_side).keep_or_underscore_header(args.keep_header);
+        fq.fix_header(args.read_side);
 
         if args.fastq_output {
             print!("{fq}");

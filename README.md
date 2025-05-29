@@ -16,7 +16,7 @@
 
 | Process            | Description                                                                                                        | Usage                              |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------ | ---------------------------------- |
-| `qc-trim-deflate`  | Performs all-in-one FastQ quality control, trimming, and deflation to XFL and FASTA formats. Similar to `trimmer`. | `irma-core qc-trim-deflate --help` |
+| `preprocess`       | Performs all-in-one FastQ quality control, trimming, and deflation to XFL and FASTA formats. Similar to `trimmer`. | `irma-core preprocess --help`      |
 | `fastq-converter`ø | Performs FastQ quality control, file conversions, and adapter trimming.                                            | `irma-core fastq-converter --help` |
 | `merge-sam`†       | Merges Illumina paired-end reads with parsimonious error correction and detection                                  | `irma-core merge-sam --help`       |
 | `xflate`†          | Deflates FastQ files to deduplicated Fasta files, or reinflates deduplicated Fasta files to FastQ files.           | `irma-core xflate --help`          |

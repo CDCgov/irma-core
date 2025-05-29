@@ -1,5 +1,4 @@
 use foldhash::fast::SeedableRandomState;
-use std::sync::LazyLock;
 use zoe::{
     data::fastq::FastQ,
     kmer::ThreeBitKmerSet,
@@ -7,10 +6,12 @@ use zoe::{
     search::{RangeSearch, ToRangeSearch},
 };
 
-static GIVE_WARNING_FOR_LONG_FASTQ: LazyLock<()> =
-    LazyLock::new(|| eprintln!("WARNING: FASTQ headers truncated, downstream BAM format expects no more than 254 bytes!"));
-
-const BAM_QNAME_LIMIT: usize = 254;
+// Note: IRMA will keeper headers as-is for ONT and Illumina and will only
+// underscore paired-end reads during interleaved sampling, which is not
+// expected to overflow. If this changes, please re-implement a trimming
+// operation safe for downstream Samtools.
+//
+// const BAM_QNAME_LIMIT: usize = 254;
 const MAX_KMER_LENGTH: usize = 21;
 
 pub(crate) fn fix_sra_format(header: String, read_side: char) -> String {
@@ -94,7 +95,6 @@ pub(crate) trait ReadTransforms {
     }
 
     fn get_q_center(&self, use_median: bool) -> Option<f32>;
-    fn keep_or_underscore_header(&mut self, keep_header: bool) -> &mut Self;
 }
 
 impl ReadTransforms for FastQ {
@@ -338,21 +338,6 @@ impl ReadTransforms for FastQ {
         }
         .map(|q| q.as_f32())
     }
-
-    #[inline]
-    fn keep_or_underscore_header(&mut self, keep_header: bool) -> &mut Self {
-        if !keep_header {
-            if self.header.len() > BAM_QNAME_LIMIT {
-                // Cannot panic given use of `floor_char_boundary`
-                self.header.truncate(self.header.floor_char_boundary(BAM_QNAME_LIMIT));
-                // Print warning once
-                *GIVE_WARNING_FOR_LONG_FASTQ;
-            }
-
-            self.header = self.header.replace(' ', "_");
-        }
-        self
-    }
 }
 
 impl ReadTransforms for FastQViewMut<'_> {
@@ -577,33 +562,4 @@ impl ReadTransforms for FastQViewMut<'_> {
         }
         .map(|q| q.as_f32())
     }
-
-    #[inline]
-    fn keep_or_underscore_header(&mut self, keep_header: bool) -> &mut Self {
-        if !keep_header {
-            if self.header.len() > BAM_QNAME_LIMIT {
-                // Cannot panic given use of `floor_char_boundary`
-                self.header.truncate(self.header.floor_char_boundary(BAM_QNAME_LIMIT));
-                // Print warning once
-                *GIVE_WARNING_FOR_LONG_FASTQ;
-            }
-
-            *self.header = self.header.replace(' ', "_");
-        }
-        self
-    }
-}
-
-pub fn keep_or_underscore_header(mut header: String, keep_header: bool) -> String {
-    if !keep_header {
-        if header.len() > BAM_QNAME_LIMIT {
-            // Cannot panic given use of `floor_char_boundary`
-            header.truncate(header.floor_char_boundary(BAM_QNAME_LIMIT));
-            // Print warning once
-            *GIVE_WARNING_FOR_LONG_FASTQ;
-        }
-
-        header = header.replace(' ', "_");
-    }
-    header
 }
