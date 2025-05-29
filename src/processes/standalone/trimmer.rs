@@ -38,7 +38,7 @@ pub struct TrimmerArgs {
     /// filtered from output.
     min_length: NonZeroUsize,
 
-    #[arg(short = 'f', long)]
+    #[arg(short = 'f', long, requires = "fastq_input_file2")]
     /// Filter widowed reads
     filter_widows: bool,
 

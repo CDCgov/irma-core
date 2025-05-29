@@ -63,7 +63,7 @@ pub struct PreprocessArgs {
     /// The minimum length threshold (-n) is enforced after all trimming.
     enforce_clipped_length: bool,
 
-    #[arg(short = 'f', long)]
+    #[arg(short = 'f', long, requires = "fastq_input_file2")]
     /// Filter widowed reads
     filter_widows: bool,
 

@@ -5,15 +5,18 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 [Semantic Versioning]. For IRMA vs IRMA-core compatibility, please see the
 [version matrix](VERSION_MATRIX.md).
 
-## [0.5.0] - TBD
+## [0.5.0] - 2025-05-29
+
+### Added
+
+- `preprocess` (formerly `qc-trim-deflate`) now supports zipped inputs (`fastq.gz` files).
 
 ### Changed
 
 - Re-factor and specify dependencies.
-- The process `qc-trim-deflate` is now called `preprocess` and its arguments
-  have been conformed to match `trimmer` rather than the legacy
-  `fastq_converter` process.
+- The process `qc-trim-deflate` is now called `preprocess`, and it includes most of the same functionality as `trimmer` (note that its arguments have been conformed to match `trimmer` rather than the legacy `fastq_converter` process).
 - The deprecated `fastq_converter` will be removed in the next version.
+- `--filter-widows` can no longer be specified when there is only a single input file
 
 ## [0.4.3] - 2025-05-01
 
