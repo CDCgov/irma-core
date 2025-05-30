@@ -1,6 +1,6 @@
 [package]
 name = "irma-core"
-version = "0.5.1"
+version = "0.5.1-dev"
 edition = "2024"
 description = "A tool to aid virus sequencing and accelerating IRMA."
 license = "Apache-2.0"

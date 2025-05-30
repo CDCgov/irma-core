@@ -1,6 +1,6 @@
 use crate::{
     args::clipping::{ClippingArgs, ParsedClippingArgs, parse_clipping_args},
-    io::{ReadFileZip, WriteFileZipStdout, create_writer, open_fastq_file},
+    io::{IoThreads, ReadFileZip, WriteFileZipStdout, create_writer, open_fastq_files},
     utils::{
         paired_reads::{PairedReadFilterer, ReadSide},
         trimming::trim_read,
@@ -57,6 +57,7 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
                 writer2,
             },
         trimming_args,
+        threads,
     } = parse_trimmer_args(args)?;
 
     if let Some(reader2) = reader2 {
@@ -64,28 +65,32 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
             // Case 2: In 1, In 2, Out 1 (interleaved Illumina), no widow filtering
             (None, false) => Trimmer::new(&trimming_args, [&mut writer1])
                 .handle_paired_reads_no_filter(reader1, reader2)?
-                .finalize(),
+                .finalize()?,
 
             // Case 3: In 1, In 2, Out 1, Filtering widows / orphan reads
             (None, true) => Trimmer::new(&trimming_args, [&mut writer1])
                 .handle_paired_reads_with_filter_strict(reader1, reader2, |e| e, error_extra_read())?
-                .finalize(),
+                .finalize()?,
 
             // Case 4: In 1, In 2, Out 1, Out 2 (separated output Illumina), no filtering
             (Some(mut writer2), false) => Trimmer::new(&trimming_args, [&mut writer1, &mut writer2])
                 .handle_paired_reads_no_filter(reader1, reader2)?
-                .finalize(),
+                .finalize()?,
 
             // Case 5: In 1, In 2, Out 1, Out 2, filter widows
             (Some(mut writer2), true) => Trimmer::new(&trimming_args, [&mut writer1, &mut writer2])
                 .handle_paired_reads_with_filter_strict(reader1, reader2, |e| e, error_extra_read())?
-                .finalize(),
+                .finalize()?,
         }
     } else {
         // Case 1: In 1, Out 1 (ONT, single-end, PacBio)
         let mut processor = Trimmer::new(&trimming_args, [&mut writer1]);
-        processor.handle_single_reads(reader1, ReadSide::Unpaired)?.finalize()
+        processor.handle_single_reads(reader1, ReadSide::Unpaired)?.finalize()?
     }
+
+    threads.finalize()?;
+
+    Ok(())
 }
 
 /// A [`PairedReadFilterer`] struct used by the trimmer process to perform its
@@ -157,6 +162,7 @@ fn error_extra_read() -> std::io::Error {
 struct ParsedTrimmerArgs {
     io_args:       ParsedPairedIoArgs,
     trimming_args: ParsedTrimmerOptions,
+    threads:       IoThreads,
 }
 
 /// Parsed IO arguments for single or paired reads
@@ -189,11 +195,7 @@ fn parse_trimmer_args(args: TrimmerArgs) -> Result<ParsedTrimmerArgs, std::io::E
         clipping_args,
     } = args;
 
-    let reader1 = open_fastq_file(fastq_input_file)?;
-    let reader2 = match fastq_input_file2 {
-        Some(file2) => Some(open_fastq_file(file2)?),
-        None => None,
-    };
+    let (reader1, reader2, threads) = open_fastq_files(fastq_input_file, fastq_input_file2)?;
 
     let writer1 = create_writer(fastq_output_file.clone())?;
     let writer2 = match fastq_output_file2 {
@@ -206,7 +208,7 @@ fn parse_trimmer_args(args: TrimmerArgs) -> Result<ParsedTrimmerArgs, std::io::E
     let clipping_args = parse_clipping_args(clipping_args)?;
 
     let parsed = ParsedTrimmerArgs {
-        io_args:       ParsedPairedIoArgs {
+        io_args: ParsedPairedIoArgs {
             reader1,
             reader2,
             writer1,
@@ -218,6 +220,7 @@ fn parse_trimmer_args(args: TrimmerArgs) -> Result<ParsedTrimmerArgs, std::io::E
             min_length,
             clipping_args,
         },
+        threads,
     };
 
     Ok(parsed)

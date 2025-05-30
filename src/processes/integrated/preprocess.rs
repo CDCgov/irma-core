@@ -4,7 +4,7 @@
 
 use crate::{
     args::clipping::{ClippingArgs, ParsedClippingArgs, parse_clipping_args},
-    io::{ReadFileZip, open_fastq_file},
+    io::{IoThreads, ReadFileZip, open_fastq_files},
     qc::{
         fastq::{ReadTransforms, fix_sra_format},
         fastq_metadata::*,
@@ -74,7 +74,11 @@ static MODULE: &str = module_path!();
 ///
 /// Sub-program for processing FASTQ data.
 pub fn preprocess_process(args: PreprocessArgs) -> Result<(), std::io::Error> {
-    let ParsedPreprocessArgs { mut io_args, options } = parse_preprocess_args(args)?;
+    let ParsedPreprocessArgs {
+        mut io_args,
+        options,
+        threads,
+    } = parse_preprocess_args(args)?;
 
     let paired_reads = io_args.reader2.is_some();
 
@@ -100,6 +104,8 @@ pub fn preprocess_process(args: PreprocessArgs) -> Result<(), std::io::Error> {
         )?;
     }
 
+    threads.finalize()?;
+
     Ok(())
 }
 
@@ -124,9 +130,10 @@ struct ParsedPreprocessOptions {
 struct ParsedPreprocessArgs {
     io_args: ParsedPreprocessIoArgs,
     options: ParsedPreprocessOptions,
+    threads: IoThreads,
 }
 
-fn parse_preprocess_args(args: PreprocessArgs) -> Result<ParsedPreprocessArgs, std::io::Error> {
+fn parse_preprocess_args(args: PreprocessArgs) -> std::io::Result<ParsedPreprocessArgs> {
     let PreprocessArgs {
         table_file,
         fastq_input_file1,
@@ -140,12 +147,7 @@ fn parse_preprocess_args(args: PreprocessArgs) -> Result<ParsedPreprocessArgs, s
         clipping_args,
     } = args;
 
-    let reader1 = open_fastq_file(fastq_input_file1)?;
-
-    let reader2 = match fastq_input_file2 {
-        Some(file2) => Some(open_fastq_file(file2)?),
-        None => None,
-    };
+    let (reader1, reader2, threads) = open_fastq_files(fastq_input_file1, fastq_input_file2)?;
 
     let log_writer = match log_file {
         Some(ref file_path) => Some(BufWriter::new(
@@ -176,6 +178,7 @@ fn parse_preprocess_args(args: PreprocessArgs) -> Result<ParsedPreprocessArgs, s
             filter_widows,
             clipping_args,
         },
+        threads,
     };
 
     Ok(parsed)
