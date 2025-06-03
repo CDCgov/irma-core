@@ -466,7 +466,7 @@ impl ReadTransforms for FastQViewMut<'_> {
             if masking {
                 self.sequence.mask_if_exists(..polyg_range.end)
             }
-            self.sequence.restrict(polyg_range.end..);
+            self.restrict(polyg_range.end..);
         }
         self
     }
@@ -476,7 +476,7 @@ impl ReadTransforms for FastQViewMut<'_> {
             if masking {
                 self.sequence.mask_if_exists(polyg_range.start..);
             }
-            self.sequence.restrict(..polyg_range.start);
+            self.restrict(..polyg_range.start);
         }
         self
     }

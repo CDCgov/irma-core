@@ -5,6 +5,12 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 [Semantic Versioning]. For IRMA vs IRMA-core compatibility, please see the
 [version matrix](VERSION_MATRIX.md).
 
+## [0.5.1] - 2025-06-03
+
+### Fixes
+
+- Fixes a bug where `--polyg-trim` would trim the sequence but not the quality scores.
+
 ## [0.5.0] - 2025-05-30
 
 ### Added
@@ -106,6 +112,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 - **Added**: custom inexact matching algorithm from [Zoe]
 
 <!-- Versions -->
+[0.5.1]: https://github.com/CDCgov/irma-core/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/CDCgov/irma-core/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/CDCgov/irma-core/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/CDCgov/irma-core/compare/v0.4.1...v0.4.2

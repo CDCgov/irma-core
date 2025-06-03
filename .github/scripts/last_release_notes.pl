@@ -14,9 +14,10 @@ chomp($changes);
 my $version = q{};
 if ( $changes =~ /^([\d.]+)\]/smx ) {
     $version = $1;
+    $changes =~ s/^$version\]/\[v$version\]\[$version\]/smx;
 }
 
-print STDOUT '## Release Notes for v[', $changes, "\n";
+print STDOUT '## Release Notes for ', $changes, "\n";
 
 local $RS = "\n";
 while ( my $line = <$logfile> ) {
