@@ -79,7 +79,7 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) {
                 if d.rname != reference.name {
                     continue;
                 }
-                *d
+                d
             }
             Ok(SamRow::Header(h)) => {
                 writeln!(sam_writer, "{h}").unwrap_or_die(&format!(
