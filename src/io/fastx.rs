@@ -1,19 +1,30 @@
 use std::{
     fmt::{Display, Write},
-    fs::File,
     io::{BufRead, ErrorKind, Read},
-    path::Path,
 };
 use zoe::{
-    data::{CheckSequence, fasta::FastaSeq},
+    data::{CheckSequence, fasta::FastaSeq, records::SequenceReadable},
     define_whichever,
     prelude::{FastQ, FastQReader, FastaReader, QualityScores},
 };
 
 define_whichever! {
-    #[doc = "A reader over either FASTA or FASTQ data, determined automatically based on the first non-whitespace character."]
+    /// A reader over either FASTA or FASTQ data, determined automatically based
+    /// on the first non-whitespace character.
+    ///
+    /// This can be used as an [`Iterator`] directly, in which case it yields
+    /// [`FastX`] records and performs a match statement on every [`next`] call.
+    /// Using [`for_each`] or other iterator methods can eliminate extra match
+    /// statements.
+    ///
+    /// Or, this can be matched, with each type of reader handled manually.
+    ///
+    /// [`next`]: Iterator::next
+    /// [`for_each`]: Iterator::for_each
     pub enum FastXReader<R: Read> {
+        /// A FASTQ reader (records include quality scores).
         Fastq(FastQReader<R>),
+        /// A FASTA reader (records do not include quality scores).
         Fasta(FastaReader<R>),
     }
 
@@ -57,23 +68,6 @@ impl<R: std::io::Read> FastXReader<R> {
     }
 }
 
-impl FastXReader<std::fs::File> {
-    /// Creates an iterator over either FASTA or FASTQ data from a file, using a
-    /// buffered reader.
-    ///
-    /// ## Errors
-    ///
-    /// Will return `Err` if file or permissions do not exist, or if the file
-    /// does not contain `@` or `>` as its first non-whitespace character.
-    #[inline]
-    #[allow(dead_code)]
-    pub fn from_filename<P>(filename: P) -> std::io::Result<Self>
-    where
-        P: AsRef<Path>, {
-        FastXReader::from_readable(File::open(filename)?)
-    }
-}
-
 /// A record type for either FASTQ or FASTA data.
 pub struct FastX {
     pub header:   String,
@@ -83,7 +77,7 @@ pub struct FastX {
 
 impl FastX {
     /// A helper function for mapping a result of [`FastQ`] or [`FastaSeq`] to a
-    /// result of [`FastX`]
+    /// result of [`FastX`].
     #[inline]
     fn map_result<T>(result: std::io::Result<T>) -> std::io::Result<Self>
     where
@@ -141,5 +135,12 @@ impl Display for FastX {
 
             f.write_char('\n')
         }
+    }
+}
+
+impl SequenceReadable for FastX {
+    #[inline]
+    fn sequence_bytes(&self) -> &[u8] {
+        &self.sequence
     }
 }

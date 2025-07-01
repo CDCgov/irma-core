@@ -73,7 +73,7 @@ impl Read for GzipReaderPiped {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let bytes_read = self.reader.read(buf)?;
 
-        // Check if at EOF
+        // Check for EOF
         if bytes_read == 0
             && !buf.is_empty()
             && let Some(thread) = std::mem::take(&mut self.thread)
@@ -86,9 +86,17 @@ impl Read for GzipReaderPiped {
 
 define_whichever! {
     // TODO: Implement reading from stdin for select processes
-    #[doc="An enum for the input types [`File`] and [`Stdin`]."]
+    /// An enum for the input types [`File`] and [`Stdin`].
+    ///
+    /// To construct this, either use [`from_filename`] or
+    /// [`from_optional_filename`].
+    ///
+    /// [`from_filename`]: FromFilename::from_filename
+    /// [`from_optional_filename`]: FromFilename::from_optional_filename
     pub(crate) enum ReadFileStdin {
+        /// A regular uncompressed file.
         File(File),
+        /// The standard input stream.
         Stdin(Stdin),
     }
 
@@ -96,11 +104,22 @@ define_whichever! {
 }
 
 define_whichever! {
-    #[doc="An enum for the different input types [`File`] and a gzip compressed file."]
+   /// An enum for the different input types [`File`] and a gzip compressed
+   /// file.
+   ///
+   /// For the [`Zipped`] variant, this will perform all unzipping lazily via an
+   /// iterator. To instead perform unzipping eagerly on a separate thread, use
+   /// [`ReadFileZipPipe`].
+   ///
+   /// To construct this, use [`from_filename`]. The [`Zipped`] variant is
+   /// chosen if the file has extension `gz`.
+   ///
+   /// [`from_filename`]: FromFilename::from_filename
+   /// [`Zipped`]: ReadFileZip::Zipped
     pub(crate) enum ReadFileZip {
-        #[doc="A reader for a regular uncompressed file"]
+        /// A regular uncompressed file.
         File(File),
-        #[doc="A reader for a gzip compressed file"]
+        /// A gzip compressed file, using lazy decoding.
         Zipped(MultiGzDecoder<File>),
     }
 
@@ -108,11 +127,24 @@ define_whichever! {
 }
 
 define_whichever! {
-    #[doc="An enum for the different input types [`File`] and a gzip compressed file (using an anonymous pipe for decoding)."]
+    /// An enum for the different input types [`File`] and a gzip compressed
+    /// file, using a separate thread for decoding.
+    ///
+    /// For the [`Zipped`] variant, this will perform all unzipping eagerly on a
+    /// separate thread. See [`GzipReaderPiped`] for more details. To instead
+    /// perform unzipping lazily on the same thread (e.g., if the entire file
+    /// will not be read, or the results will be slurped into memory), use
+    /// [`ReadFileZip`].
+    ///
+    /// To construct this, use [`from_filename`]. The [`Zipped`] variant is
+    /// chosen if the file has extension `gz`.
+    ///
+    /// [`from_filename`]: FromFilename::from_filename
+    /// [`Zipped`]: ReadFileZip::Zipped
     pub(crate) enum ReadFileZipPipe {
-        #[doc="A reader for a regular uncompressed file"]
+        /// A regular uncompressed file.
         File(File),
-        #[doc="A reader for a gzip compressed file, using a thread and an anonymous pipe for decoding"]
+        /// A gzip compressed file, using eager decoding on a separate thread.
         Zipped(GzipReaderPiped),
     }
 
@@ -120,6 +152,7 @@ define_whichever! {
 }
 
 impl FromFilename for ReadFileStdin {
+    /// Creates a new [`ReadFileStdin::File`].
     #[inline]
     fn from_filename<P>(path: P) -> std::io::Result<Self>
     where
@@ -129,6 +162,7 @@ impl FromFilename for ReadFileStdin {
 }
 
 impl Default for ReadFileStdin {
+    /// Defaults to [`ReadFileStdin::Stdin`].
     #[inline]
     fn default() -> Self {
         Self::Stdin(stdin())
@@ -136,6 +170,10 @@ impl Default for ReadFileStdin {
 }
 
 impl FromFilename for ReadFileZip {
+    /// Creates a new [`ReadFileZip`] from the file.
+    ///
+    /// [`ReadFileZip::File`] is returned unless the file ends with extension
+    /// `gz`, in which case [`ReadFileZip::Zipped`] is returned.
     #[inline]
     fn from_filename<P>(path: P) -> std::io::Result<Self>
     where
@@ -150,6 +188,10 @@ impl FromFilename for ReadFileZip {
 }
 
 impl FromFilename for ReadFileZipPipe {
+    /// Creates a new [`ReadFileZipPipe`] from the file.
+    ///
+    /// [`ReadFileZipPipe::File`] is returned unless the file ends with
+    /// extension `gz`, in which case [`ReadFileZipPipe::Zipped`] is returned.
     #[inline]
     fn from_filename<P>(path: P) -> std::io::Result<Self>
     where
@@ -168,7 +210,7 @@ impl FromFilename for ReadFileZipPipe {
 pub struct RecordReaders<R> {
     /// The reader for the first input file.
     pub reader1: R,
-    /// The optional reader for the second input file (paired reads).
+    /// The optional reader for the second input file (for paired reads).
     pub reader2: Option<R>,
 }
 
@@ -181,21 +223,12 @@ where
     /// It may be necessary to specify the generic on [`RecordReaders`] before
     /// calling this function.
     pub fn from_filenames(path1: impl AsRef<Path>, path2: Option<impl AsRef<Path>>) -> std::io::Result<Self> {
-        let Some(path2) = path2 else {
-            let reader = R::from_filename(&path1).map_err(|e| ReaderFromFileError::file1(path1, e))?;
-
-            return Ok(RecordReaders {
-                reader1: reader,
-                reader2: None,
-            });
-        };
-
         let reader1 = R::from_filename(&path1).map_err(|e| ReaderFromFileError::file1(path1, e))?;
-        let reader2 = R::from_filename(&path2).map_err(|e| ReaderFromFileError::file2(path2, e))?;
-        Ok(RecordReaders {
-            reader1,
-            reader2: Some(reader2),
-        })
+        let reader2 = match path2 {
+            Some(path2) => Some(R::from_filename(&path2).map_err(|e| ReaderFromFileError::file2(path2, e))?),
+            None => None,
+        };
+        Ok(RecordReaders { reader1, reader2 })
     }
 }
 

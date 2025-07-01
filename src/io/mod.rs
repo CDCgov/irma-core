@@ -98,6 +98,24 @@ pub enum ReaderFromFileError {
     File2 { path: PathBuf, source: std::io::Error },
 }
 
+impl ReaderFromFileError {
+    #[inline]
+    fn file1(path: impl AsRef<Path>, source: std::io::Error) -> Self {
+        Self::File1 {
+            path: path.as_ref().to_path_buf(),
+            source,
+        }
+    }
+
+    #[inline]
+    fn file2(path: impl AsRef<Path>, source: std::io::Error) -> Self {
+        Self::File2 {
+            path: path.as_ref().to_path_buf(),
+            source,
+        }
+    }
+}
+
 impl std::fmt::Display for ReaderFromFileError {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -132,24 +150,6 @@ impl From<ReaderFromFileError> for std::io::Error {
     #[inline]
     fn from(error: ReaderFromFileError) -> Self {
         std::io::Error::other(error)
-    }
-}
-
-impl ReaderFromFileError {
-    #[inline]
-    fn file1(path: impl AsRef<Path>, source: std::io::Error) -> Self {
-        Self::File1 {
-            path: path.as_ref().to_path_buf(),
-            source,
-        }
-    }
-
-    #[inline]
-    fn file2(path: impl AsRef<Path>, source: std::io::Error) -> Self {
-        Self::File2 {
-            path: path.as_ref().to_path_buf(),
-            source,
-        }
     }
 }
 

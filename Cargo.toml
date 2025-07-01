@@ -1,6 +1,6 @@
 [package]
 name = "irma-core"
-version = "0.7.0"
+version = "0.8.0-dev"
 edition = "2024"
 description = "A tool to aid virus sequencing and accelerating IRMA."
 license = "Apache-2.0"
@@ -26,7 +26,8 @@ foldhash = "0.2"
 num_cpus = "1"
 flate2 = "1"
 rand_xoshiro = "0.7"
-rand = "0.9"
+rand = { version = "0.9", default-features = false, features = ["os_rng"] }
+rayon = "1"
 
 [profile.dev]
 opt-level = 1

@@ -5,6 +5,11 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 [Semantic Versioning]. For IRMA vs IRMA-core compatibility, please see the
 [version matrix](VERSION_MATRIX.md).
 
+## [0.8.0] - TBD
+
+- Adds standalone `aligner` process for perform pairwise local sequence
+  alignment with the Striped Smith Waterman algorithm
+
 ## [0.7.0] - 2025-09-17
 
 ### Added
@@ -159,6 +164,7 @@ randomly downsampling FastQ or FASTA files. Deinterleaving is also supported.
 - **Added**: custom inexact matching algorithm from [Zoe]
 
 <!-- Versions -->
+[0.8.0]: https://github.com/CDCgov/irma-core/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/CDCgov/irma-core/compare/v0.6.1...v0.7.0
 [0.6.2]: https://github.com/CDCgov/irma-core/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/CDCgov/irma-core/compare/v0.6.0...v0.6.1

@@ -8,14 +8,14 @@ use std::{
 use zoe::define_whichever;
 
 define_whichever! {
-    #[doc="An enum for the different acceptable output types. A [`BufWriter`] is used for all variants."]
+    /// An enum for the different acceptable output types. A [`BufWriter`] is used for all variants.
     #[derive(Debug)]
     pub(crate) enum  WriteFileZipStdout {
-        #[doc="A writer for a regular uncompressed file."]
+        /// A writer for a regular uncompressed file.
         File(BufWriter<File>),
-        #[doc="A writer for a gzip compressed file."]
+        /// A writer for a gzip compressed file.
         Zipped(GzEncoder<BufWriter<File>>),
-        #[doc="A writer for uncompressed data to stdout."]
+        /// A writer for uncompressed data to stdout.
         Stdout(BufWriter<Stdout>),
     }
 

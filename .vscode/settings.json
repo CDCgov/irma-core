@@ -16,5 +16,8 @@
         "BuiltinFunctions::ProhibitStringySplit",
         "ValuesAndExpressions::ProhibitNoisyQuotes"
     ],
-    "editor.formatOnSave": true
+    "editor.formatOnSave": true,
+    "files.watcherExclude": {
+        "**/target": true
+    }
 }

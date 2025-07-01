@@ -10,7 +10,7 @@ use rand::SeedableRng;
 use rand_xoshiro::Xoshiro256StarStar;
 use std::{
     fs::File,
-    io::{BufRead, BufReader, Read},
+    io::{BufRead, BufReader, Read, Write},
     path::PathBuf,
 };
 use zoe::{
@@ -73,7 +73,7 @@ pub fn sampler_process(args: SamplerArgs) -> Result<(), std::io::Error> {
     let (io_args, rng, target) = parse_sampler_args(args)?;
 
     // Get the population sequence count from one of the files if possible
-    let mut seq_count = get_paired_seq_count(io_args.input_path1, io_args.input_path2, &io_args.reader1)?;
+    let mut seq_count = get_paired_seq_count(io_args.filepath1, io_args.filepath2, &io_args.reader1)?;
 
     // For de-interleaving, must divide sequence count by 2 to get number of
     // pairs
@@ -113,14 +113,14 @@ pub fn sampler_process(args: SamplerArgs) -> Result<(), std::io::Error> {
 }
 
 /// Performs sampling for a single input file.
-fn sample_single_input<R1, A>(
-    reader: R1, writer: RecordWriters<WriteFileZipStdout>, target: SamplingTarget, seq_count: Option<usize>,
-    rng: Xoshiro256StarStar,
+fn sample_single_input<R1, W, A>(
+    reader: R1, writer: RecordWriters<W>, target: SamplingTarget, seq_count: Option<usize>, rng: Xoshiro256StarStar,
 ) -> std::io::Result<()>
 where
     R1: Iterator<Item = std::io::Result<A>>,
-    A: HeaderReadable + WriteRecord<WriteFileZipStdout>,
-    std::io::Result<A>: WriteRecord<WriteFileZipStdout>, {
+    W: Write,
+    A: HeaderReadable + WriteRecord<W>,
+    std::io::Result<A>: WriteRecord<W>, {
     // Don't perform sampling if target is higher than population sequence count
     if let SamplingTarget::Count(target_count) = target
         && let Some(seq_count) = seq_count
@@ -148,14 +148,15 @@ where
 }
 
 /// Performs sampling for a pair of inputs.
-fn sample_paired_input<R1, R2, A>(
-    reader1: R1, reader2: R2, writer: RecordWriters<WriteFileZipStdout>, target: SamplingTarget, seq_count: Option<usize>,
+fn sample_paired_input<R1, R2, W, A>(
+    reader1: R1, reader2: R2, writer: RecordWriters<W>, target: SamplingTarget, seq_count: Option<usize>,
     rng: Xoshiro256StarStar,
 ) -> std::io::Result<()>
 where
     R1: Iterator<Item = std::io::Result<A>>,
     R2: Iterator<Item = std::io::Result<A>>,
-    A: HeaderReadable + WriteRecord<WriteFileZipStdout>, {
+    W: Write,
+    A: HeaderReadable + WriteRecord<W>, {
     // Don't perform sampling if target is higher than population sequence count
     if let SamplingTarget::Count(target_count) = target
         && let Some(seq_count) = seq_count
@@ -260,13 +261,13 @@ fn get_paired_seq_count<R: Read>(
 
 struct IOArgs {
     /// This is only `Some` if the path corresponds to a file and is not zipped
-    input_path1: Option<PathBuf>,
+    filepath1: Option<PathBuf>,
     /// This is only `Some` if paired ends are used, the path corresponds to a
     /// non-zipped file
-    input_path2: Option<PathBuf>,
-    reader1:     FastXReader<ReadFileZipPipe>,
-    reader2:     Option<FastXReader<ReadFileZipPipe>>,
-    writer:      RecordWriters<WriteFileZipStdout>,
+    filepath2: Option<PathBuf>,
+    reader1:   FastXReader<ReadFileZipPipe>,
+    reader2:   Option<FastXReader<ReadFileZipPipe>>,
+    writer:    RecordWriters<WriteFileZipStdout>,
 }
 
 /// The target number of sequences to sample
@@ -296,12 +297,12 @@ fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, 
 
     let RecordReaders { reader1, reader2 } = readers;
 
-    let fastq_path1 = if args.input_file1.is_file() && !is_gz(&args.input_file1) {
+    let filepath1 = if args.input_file1.is_file() && !is_gz(&args.input_file1) {
         Some(args.input_file1)
     } else {
         None
     };
-    let fastq_path2 = if let Some(path) = args.input_file2
+    let filepath2 = if let Some(path) = args.input_file2
         && path.is_file()
         && !is_gz(&path)
     {
@@ -311,8 +312,8 @@ fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, 
     };
 
     let io_args = IOArgs {
-        input_path1: fastq_path1,
-        input_path2: fastq_path2,
+        filepath1,
+        filepath2,
         reader1,
         reader2,
         writer,

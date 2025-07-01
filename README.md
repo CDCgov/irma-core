@@ -10,8 +10,10 @@
 
 | Process   | Description                                                                                             | Usage                      |
 | --------- | ------------------------------------------------------------------------------------------------------- | -------------------------- |
-| `trimmer` | Used for removing adapters, barcodes, and primers among other things. [Read the docs](docs/TRIMMER.md). | `irma-core trimmer --help` |
+| `aligner` | Pairwise sequence alignment tool. [Read the docs](docs/ALIGNER.md).                                     | `irma-core aligner --help` |
 | `sampler` | Representative random downsampling of FASTA and FastQ files. [Read the docs](docs/SAMPLER.md).          | `irma-core sampler --help` |
+| `trimmer` | Used for removing adapters, barcodes, and primers among other things. [Read the docs](docs/TRIMMER.md). | `irma-core trimmer --help` |
+| `xleave`  | Interleaves or de-interleaves paired FastQ or FASTA files. [Read the docs](docs/XLEAVE.md).             | `irma-core xleave --help`  |
 
 ### Integrated with IRMA
 
