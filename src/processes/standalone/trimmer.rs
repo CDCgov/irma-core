@@ -1,6 +1,6 @@
 use crate::{
     args::clipping::{ClippingArgs, ParsedClippingArgs, parse_clipping_args},
-    io::{IoThreads, ReadFileZip, WriteFileZipStdout, create_writer, open_fastq_files},
+    io::{IoThreads, MapFailedOpenExt, MapFailedWriteExt, ReadFileZip, WriteFileZipStdout, create_writer, open_fastq_files},
     utils::{
         paired_reads::{PairedReadFilterer, ReadSide},
         trimming::trim_read,
@@ -183,7 +183,15 @@ struct ParsedTrimmerOptions {
     clipping_args: ParsedClippingArgs,
 }
 
-fn parse_trimmer_args(args: TrimmerArgs) -> Result<ParsedTrimmerArgs, std::io::Error> {
+/// Parses the trimmer arguments from the clap arguments
+///
+/// ## Errors
+///
+/// An error could occur when opening the first FASTQ file, the second FASTQ
+/// file, creating the first or second writer, or processing the primer file.
+/// Any errors generated will have customized error messages including
+/// additional information.
+fn parse_trimmer_args(args: TrimmerArgs) -> std::io::Result<ParsedTrimmerArgs> {
     let TrimmerArgs {
         fastq_input_file,
         fastq_input_file2,
@@ -195,17 +203,24 @@ fn parse_trimmer_args(args: TrimmerArgs) -> Result<ParsedTrimmerArgs, std::io::E
         clipping_args,
     } = args;
 
-    let (reader1, reader2, threads) = open_fastq_files(fastq_input_file, fastq_input_file2)?;
+    let (reader1, reader2, threads) = open_fastq_files(&fastq_input_file, fastq_input_file2.as_ref())
+        .map_failed_open(&fastq_input_file, fastq_input_file2.as_ref())?;
 
-    let writer1 = create_writer(fastq_output_file.clone())?;
+    let writer1 = create_writer(fastq_output_file.as_ref()).map_failed_write(fastq_output_file.as_ref())?;
     let writer2 = match fastq_output_file2 {
-        Some(path) => Some(create_writer(Some(path))?),
+        Some(path) => Some(create_writer(Some(&path)).map_failed_write(Some(&path))?),
         None => None,
     };
 
     let min_length = min_length.get();
 
-    let clipping_args = parse_clipping_args(clipping_args)?;
+    let primer_file = clipping_args.primer_trim.clone();
+    let clipping_args = parse_clipping_args(clipping_args).map_err(|e| {
+        std::io::Error::other(format!(
+            "Failed to process the primers at path {path:#?} due to the error:\n{e}",
+            path = primer_file.unwrap()
+        ))
+    })?;
 
     let parsed = ParsedTrimmerArgs {
         io_args: ParsedPairedIoArgs {

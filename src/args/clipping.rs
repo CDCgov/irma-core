@@ -196,12 +196,24 @@ fn get_forward_reverse_sequence(mut adapter: Nucleotides, preserve_seq: bool) ->
     (adapter, reverse)
 }
 
-/// # Panics
+/// Reads a primer file and generates a k-mer set of all unique k-mers present
+/// in the sequence and reverse complements.
 ///
-/// `kmer_length` must be between 2 and 21, inclusive.
+/// If `fuzzy_kmer` is set, then k-mers with up to one mismatch are also
+/// included. This mismatch can involve the introduction of an ambiguous base
+/// 'N'.
+///
+/// ## Errors
+///
+/// `primer_path` must be successfully opened, and all lines must be parsed
+/// without error.
+///
+/// ## Panics
+///
+/// `kmer_length` must be between 2 and [`MAX_KMER_LENGTH`], inclusive.
 fn prepare_primer_kmers(
     primer_path: &PathBuf, kmer_length: usize, fuzzy_kmer: bool,
-) -> Result<ThreeBitKmerSet<MAX_KMER_LENGTH, SeedableRandomState>, std::io::Error> {
+) -> std::io::Result<ThreeBitKmerSet<MAX_KMER_LENGTH, SeedableRandomState>> {
     let mut fasta_primer_reader = FastaReader::from_filename(primer_path)?;
 
     let mut unique_kmers =
@@ -247,7 +259,12 @@ pub struct ParsedClippingArgs {
     pub hard_right:       usize,
 }
 
-pub fn parse_clipping_args(args: ClippingArgs) -> Result<ParsedClippingArgs, std::io::Error> {
+/// Parses all arguments related to clipping.
+///
+/// ## Errors
+///
+/// Any errors while processing the primers are propagated.
+pub fn parse_clipping_args(args: ClippingArgs) -> std::io::Result<ParsedClippingArgs> {
     let ClippingArgs {
         preserve_bases,
         polyg_trim,
