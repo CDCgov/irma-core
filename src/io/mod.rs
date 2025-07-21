@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
     thread::{self, JoinHandle},
 };
-use zoe::{data::err::GetCode, prelude::FastQReader};
+use zoe::prelude::FastQReader;
 
 define_whichever! {
     #[allow(clippy::large_enum_variant)]
@@ -90,14 +90,14 @@ pub(crate) fn open_fastq_files<P: AsRef<Path>>(
     path1: P, path2: Option<P>,
 ) -> Result<(FastQReaderIc, Option<FastQReaderIc>, IoThreads), OpenFastqError> {
     let Some(path2) = path2 else {
-        let (reader, thread) = open_fastq_file(path1).map_err(OpenFastqError::File1)?;
+        let (reader, thread) = open_fastq_file(&path1).map_err(|e| OpenFastqError::file1(&path1, e))?;
         let threads = IoThreads(thread, None);
 
         return Ok((reader, None, threads));
     };
 
-    let (reader1, thread1) = open_fastq_file(path1).map_err(OpenFastqError::File1)?;
-    let (reader2, thread2) = open_fastq_file(path2).map_err(OpenFastqError::File2)?;
+    let (reader1, thread1) = open_fastq_file(&path1).map_err(|e| OpenFastqError::file1(&path1, e))?;
+    let (reader2, thread2) = open_fastq_file(&path2).map_err(|e| OpenFastqError::file2(&path2, e))?;
     let threads = IoThreads(thread1, thread2);
     Ok((reader1, Some(reader2), threads))
 }
@@ -174,38 +174,61 @@ impl IoThreads {
 #[non_exhaustive]
 #[derive(Debug)]
 pub enum OpenFastqError {
-    File1(std::io::Error),
-    File2(std::io::Error),
+    File1 { path: PathBuf, source: std::io::Error },
+    File2 { path: PathBuf, source: std::io::Error },
 }
 
 impl std::fmt::Display for OpenFastqError {
     #[inline]
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            OpenFastqError::File1(error) => write!(f, "{error}"),
-            OpenFastqError::File2(error) => write!(f, "{error}"),
+            OpenFastqError::File1 { path, source } => {
+                write!(
+                    f,
+                    "Failed to read the data in first file {path:#?} due to the error:\n{source}"
+                )
+            }
+            OpenFastqError::File2 { path, source } => {
+                write!(
+                    f,
+                    "Failed to read the data in second file {path:#?} due to the error:\n{source}"
+                )
+            }
         }
     }
 }
 
-impl Error for OpenFastqError {}
-impl GetCode for OpenFastqError {}
-
-pub trait MapFailedOpenExt<T> {
-    fn map_failed_open(self, path1: &Path, path2: Option<&PathBuf>) -> std::io::Result<T>;
+impl Error for OpenFastqError {
+    #[inline]
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            OpenFastqError::File1 { source, .. } => Some(source),
+            OpenFastqError::File2 { source, .. } => Some(source),
+        }
+    }
 }
 
-impl<T> MapFailedOpenExt<T> for Result<T, OpenFastqError> {
-    fn map_failed_open(self, path1: &Path, path2: Option<&PathBuf>) -> std::io::Result<T> {
-        self.map_err(|e| match e {
-            OpenFastqError::File1(error) => std::io::Error::other(format!(
-                "Failed to read the data in file {path1:#?} due to the error:\n{error}"
-            )),
-            OpenFastqError::File2(error) => std::io::Error::other(format!(
-                "Failed to read the data in file {path:#?} due to the error:\n{error}",
-                path = path2.unwrap()
-            )),
-        })
+impl From<OpenFastqError> for std::io::Error {
+    fn from(error: OpenFastqError) -> Self {
+        std::io::Error::other(error)
+    }
+}
+
+impl OpenFastqError {
+    #[inline]
+    fn file1(path: impl AsRef<Path>, source: std::io::Error) -> Self {
+        Self::File1 {
+            path: path.as_ref().to_path_buf(),
+            source,
+        }
+    }
+
+    #[inline]
+    fn file2(path: impl AsRef<Path>, source: std::io::Error) -> Self {
+        Self::File2 {
+            path: path.as_ref().to_path_buf(),
+            source,
+        }
     }
 }
 

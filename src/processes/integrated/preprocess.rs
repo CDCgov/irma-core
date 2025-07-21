@@ -4,7 +4,7 @@
 
 use crate::{
     args::clipping::{ClippingArgs, ParsedClippingArgs, parse_clipping_args},
-    io::{IoThreads, MapFailedOpenExt, ReadFileZip, open_fastq_files},
+    io::{IoThreads, ReadFileZip, open_fastq_files},
     qc::{
         fastq::{ReadTransforms, fix_sra_format},
         fastq_metadata::*,
@@ -147,8 +147,7 @@ fn parse_preprocess_args(args: PreprocessArgs) -> std::io::Result<ParsedPreproce
         clipping_args,
     } = args;
 
-    let (reader1, reader2, threads) = open_fastq_files(&fastq_input_file1, fastq_input_file2.as_ref())
-        .map_failed_open(&fastq_input_file1, fastq_input_file2.as_ref())?;
+    let (reader1, reader2, threads) = open_fastq_files(&fastq_input_file1, fastq_input_file2.as_ref())?;
 
     let log_writer = match log_file {
         Some(ref file_path) => Some(BufWriter::new(

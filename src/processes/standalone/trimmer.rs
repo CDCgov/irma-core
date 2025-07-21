@@ -1,6 +1,6 @@
 use crate::{
     args::clipping::{ClippingArgs, ParsedClippingArgs, parse_clipping_args},
-    io::{IoThreads, MapFailedOpenExt, MapFailedWriteExt, ReadFileZip, WriteFileZipStdout, create_writer, open_fastq_files},
+    io::{IoThreads, MapFailedWriteExt, ReadFileZip, WriteFileZipStdout, create_writer, open_fastq_files},
     utils::{
         paired_reads::{PairedReadFilterer, ReadSide},
         trimming::trim_read,
@@ -203,8 +203,7 @@ fn parse_trimmer_args(args: TrimmerArgs) -> std::io::Result<ParsedTrimmerArgs> {
         clipping_args,
     } = args;
 
-    let (reader1, reader2, threads) = open_fastq_files(&fastq_input_file, fastq_input_file2.as_ref())
-        .map_failed_open(&fastq_input_file, fastq_input_file2.as_ref())?;
+    let (reader1, reader2, threads) = open_fastq_files(&fastq_input_file, fastq_input_file2.as_ref())?;
 
     let writer1 = create_writer(fastq_output_file.as_ref()).map_failed_write(fastq_output_file.as_ref())?;
     let writer2 = match fastq_output_file2 {

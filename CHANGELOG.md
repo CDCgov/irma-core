@@ -10,6 +10,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 ### Changed
 
 - Use threads and anonymous pipes (in Rust) when decompressing zipped inputs
+- Improve error messages to include file names in `trimmer` and `preprocess`
 
 ### Fixes
 

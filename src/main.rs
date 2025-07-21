@@ -1,5 +1,5 @@
 #![allow(unreachable_patterns)]
-#![feature(let_chains, portable_simd)]
+#![feature(portable_simd)]
 
 use crate::processes::{fastq_converter::*, merge_sam_pairs::*, num_procs::*, preprocess::*, trimmer::*, xflate::*};
 use clap::{Parser, Subcommand};
