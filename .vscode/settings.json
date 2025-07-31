@@ -15,5 +15,6 @@
         "ControlStructures::ProhibitDeepNests",
         "BuiltinFunctions::ProhibitStringySplit",
         "ValuesAndExpressions::ProhibitNoisyQuotes"
-    ]
+    ],
+    "editor.formatOnSave": true
 }

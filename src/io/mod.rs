@@ -3,11 +3,17 @@ use flate2::{Compression, read::MultiGzDecoder, write::GzEncoder};
 use std::{
     error::Error,
     fs::File,
-    io::{BufWriter, PipeReader, Stdin, Stdout, stdout},
+    io::{stdout, BufWriter, PipeReader, Stdin, Stdout, Write, ErrorKind},
     path::{Path, PathBuf},
     thread::{self, JoinHandle},
 };
 use zoe::prelude::FastQReader;
+
+mod fastx;
+mod write_records;
+
+pub use fastx::*;
+pub use write_records::*;
 
 define_whichever! {
     #[allow(clippy::large_enum_variant)]
@@ -63,13 +69,24 @@ define_whichever! {
 ///
 /// `path` must exist and contain FASTQ data, and if the file is zipped, then
 /// creation of the pipe must succeed.
+/// Checks whether the file is a gz zipped file.
+///
+/// IRMA-core's current strategy for this is by checking whether the extension
+/// is `.gz`.
+pub(crate) fn is_gz<P: AsRef<Path>>(path: P) -> bool {
+    path.as_ref().extension().is_some_and(|ext| ext == "gz")
+}
+
+/// Open a single FASTQ file.
+///
+/// If it ends in `gz`, return a [`FastQReader`] backed by
+/// [`ReadFileZip::Zipped`], and return the thread handle for error propagation.
+/// Otherwise, return a [`FastQReader`] backed by [`ReadFileZip::File`].
 #[inline]
 pub(crate) fn open_fastq_file<P: AsRef<Path>>(path: P) -> std::io::Result<(FastQReaderIc, Option<IoThread>)> {
     let file = File::open(&path)?;
 
-    let is_gz = path.as_ref().extension().is_some_and(|ext| ext == "gz");
-
-    if is_gz {
+    if is_gz(&path) {
         let (pipe, thread) = spawn_decoder(path)?;
         Ok((FastQReader::from_readable(ReadFileZip::Zipped(pipe))?, Some(thread)))
     } else {
@@ -85,6 +102,25 @@ pub(crate) fn open_fastq_file<P: AsRef<Path>>(path: P) -> std::io::Result<(FastQ
 ///
 /// `path1` and `path2` must both exist and contain FASTQ data (if not `None`).
 /// Also, if either is zipped, the creation of the pipe must succeed.
+/// Open a single FASTQ/FASTA file.
+///
+/// If it ends in `gz`, return a [`FastQReader`] backed by
+/// [`ReadFileZip::Zipped`], and return the thread handle for error propagation.
+/// Otherwise, return a [`FastQReader`] backed by [`ReadFileZip::File`].
+#[inline]
+pub(crate) fn open_fastx_file<P: AsRef<Path>>(path: P) -> std::io::Result<(FastXReader<ReadFileZip>, Option<IoThread>)> {
+    let file = File::open(&path)?;
+
+    if is_gz(&path) {
+        let (pipe, thread) = spawn_decoder(path)?;
+        Ok((FastXReader::from_readable(ReadFileZip::Zipped(pipe))?, Some(thread)))
+    } else {
+        Ok((FastXReader::from_readable(ReadFileZip::File(file))?, None))
+    }
+}
+
+/// Open one or two FASTQ files using the strategy given by [`open_fastq_file`].
+/// The thread handles are grouped together in [`IoThreads`].
 #[inline]
 pub(crate) fn open_fastq_files<P: AsRef<Path>>(
     path1: P, path2: Option<P>,
@@ -108,6 +144,28 @@ pub(crate) fn open_fastq_files<P: AsRef<Path>>(
 /// ## Errors
 ///
 /// Creation of `path` must be successful, if a path is specified.
+/// Open one or two FASTQ/FASTA files using the strategy given by
+/// [`open_fastx_file`]. The thread handles are grouped together in
+/// [`IoThreads`].
+#[inline]
+pub(crate) fn open_fastx_files<P: AsRef<Path>>(
+    path1: P, path2: Option<P>,
+) -> std::io::Result<(FastXReader<ReadFileZip>, Option<FastXReader<ReadFileZip>>, IoThreads)> {
+    let Some(path2) = path2 else {
+        let (reader, thread) = open_fastx_file(path1)?;
+        let threads = IoThreads(thread, None);
+
+        return Ok((reader, None, threads));
+    };
+
+    let (reader1, thread1) = open_fastx_file(path1)?;
+    let (reader2, thread2) = open_fastx_file(path2)?;
+    let threads = IoThreads(thread1, thread2);
+    Ok((reader1, Some(reader2), threads))
+}
+
+/// Creates a [`WriteFileZipStdout`], using `path` to determine whether a regular
+/// file, zipped file, or stdout should be used.
 #[inline]
 pub(crate) fn create_writer<P: AsRef<Path>>(path: Option<P>) -> std::io::Result<WriteFileZipStdout> {
     let writer = match path {
@@ -142,8 +200,14 @@ fn spawn_decoder(file_path: impl AsRef<Path>) -> std::io::Result<(std::io::PipeR
     let mut decoder = MultiGzDecoder::new(File::open(file_path)?);
 
     let thread = thread::spawn(move || -> std::io::Result<_> {
-        std::io::copy(&mut decoder, &mut writer)?;
-        Ok(())
+        match std::io::copy(&mut decoder, &mut writer) {
+            // A broken pipe signals that the reader has been dropped, so the
+            // writer can end early (e.g., in sampler). `MultiGzDecoder` will
+            // never yield such an error since it is reading from a file.
+            Err(e) if e.kind() == ErrorKind::BrokenPipe => Ok(()),
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
+        }
     });
 
     Ok((reader, thread))
@@ -197,6 +261,75 @@ impl std::fmt::Display for OpenFastqError {
         }
     }
 }
+/// A struct containing two writers for paired reads: one for left reads and one
+/// for the right.
+pub struct PairedWriters<W: Write> {
+    writer1: W,
+    writer2: W,
+}
+
+impl<W: Write> PairedWriters<W> {
+    /// Creates a new [`PairedWriters`] from two writers.
+    #[inline]
+    fn new(writer1: W, writer2: W) -> Self {
+        Self { writer1, writer2 }
+    }
+}
+
+/// A trait providing the ability to flush all writers in a struct.
+pub trait FlushWriter {
+    /// Flushes all the writers.
+    fn flush_all(&mut self) -> std::io::Result<()>;
+}
+
+impl<W: Write> FlushWriter for W {
+    #[inline]
+    fn flush_all(&mut self) -> std::io::Result<()> {
+        self.flush()
+    }
+}
+
+impl<W: Write> FlushWriter for PairedWriters<W> {
+    #[inline]
+    fn flush_all(&mut self) -> std::io::Result<()> {
+        self.writer1.flush()?;
+        self.writer2.flush()
+    }
+}
+
+/// An enum for holding either a single writer (single reads) or
+/// [`PairedWriters`] (for paired reads).
+pub enum RecordWriters<W: Write> {
+    SingleEnd(W),
+    PairedEnd(PairedWriters<W>),
+}
+
+impl<W: Write> RecordWriters<W> {
+    /// Creates a new [`RecordWriters`] object to represent either a single
+    /// writer (single reads) or two writers (paired reads). This is used for
+    /// parsing clap arguments.
+    #[inline]
+    pub fn new(writer1: W, writer2: Option<W>) -> Self {
+        match writer2 {
+            Some(writer2) => Self::PairedEnd(PairedWriters::new(writer1, writer2)),
+            None => Self::SingleEnd(writer1),
+        }
+    }
+}
+
+impl RecordWriters<WriteFileZipStdout> {
+    /// Creates a [`RecordWriters`] from two files, interpretted as
+    /// [`WriteFileZipStdout`] writers.
+    pub fn from_filename<P: AsRef<Path>>(writer1: Option<P>, writer2: Option<P>) -> std::io::Result<Self> {
+        let writer1 = create_writer(writer1)?;
+        let writer2 = match writer2 {
+            Some(path) => Some(create_writer(Some(path))?),
+            None => None,
+        };
+        Ok(Self::new(writer1, writer2))
+    }
+}
+
 
 impl Error for OpenFastqError {
     #[inline]

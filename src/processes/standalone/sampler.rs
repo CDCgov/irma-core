@@ -1,45 +1,53 @@
-use crate::io::{IoThreads, ReadFileZip, WriteFileZipStdout, create_writer, open_fastq_files};
+use crate::io::{
+    FastXReader, IoThreads, ReadFileZip, RecordWriters, WriteFileZipStdout, WriteRecord, WriteRecords, is_gz,
+    open_fastx_files,
+};
+use crate::utils::paired_reads::{
+    DeinterleavedPairedReads, DeinterleavedPairedReadsExt, RecordWithHeader, ZipPairedReadsExt,
+};
 use clap::Args;
 use rand::{Rng, SeedableRng, seq::IndexedMutRandom};
 use rand_xoshiro::Xoshiro256StarStar;
 use std::{
     fs::File,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, BufReader},
     path::PathBuf,
 };
-use zoe::{prelude::*, unwrap_or_return_some_err};
+use zoe::unwrap_or_return_some_err;
 
 #[derive(Args, Debug)]
 pub struct SamplerArgs {
-    /// Path to .fastq or .fastq.gz file to be trimmed
-    pub fastq_input_file: PathBuf,
+    /// Path to FASTQ, FASTA, or .gz file to be sampled
+    pub input_file1: PathBuf,
 
-    /// Path to optional second .fastq or .fastq.gz file to be trimmed
-    pub fastq_input_file2: Option<PathBuf>,
+    /// Path to optional second FASTQ, FASTA, or .gz file to be sampled
+    pub input_file2: Option<PathBuf>,
 
-    #[arg(short = '1', short_alias = 'o', long = "fastq-output")]
-    /// Output filepath for trimmed reads. Trimmed reads print to STDOUT if not
-    /// provided. May also use '-o'.
-    pub fastq_output_file: Option<PathBuf>,
+    #[arg(short = '1', short_alias = 'o')]
+    /// Output filepath for sampled reads. Sampled reads print to STDOUT if not
+    /// provided. May also use '-o'
+    pub output_file1: Option<PathBuf>,
 
-    #[arg(short = '2', long = "fastq-output2", requires = "fastq_input_file2")]
-    /// Output path for secondary trimmed file if using paired reads. If this
-    /// argument is omitted, output is interleaved.
-    pub fastq_output_file2: Option<PathBuf>,
+    #[arg(short = '2', requires = "output_file1")]
+    /// Output path for secondary sampled file if using paired reads. If this
+    /// argument is omitted, output is interleaved
+    pub output_file2: Option<PathBuf>,
 
     #[arg(short = 't', long, group = "target")]
     /// Target number of reads to be subsampled
     pub subsample_target: Option<usize>,
 
     #[arg(short = 'p', long, group = "target", value_parser = validate_percent,)]
-    /// Target percentage of reads to be subsampled. Must be a positive integer [0, 100]
+    /// Target percentage of reads to be sampled. Must be a positive integer in
+    /// [0, 100]
     pub percent_target: Option<usize>,
 
     #[arg(short = 's', long)]
-    /// Rng seed
+    /// The seed for the random number generator
     pub rng_seed: Option<u64>,
 }
 
+/// Parses a percent (as a `usize`) from the command line
 fn validate_percent(value: &str) -> Result<usize, String> {
     let parsed = value
         .parse::<usize>()
@@ -55,69 +63,165 @@ fn validate_percent(value: &str) -> Result<usize, String> {
 
 /// main process getting called by irma-core main.rs
 pub fn sampler_process(args: SamplerArgs) -> Result<(), std::io::Error> {
-    let (io_args, mut rng, threads, target) = parse_sampler_args(args)?;
-    let mut writer = io_args.output_writer;
+    let (io_args, rng, threads, target) = parse_sampler_args(args)?;
 
-    match (io_args.fastq_reader2, io_args.output_writer2) {
-        (None, None) => {
-            if io_args.fastq_path1.is_file() {
-                let seq_count = get_seq_count(&io_args.fastq_path1).unwrap();
-                let target = {
-                    match target {
-                        SamplingTarget::Count(count) => count,
-                        SamplingTarget::Percent(percent) => seq_count * percent / 100,
-                    }
-                };
-                if target > seq_count {
-                    eprintln!(
-                        "Sampler Warning: Target sample size ({target}) was greater than population size ({seq_count}); no downsampling has occurred.",
-                    );
-                    for sample in io_args.fastq_reader1 {
-                        write!(writer, "{}", sample?)?;
-                    }
-                } else {
-                    let subsampled = method_d(io_args.fastq_reader1, &mut rng, target, seq_count)?;
-                    for sample in subsampled {
-                        write!(writer, "{}", sample?)?;
-                    }
-                }
-            } else {
-                match target {
-                    SamplingTarget::Count(count) => {
-                        let reservoir = method_l(io_args.fastq_reader1, &mut rng, count)?;
-                        for sample in reservoir {
-                            write!(writer, "{sample}")?;
-                        }
-                    }
-                    SamplingTarget::Percent(percent) => {
-                        let bernoulli_iterator = method_bernoulli(io_args.fastq_reader1, &mut rng, percent);
-                        for sample in bernoulli_iterator {
-                            write!(writer, "{}", sample?)?;
-                        }
-                    }
-                }
-            }
-        }
-        (Some(_reader2), None) => todo!("subsample and interleave"), // use the zipped thing,
-        (Some(_reader2), Some(_writer2)) => todo!("subsample zipped"),
-        (None, Some(_writer2)) => todo!("de-interleave"),
+    // Get the population sequence count from one of the files if possible
+    let mut seq_count = get_paired_seq_count(io_args.input_path1, io_args.input_path2, &io_args.reader1)?;
+
+    // For de-interleaving, must divide sequence count by 2 to get number of
+    // pairs
+    if io_args.reader2.is_none() && matches!(io_args.writer, RecordWriters::PairedEnd(_)) {
+        seq_count = seq_count.map(|seq_count| seq_count / 2)
+    }
+
+    // Update the target with the population sequence count
+    let target = match (target, seq_count) {
+        (SamplingTarget::Count(count), _) => SamplingTarget::Count(count),
+        (SamplingTarget::Percent(percent), Some(seq_count)) => SamplingTarget::Count(seq_count * percent / 100),
+        (SamplingTarget::Percent(percent), None) => SamplingTarget::Percent(percent),
     };
 
-    writer.flush()?;
+    match (io_args.reader1, io_args.reader2) {
+        (FastXReader::Fastq(reader), None) => sample_single_input(reader, io_args.writer, target, seq_count, rng)?,
+        (FastXReader::Fastq(reader1), Some(FastXReader::Fasta(reader2))) => {
+            sample_paired_input(reader1, reader2, io_args.writer, target, seq_count, rng)?
+        }
+        (FastXReader::Fastq(reader1), Some(FastXReader::Fastq(reader2))) => {
+            sample_paired_input(reader1, reader2, io_args.writer, target, seq_count, rng)?
+        }
+        (FastXReader::Fasta(reader), None) => sample_single_input(reader, io_args.writer, target, seq_count, rng)?,
+        (FastXReader::Fasta(reader1), Some(FastXReader::Fasta(reader2))) => {
+            sample_paired_input(reader1, reader2, io_args.writer, target, seq_count, rng)?
+        }
+        (FastXReader::Fasta(reader1), Some(FastXReader::Fastq(reader2))) => {
+            sample_paired_input(reader1, reader2, io_args.writer, target, seq_count, rng)?
+        }
+    }
+
     threads.finalize()?;
     Ok(())
 }
 
-struct IOArgs {
-    fastq_path1:    PathBuf,
-    fastq_reader1:  FastQReader<ReadFileZip>,
-    fastq_reader2:  Option<FastQReader<ReadFileZip>>,
-    output_writer:  WriteFileZipStdout,
-    output_writer2: Option<WriteFileZipStdout>,
+/// Performs sampling for a single input file.
+fn sample_single_input<R1, A>(
+    reader: R1, writer: RecordWriters<WriteFileZipStdout>, target: SamplingTarget, seq_count: Option<usize>,
+    rng: Xoshiro256StarStar,
+) -> std::io::Result<()>
+where
+    R1: Iterator<Item = std::io::Result<A>>,
+    A: RecordWithHeader + WriteRecord<WriteFileZipStdout>,
+    std::io::Result<A>: WriteRecord<WriteFileZipStdout>, {
+    // Don't perform sampling if target is higher than population sequence count
+    if let SamplingTarget::Count(target_count) = target
+        && let Some(seq_count) = seq_count
+        && target_count > seq_count
+    {
+        eprintln!(
+            "Sampler Warning: Target sample size ({target_count}) was greater than population size ({seq_count}); no downsampling has occurred.",
+        );
+        return match writer {
+            RecordWriters::SingleEnd(writer) => reader.write_records(writer),
+            RecordWriters::PairedEnd(writer) => reader.deinterleave().write_records(writer),
+        };
+    }
+
+    match writer {
+        RecordWriters::SingleEnd(writer) => {
+            let iterator = reader;
+            sample_and_write_records(iterator, writer, target, seq_count, rng)
+        }
+        RecordWriters::PairedEnd(writer) => {
+            let iterator: DeinterleavedPairedReads<R1, A> = reader.deinterleave();
+            sample_and_write_records(iterator, writer, target, seq_count, rng)
+        }
+    }
 }
 
+/// Performs sampling for a pair of inputs.
+fn sample_paired_input<R1, R2, A, B>(
+    reader1: R1, reader2: R2, writer: RecordWriters<WriteFileZipStdout>, target: SamplingTarget, seq_count: Option<usize>,
+    rng: Xoshiro256StarStar,
+) -> std::io::Result<()>
+where
+    R1: Iterator<Item = std::io::Result<A>>,
+    R2: Iterator<Item = std::io::Result<B>>,
+    A: RecordWithHeader + WriteRecord<WriteFileZipStdout>,
+    B: RecordWithHeader + WriteRecord<WriteFileZipStdout>, {
+    // Don't perform sampling if target is higher than population sequence count
+    if let SamplingTarget::Count(target_count) = target
+        && let Some(seq_count) = seq_count
+        && target_count > seq_count
+    {
+        eprintln!(
+            "Sampler Warning: Target sample size ({target_count}) was greater than population size ({seq_count}); no downsampling has occurred.",
+        );
+        return reader1.zip_paired_reads(reader2).write_records(writer);
+    }
+
+    // Determine the proper iterator type for the inputs, then dispatch
+    let iterator = reader1.zip_paired_reads(reader2);
+    sample_and_write_records(iterator, writer, target, seq_count, rng)
+}
+
+/// Sample and write all records from an iterator. The method used is one of the
+/// following:
+/// 1. Bernoulli sampling, if `target` is a [`Percent`] and the population
+///    `seq_count` is [`None`].
+/// 2. Method D sampling, if `target` is a [`Count`] and the population
+///    `seq_count` is [`Some`].
+/// 3. Resovoir sampling (method L), if `target` is a [`Count`] and the
+///    population `seq_count` is [`None`].
+///
+/// [`Percent`]: SamplingTarget::Percent
+/// [`Count`]: SamplingTarget::Count
+fn sample_and_write_records<I, W, A>(
+    iterator: I, writer: W, target: SamplingTarget, seq_count: Option<usize>, mut rng: Xoshiro256StarStar,
+) -> std::io::Result<()>
+where
+    for<'a> BernoulliSampler<'a, I>: WriteRecords<W>,
+    for<'a> MethodDSampler<'a, I>: WriteRecords<W>,
+    for<'a> std::vec::IntoIter<A>: WriteRecords<W>,
+    I: Iterator<Item = std::io::Result<A>>, {
+    match target {
+        SamplingTarget::Percent(percent) => BernoulliSampler::new(iterator, percent, &mut rng).write_records(writer),
+        SamplingTarget::Count(target) => {
+            if let Some(total_items) = seq_count {
+                MethodDSampler::new(iterator, target, total_items, &mut rng)?.write_records(writer)
+            } else {
+                method_l(iterator, &mut rng, target)?.into_iter().write_records(writer)
+            }
+        }
+    }
+}
+
+fn get_paired_seq_count(
+    fastq_path1: Option<PathBuf>, fastq_path2: Option<PathBuf>, reader1: &FastXReader<ReadFileZip>,
+) -> std::io::Result<Option<usize>> {
+    if let Some(path) = fastq_path1 {
+        Ok(Some(get_seq_count(&path, reader1)?))
+    } else if let Some(path) = fastq_path2 {
+        Ok(Some(get_seq_count(&path, reader1)?))
+    } else {
+        Ok(None)
+    }
+}
+
+struct IOArgs {
+    /// This is only `Some` if the path corresponds to a file and is not zipped
+    input_path1: Option<PathBuf>,
+    /// This is only `Some` if paired ends are used, the path corresponds to a
+    /// non-zipped file
+    input_path2: Option<PathBuf>,
+    reader1:     FastXReader<ReadFileZip>,
+    reader2:     Option<FastXReader<ReadFileZip>>,
+    writer:      RecordWriters<WriteFileZipStdout>,
+}
+
+/// The target number of sequences to sample
 enum SamplingTarget {
+    /// The target specified as a percent of the input number of sequences
     Percent(usize),
+    /// The target as an exact count
     Count(usize),
 }
 
@@ -128,19 +232,45 @@ fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, 
         Xoshiro256StarStar::from_os_rng()
     };
 
-    let (fastq_reader1, fastq_reader2, threads) = open_fastq_files(&args.fastq_input_file, args.fastq_input_file2.as_ref())?;
+    let (fastq_reader1, fastq_reader2, threads) = open_fastx_files(&args.input_file1, args.input_file2.as_ref())?;
 
-    let output_writer = create_writer(args.fastq_output_file.clone())?;
-    let output_writer2 = match &args.fastq_output_file2 {
-        Some(path) => Some(create_writer(Some(path))?),
-        None => None,
+    // ensure no mismatch of paired read inputs
+    match (&fastq_reader1, &fastq_reader2) {
+        (FastXReader::Fasta(_), Some(FastXReader::Fastq(_))) => {
+            return Err(std::io::Error::other(
+                "Paired read inputs must be both FASTQ or both FASTA!".to_string(),
+            ));
+        }
+        (FastXReader::Fastq(_), Some(FastXReader::Fasta(_))) => {
+            return Err(std::io::Error::other(
+                "Paired read inputs must be both FASTQ or both FASTA!".to_string(),
+            ));
+        }
+        _ => (),
+    }
+
+    let writer = RecordWriters::from_filename(args.output_file1, args.output_file2)?;
+
+    let fastq_path1 = if args.input_file1.is_file() && !is_gz(&args.input_file1) {
+        Some(args.input_file1)
+    } else {
+        None
     };
+    let fastq_path2 = if let Some(path) = args.input_file2
+        && path.is_file()
+        && !is_gz(&path)
+    {
+        Some(path)
+    } else {
+        None
+    };
+
     let io_args = IOArgs {
-        fastq_path1: args.fastq_input_file,
-        fastq_reader1,
-        fastq_reader2,
-        output_writer,
-        output_writer2,
+        input_path1: fastq_path1,
+        input_path2: fastq_path2,
+        reader1: fastq_reader1,
+        reader2: fastq_reader2,
+        writer,
     };
     let target = if let Some(count) = args.subsample_target {
         SamplingTarget::Count(count)
@@ -152,14 +282,17 @@ fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, 
     Ok((io_args, rng, threads, target))
 }
 
-fn get_seq_count(fastq: &PathBuf) -> std::io::Result<usize> {
+fn get_seq_count(fastq: &PathBuf, reader: &FastXReader<ReadFileZip>) -> std::io::Result<usize> {
     let input = File::open(fastq)?;
     let buffered = BufReader::new(input);
     let line_count = buffered.lines().count();
-    Ok(line_count / 4)
+    match reader {
+        FastXReader::Fasta(_) => Ok(line_count / 2),
+        FastXReader::Fastq(_) => Ok(line_count / 4),
+    }
 }
 
-/// Method L (https://dl.acm.org/doi/pdf/10.1145/198429.198435)
+/// Method L (<https://dl.acm.org/doi/pdf/10.1145/198429.198435>)
 fn method_l<I, T, E>(iter: I, rng: &mut Xoshiro256StarStar, target: usize) -> std::io::Result<Vec<T>>
 where
     I: Iterator<Item = Result<T, E>>,
@@ -209,23 +342,44 @@ where
     Ok(reservoir)
 }
 
-fn method_bernoulli<I, T, R>(iter: I, rng: &mut R, percent: usize) -> impl Iterator<Item = T>
+/// An iterator providing sampling using the Bernoulli method.
+struct BernoulliSampler<'a, I: Iterator> {
+    reader: I,
+    prob:   f32,
+    rng:    &'a mut Xoshiro256StarStar,
+}
+
+impl<'a, I: Iterator> BernoulliSampler<'a, I> {
+    /// Creates an iterator which randomly downsamples from `reader` using the
+    /// Bernoulli method, keeping approximately the specified percent of items.
+    #[inline]
+    fn new(reader: I, percent: usize, rng: &'a mut Xoshiro256StarStar) -> Self {
+        Self {
+            reader,
+            prob: percent as f32 / 100.0,
+            rng,
+        }
+    }
+}
+
+impl<'a, I, T, E> Iterator for BernoulliSampler<'a, I>
 where
-    I: Iterator<Item = T>,
-    R: Rng, {
-    let percent = percent as f32 / 100.0;
-    iter.filter(move |_| rng.random::<f32>() < percent)
+    I: Iterator<Item = Result<T, E>>,
+{
+    type Item = I::Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let item = unwrap_or_return_some_err!(self.reader.next()?);
+            if self.rng.random::<f32>() < self.prob {
+                return Some(Ok(item));
+            }
+        }
+    }
 }
 
-/// Algorithm D (Vitter, https://dl.acm.org/doi/pdf/10.1145/23002.23003)
-/// randomly produces how many reads to *skip* based on the total amount of
-/// reads remaining
-fn method_d<'a>(
-    reader: FastQReader<ReadFileZip>, rng: &'a mut Xoshiro256StarStar, target: usize, seq_count: usize,
-) -> std::io::Result<MethodDSampler<'a, FastQReader<ReadFileZip>>> {
-    MethodDSampler::new(reader, target, seq_count, rng)
-}
-
+/// An iterator providing sampling using Algorithm D (Vitter,
+/// <https://dl.acm.org/doi/pdf/10.1145/23002.23003>).
 struct MethodDSampler<'a, I: Iterator> {
     reader:               I,
     rng:                  &'a mut Xoshiro256StarStar,
@@ -283,6 +437,8 @@ impl<'a, I: Iterator> MethodDSampler<'a, I> {
     /// complete.
     ///
     /// This is accomplished via rejection sampling.
+    ///
+    /// [`next`]: MethodDSampler::next
     fn next_skip(&mut self) -> Option<usize> {
         if self.remaining_samples == 0 {
             return None;
@@ -360,6 +516,8 @@ impl<'a, I: Iterator> MethodDSampler<'a, I> {
     ///
     /// `None` is never returned; an option is used for convenience in
     /// [`next_skip`].
+    ///
+    /// [`next_skip`]: MethodDSampler::next_skip
     fn yield_skip(&mut self, skip: usize, rem_samples_min1_inv: f32) -> Option<usize> {
         // Decrement due to skip, and due to the item yielded
         self.remaining_population -= skip + 1;
@@ -380,6 +538,8 @@ impl<'a, I: Iterator> MethodDSampler<'a, I> {
     /// value of `skips` from 0 until the final value returned, so when
     /// `remaining_samples` is large (and hence skips tend to be small), this
     /// may be more efficient.
+    ///
+    /// [`next_skip`]: MethodDSampler::next_skip
     fn next_skip_method_a(&mut self) -> Option<usize> {
         if self.remaining_samples > 1 {
             let mut top = self.remaining_population - self.remaining_samples;
@@ -418,7 +578,11 @@ where
 
     /// Calculates the number of skips and then skips it for the iterator inside
     fn next(&mut self) -> Option<Self::Item> {
-        let skip = self.next_skip()?;
+        // makes sure to validate all remaining reads even if the target number of reads is reached
+        let Some(skip) = self.next_skip() else {
+            unwrap_or_return_some_err!(self.reader.try_for_each(|read| read.map(|_| ())));
+            return None;
+        };
         for _ in 0..skip {
             unwrap_or_return_some_err!(self.reader.next()?);
         }

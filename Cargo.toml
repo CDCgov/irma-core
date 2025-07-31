@@ -19,7 +19,7 @@ readme = "README.md"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
-foldhash = "0.1.5"
+foldhash = "0.2"
 num_cpus = "1.16"
 flate2 = "1.1"
 zoe = { git = "https://github.com/CDCgov/zoe.git", branch = "main", default-features = false, features = [
