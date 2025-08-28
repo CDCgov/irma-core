@@ -73,8 +73,9 @@ pub fn get_molecular_id_side(s: &str, default_side: char) -> Option<(&str, char)
 /// Returns whether two reads have matching molecular IDs. Errors if the read
 /// ID's don't match or can't be parsed.
 pub fn check_paired_headers<A: RecordWithHeader, B: RecordWithHeader>(read1: &A, read2: &B) -> Result<(), std::io::Error> {
-    if let Some((id1, _)) = get_molecular_id_side(read1.header(), '0')
-        && let Some((id2, _)) = get_molecular_id_side(read2.header(), '0')
+    // Strip the @ from the header before calling get_molecular_id_side as needed (transitional)
+    if let Some((id1, _)) = get_molecular_id_side(read1.header().strip_prefix('@').unwrap_or(read1.header()), '0')
+        && let Some((id2, _)) = get_molecular_id_side(read2.header().strip_prefix('@').unwrap_or(read2.header()), '0')
     {
         if id1 == id2 {
             Ok(())

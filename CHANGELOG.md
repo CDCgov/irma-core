@@ -5,11 +5,18 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 [Semantic Versioning]. For IRMA vs IRMA-core compatibility, please see the
 [version matrix](VERSION_MATRIX.md).
 
+## [0.6.1] - TBD
+
+### Fixes
+
+- SRA paired-end headers could be could be incorrectly flagged as unmated when
+  `--filter-widows` was selected in `trimmer` or `sampler`. This has been fixed.
+
 ## [0.6.0] - 2025-08-29
 
 ### Added
 
--Adds a new standalone process called `sampler` that provides support for
+- Adds a new standalone process called `sampler` that provides support for
 randomly downsampling FastQ or FASTA files. Deinterleaving is also supported.
 
 ### Changed
@@ -130,6 +137,7 @@ randomly downsampling FastQ or FASTA files. Deinterleaving is also supported.
 - **Added**: custom inexact matching algorithm from [Zoe]
 
 <!-- Versions -->
+[0.6.1]: https://github.com/CDCgov/irma-core/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/CDCgov/irma-core/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/CDCgov/irma-core/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/CDCgov/irma-core/compare/v0.4.3...v0.5.0
