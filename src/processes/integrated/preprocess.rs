@@ -8,7 +8,7 @@ use crate::{
     qc::{fastq::ReadTransforms, fastq_metadata::*},
     utils::{
         get_hasher,
-        paired_reads::{PairedReadFilterer, ReadSide},
+        paired_reads::{ReadSide, ZipPairedReadsError, ZipPairedReadsExt},
         trimming::trim_read,
     },
 };
@@ -16,13 +16,15 @@ use clap::{Args, ValueHint};
 use foldhash::fast::SeedableRandomState;
 use std::{
     collections::HashMap,
-    fs::{File, OpenOptions},
+    fs::File,
     io::{BufWriter, prelude::*},
     num::NonZeroUsize,
     path::PathBuf,
 };
 use zoe::prelude::*;
 
+/// A type alias for the [`HashMap`] used to store the deflated sequences and
+/// the associated headers and quality scores.
 type DeflatedSequences = HashMap<Nucleotides, Vec<(String, QualityScores)>, SeedableRandomState>;
 
 #[derive(Args, Debug)]
@@ -147,13 +149,11 @@ fn parse_preprocess_args(args: PreprocessArgs) -> std::io::Result<ParsedPreproce
     let (reader1, reader2, threads) = readers_from_files(&fastq_input_file1, fastq_input_file2.as_ref())?;
 
     let log_writer = match log_file {
-        Some(ref file_path) => Some(BufWriter::new(
-            OpenOptions::new().write(true).create(true).truncate(true).open(file_path)?,
-        )),
+        Some(ref file_path) => Some(BufWriter::new(File::create(file_path)?)),
         None => None,
     };
 
-    let table_writer = BufWriter::new(OpenOptions::new().write(true).create(true).truncate(true).open(table_file)?);
+    let table_writer = BufWriter::new(File::create(table_file)?);
 
     let min_length = min_length.get();
 
@@ -188,24 +188,69 @@ fn trim_and_deflate(
     options: &ParsedPreprocessOptions, io_args: &mut ParsedPreprocessIoArgs,
 ) -> std::io::Result<(DeflatedSequences, FastQMetadata)> {
     let reader1 = &mut io_args.reader1;
-    let mut trimming_specs = Preprocessor::new(options);
+    let mut deflated = DeflatedSequences::with_hasher(get_hasher());
+    let mut metadata = FastQMetadata::default();
 
     if let Some(reader2) = &mut io_args.reader2 {
         if options.filter_widows {
-            trimming_specs.handle_paired_reads_with_filter_weak(
-                reader1,
-                reader2,
-                header_mismatch_warning,
-                extra_read_warning,
-            )?;
+            let result = reader1.by_ref().zip_paired_reads(reader2.by_ref()).try_for_each(|pair| {
+                preprocess_pair(pair?, &mut metadata, &mut deflated, options);
+                Ok(())
+            });
+
+            match result {
+                Ok(()) => {}
+                Err(ZipPairedReadsError::IoError(e)) => return Err(e),
+                Err(ZipPairedReadsError::MismatchedHeaders([r1, r2])) => {
+                    let err = ZipPairedReadsError::MismatchedHeaders([r1.as_view(), r2.as_view()]);
+                    eprintln!(
+                        "{MODULE} WARNING! {err} `--filter-widows or -f` is being disabled for the remainder of the processing. Consider rerunning with corrected inputs."
+                    );
+
+                    std::iter::once(Ok(r1)).chain(reader1).try_for_each(|read| {
+                        preprocess_seq(&mut read?, ReadSide::R1, &mut metadata, &mut deflated, options);
+                        std::io::Result::Ok(())
+                    })?;
+
+                    std::iter::once(Ok(r2)).chain(reader2).try_for_each(|read| {
+                        preprocess_seq(&mut read?, ReadSide::R2, &mut metadata, &mut deflated, options);
+                        std::io::Result::Ok(())
+                    })?;
+                }
+                Err(ZipPairedReadsError::ExtraFirstRead(r1)) => {
+                    eprintln!("{}", extra_read_warning());
+                    std::iter::once(Ok(r1)).chain(reader1).try_for_each(|read| {
+                        preprocess_seq(&mut read?, ReadSide::R1, &mut metadata, &mut deflated, options);
+                        std::io::Result::Ok(())
+                    })?;
+                }
+                Err(ZipPairedReadsError::ExtraSecondRead(r2)) => {
+                    eprintln!("{}", extra_read_warning());
+                    std::iter::once(Ok(r2)).chain(reader2).try_for_each(|read| {
+                        preprocess_seq(&mut read?, ReadSide::R2, &mut metadata, &mut deflated, options);
+                        std::io::Result::Ok(())
+                    })?;
+                }
+            }
         } else {
-            trimming_specs.handle_paired_reads_no_filter(reader1, reader2)?;
+            reader1.try_for_each(|read| {
+                preprocess_seq(&mut read?, ReadSide::R1, &mut metadata, &mut deflated, options);
+                std::io::Result::Ok(())
+            })?;
+
+            reader2.try_for_each(|read| {
+                preprocess_seq(&mut read?, ReadSide::R2, &mut metadata, &mut deflated, options);
+                std::io::Result::Ok(())
+            })?;
         }
     } else {
-        trimming_specs.handle_single_reads(reader1, ReadSide::Unpaired)?;
+        reader1.try_for_each(|read| {
+            preprocess_seq(&mut read?, ReadSide::Unpaired, &mut metadata, &mut deflated, options);
+            std::io::Result::Ok(())
+        })?;
     };
 
-    Ok(trimming_specs.finalize())
+    Ok((deflated, metadata))
 }
 
 /// Writes the table file to `table_writer` and the XFL file to STDOUT. The
@@ -325,96 +370,92 @@ fn diagnose_none_passing(metadata: &FastQMetadata, paired_reads: bool, options: 
 
 #[inline]
 #[must_use]
-fn header_mismatch_warning(e: std::io::Error) -> String {
-    format!(
-        "{MODULE} WARNING! {e} `--filter-widows or -f` is being disabled for the remainder of the processing. Consider rerunning with corrected inputs."
-    )
-}
-
-#[inline]
-#[must_use]
 fn extra_read_warning() -> String {
     format!(
         "{MODULE} WARNING! Extra unpaired read(s) found at end of first FASTQ file. `--filter-widows or -f` is being disabled for the remainder of the processing. Consider rerunning with corrected inputs."
     )
 }
 
-/// A [`PairedReadFilterer`] struct used by the preprocess process to deflate
-/// and store trimmed/qc-filtered reads.
-#[derive(Debug)]
-struct Preprocessor<'a> {
-    args:                 &'a ParsedPreprocessOptions,
-    metadata_by_sequence: DeflatedSequences,
-    metadata:             FastQMetadata,
+/// Trims a read and tallies its metadata. `Some` is returned if it passes all
+/// quality filters.
+fn trim_filter_tally<'a>(
+    read: &'a mut FastQ, side: ReadSide, metadata: &mut FastQMetadata, options: &ParsedPreprocessOptions,
+) -> Option<FastQViewMut<'a>> {
+    metadata.observed_raw_reads += side.to_simd();
+    metadata.observed_max_read_len = metadata.observed_max_read_len.max(read.sequence.len());
+    if read.sequence.len() < options.min_length {
+        return None;
+    }
+
+    let clipped = trim_read(read.as_view_mut(), false, &options.clipping_args);
+
+    metadata.observed_max_clipped_read_len = metadata.observed_max_clipped_read_len.max(clipped.sequence.len());
+    if (options.enforce_clipped_length && clipped.sequence.len() < options.min_length) || clipped.sequence.is_empty() {
+        return None;
+    }
+    metadata.passed_len_count += 1;
+
+    let read_q_center = clipped.get_q_center(options.use_median);
+    metadata.observed_q_max = if read_q_center > metadata.observed_q_max {
+        read_q_center
+    } else {
+        metadata.observed_q_max
+    };
+    if read_q_center < Some(f32::from(options.min_read_quality)) {
+        return None;
+    }
+
+    metadata.passed_qc_count += 1;
+
+    Some(clipped)
 }
 
-impl<'a> Preprocessor<'a> {
-    #[inline]
-    fn new(args: &'a ParsedPreprocessOptions) -> Self {
-        Self {
-            args,
-            metadata_by_sequence: HashMap::with_hasher(get_hasher()),
-            metadata: FastQMetadata::default(),
-        }
+/// Fixes the header on a read and stores it to `deflated`.
+fn fix_and_store<'a>(mut trimmed: FastQViewMut<'a>, side: ReadSide, deflated: &mut DeflatedSequences) {
+    trimmed.fix_header(side.to_char());
+
+    let header = std::mem::take(trimmed.header);
+    let sequence = trimmed.sequence.to_owned_data();
+    let quality = trimmed.quality.to_owned_data();
+
+    deflated.entry(sequence).or_default().push((header, quality));
+}
+
+/// Preprocesses a single sequence.
+///
+/// This involves the following steps:
+/// 1. Trimming the read
+/// 2. Tallying the metadata
+/// 3. Filtering the read if it does not meet thresholds
+/// 4. Fixing the header
+/// 5. Adding to the deflated sequences hashmap
+fn preprocess_seq(
+    read: &mut FastQ, side: ReadSide, metadata: &mut FastQMetadata, deflated: &mut DeflatedSequences,
+    options: &ParsedPreprocessOptions,
+) {
+    if let Some(trimmed) = trim_filter_tally(read, side, metadata, options) {
+        fix_and_store(trimmed, side, deflated);
     }
 }
 
-impl<'a> PairedReadFilterer for Preprocessor<'a> {
-    const PRESERVE_ORDER: bool = false;
-    type Processed<'b> = FastQViewMut<'b>;
-    type Finalized = (DeflatedSequences, FastQMetadata);
-
-    #[inline]
-    fn process_read<'b>(&mut self, read: &'b mut FastQ, side: ReadSide) -> Option<Self::Processed<'b>> {
-        self.metadata.observed_raw_reads += side.to_simd();
-        self.metadata.observed_max_read_len = self.metadata.observed_max_read_len.max(read.sequence.len());
-        if read.sequence.len() < self.args.min_length {
-            return None;
-        }
-
-        let clipped = trim_read(read.as_view_mut(), false, &self.args.clipping_args);
-
-        self.metadata.observed_max_clipped_read_len =
-            self.metadata.observed_max_clipped_read_len.max(clipped.sequence.len());
-        if (self.args.enforce_clipped_length && clipped.sequence.len() < self.args.min_length) || clipped.sequence.is_empty()
-        {
-            return None;
-        }
-        self.metadata.passed_len_count += 1;
-
-        let read_q_center = clipped.get_q_center(self.args.use_median);
-        self.metadata.observed_q_max = if read_q_center > self.metadata.observed_q_max {
-            read_q_center
-        } else {
-            self.metadata.observed_q_max
-        };
-        if read_q_center < Some(f32::from(self.args.min_read_quality)) {
-            return None;
-        }
-
-        self.metadata.passed_qc_count += 1;
-
-        Some(clipped)
-    }
-
-    #[inline]
-    fn output_read<'b>(&mut self, mut trimmed: Self::Processed<'b>, side: ReadSide) -> std::io::Result<()> {
-        trimmed.fix_header(side.to_char());
-
-        let header = std::mem::take(trimmed.header);
-        let sequence = trimmed.sequence.to_owned_data();
-        let quality = trimmed.quality.to_owned_data();
-
-        self.metadata_by_sequence.entry(sequence).or_default().push((header, quality));
-
-        Ok(())
-    }
-
-    #[inline]
-    fn finalize(&mut self) -> Self::Finalized {
-        (
-            std::mem::take(&mut self.metadata_by_sequence),
-            std::mem::take(&mut self.metadata),
-        )
-    }
+/// Preprocesses a pair of reads, discarding any widows.
+///
+/// This involves the following steps:
+/// 1. Trimming the reads
+/// 2. Tallying the metadata
+/// 3. Filtering the reads if either does not meet thresholds
+/// 4. Fixing the headers
+/// 5. Adding to the deflated sequences hashmap
+fn preprocess_pair(
+    pair: [FastQ; 2], metadata: &mut FastQMetadata, deflated: &mut DeflatedSequences, options: &ParsedPreprocessOptions,
+) {
+    let [mut read1, mut read2] = pair;
+    let Some(r1_trimmed) = trim_filter_tally(&mut read1, ReadSide::R1, metadata, options) else {
+        return;
+    };
+    let Some(r2_trimmed) = trim_filter_tally(&mut read2, ReadSide::R2, metadata, options) else {
+        return;
+    };
+    fix_and_store(r1_trimmed, ReadSide::R1, deflated);
+    fix_and_store(r2_trimmed, ReadSide::R2, deflated);
 }

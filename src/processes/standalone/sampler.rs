@@ -2,9 +2,7 @@ use crate::io::{
     FastXReader, IoThreads, ReadFileZip, RecordWriters, WriteFileZipStdout, WriteRecord, WriteRecords,
     get_paired_readers_and_writers, is_gz,
 };
-use crate::utils::paired_reads::{
-    DeinterleavedPairedReads, DeinterleavedPairedReadsExt, RecordWithHeader, ZipPairedReadsExt,
-};
+use crate::utils::paired_reads::{DeinterleavedPairedReads, DeinterleavedPairedReadsExt, ZipPairedReadsExt};
 use clap::Args;
 use rand::{Rng, SeedableRng, seq::IndexedMutRandom};
 use rand_xoshiro::Xoshiro256StarStar;
@@ -13,6 +11,7 @@ use std::{
     io::{BufRead, BufReader},
     path::PathBuf,
 };
+use zoe::data::records::HeaderReadable;
 use zoe::unwrap_or_return_some_err;
 
 #[derive(Args, Debug)]
@@ -84,9 +83,6 @@ pub fn sampler_process(args: SamplerArgs) -> Result<(), std::io::Error> {
 
     match (io_args.reader1, io_args.reader2) {
         (FastXReader::Fastq(reader), None) => sample_single_input(reader, io_args.writer, target, seq_count, rng)?,
-        (FastXReader::Fastq(reader1), Some(FastXReader::Fasta(reader2))) => {
-            sample_paired_input(reader1, reader2, io_args.writer, target, seq_count, rng)?
-        }
         (FastXReader::Fastq(reader1), Some(FastXReader::Fastq(reader2))) => {
             sample_paired_input(reader1, reader2, io_args.writer, target, seq_count, rng)?
         }
@@ -94,8 +90,15 @@ pub fn sampler_process(args: SamplerArgs) -> Result<(), std::io::Error> {
         (FastXReader::Fasta(reader1), Some(FastXReader::Fasta(reader2))) => {
             sample_paired_input(reader1, reader2, io_args.writer, target, seq_count, rng)?
         }
-        (FastXReader::Fasta(reader1), Some(FastXReader::Fastq(reader2))) => {
-            sample_paired_input(reader1, reader2, io_args.writer, target, seq_count, rng)?
+        (FastXReader::Fastq(_), Some(FastXReader::Fasta(_))) => {
+            return Err(std::io::Error::other(
+                "Paired read inputs must be both FASTQ or both FASTA. Found FASTQ for first input and FASTA for second input.",
+            ));
+        }
+        (FastXReader::Fasta(_), Some(FastXReader::Fastq(_))) => {
+            return Err(std::io::Error::other(
+                "Paired read inputs must be both FASTQ or both FASTA. Found FASTA for first input and FASTQ for second input.",
+            ));
         }
     }
 
@@ -110,7 +113,7 @@ fn sample_single_input<R1, A>(
 ) -> std::io::Result<()>
 where
     R1: Iterator<Item = std::io::Result<A>>,
-    A: RecordWithHeader + WriteRecord<WriteFileZipStdout>,
+    A: HeaderReadable + WriteRecord<WriteFileZipStdout>,
     std::io::Result<A>: WriteRecord<WriteFileZipStdout>, {
     // Don't perform sampling if target is higher than population sequence count
     if let SamplingTarget::Count(target_count) = target
@@ -139,15 +142,14 @@ where
 }
 
 /// Performs sampling for a pair of inputs.
-fn sample_paired_input<R1, R2, A, B>(
+fn sample_paired_input<R1, R2, A>(
     reader1: R1, reader2: R2, writer: RecordWriters<WriteFileZipStdout>, target: SamplingTarget, seq_count: Option<usize>,
     rng: Xoshiro256StarStar,
 ) -> std::io::Result<()>
 where
     R1: Iterator<Item = std::io::Result<A>>,
-    R2: Iterator<Item = std::io::Result<B>>,
-    A: RecordWithHeader + WriteRecord<WriteFileZipStdout>,
-    B: RecordWithHeader + WriteRecord<WriteFileZipStdout>, {
+    R2: Iterator<Item = std::io::Result<A>>,
+    A: HeaderReadable + WriteRecord<WriteFileZipStdout>, {
     // Don't perform sampling if target is higher than population sequence count
     if let SamplingTarget::Count(target_count) = target
         && let Some(seq_count) = seq_count
@@ -175,14 +177,15 @@ where
 ///
 /// [`Percent`]: SamplingTarget::Percent
 /// [`Count`]: SamplingTarget::Count
-fn sample_and_write_records<I, W, A>(
+fn sample_and_write_records<I, W, A, E>(
     iterator: I, writer: W, target: SamplingTarget, seq_count: Option<usize>, mut rng: Xoshiro256StarStar,
 ) -> std::io::Result<()>
 where
     for<'a> BernoulliSampler<'a, I>: WriteRecords<W>,
     for<'a> MethodDSampler<'a, I>: WriteRecords<W>,
     for<'a> std::vec::IntoIter<A>: WriteRecords<W>,
-    I: Iterator<Item = std::io::Result<A>>, {
+    I: Iterator<Item = Result<A, E>>,
+    std::io::Error: From<E>, {
     match target {
         SamplingTarget::Percent(percent) => BernoulliSampler::new(iterator, percent, &mut rng).write_records(writer),
         SamplingTarget::Count(target) => {
@@ -239,21 +242,6 @@ fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, 
         args.output_file1,
         args.output_file2,
     )?;
-
-    // ensure no mismatch of paired read inputs
-    match (&fastq_reader1, &fastq_reader2) {
-        (FastXReader::Fasta(_), Some(FastXReader::Fastq(_))) => {
-            return Err(std::io::Error::other(
-                "Paired read inputs must be both FASTQ or both FASTA!".to_string(),
-            ));
-        }
-        (FastXReader::Fastq(_), Some(FastXReader::Fasta(_))) => {
-            return Err(std::io::Error::other(
-                "Paired read inputs must be both FASTQ or both FASTA!".to_string(),
-            ));
-        }
-        _ => (),
-    }
 
     let fastq_path1 = if args.input_file1.is_file() && !is_gz(&args.input_file1) {
         Some(args.input_file1)

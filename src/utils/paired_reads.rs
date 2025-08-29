@@ -1,9 +1,14 @@
 use std::{
-    fmt::Debug,
+    error::Error,
+    fmt::{Debug, Display},
     io::{Error as IOError, ErrorKind},
+    marker::PhantomData,
     simd::Simd,
 };
-use zoe::{data::fasta::FastaSeq, prelude::FastQ, unwrap_or_return_some_err};
+use zoe::{
+    data::{err::GetCode, records::HeaderReadable},
+    unwrap_or_return_some_err,
+};
 
 /// Takes a FASTQ header and returns the molecular ID and side (for paired
 /// reads)
@@ -72,10 +77,9 @@ pub fn get_molecular_id_side(s: &str, default_side: char) -> Option<(&str, char)
 
 /// Returns whether two reads have matching molecular IDs. Errors if the read
 /// ID's don't match or can't be parsed.
-pub fn check_paired_headers<A: RecordWithHeader, B: RecordWithHeader>(read1: &A, read2: &B) -> Result<(), std::io::Error> {
-    // Strip the @ from the header before calling get_molecular_id_side as needed (transitional)
-    if let Some((id1, _)) = get_molecular_id_side(read1.header().strip_prefix('@').unwrap_or(read1.header()), '0')
-        && let Some((id2, _)) = get_molecular_id_side(read2.header().strip_prefix('@').unwrap_or(read2.header()), '0')
+pub fn check_paired_headers<A: HeaderReadable, B: HeaderReadable>(read1: &A, read2: &B) -> Result<(), std::io::Error> {
+    if let Some((id1, _)) = get_molecular_id_side(read1.header(), '0')
+        && let Some((id2, _)) = get_molecular_id_side(read2.header(), '0')
     {
         if id1 == id2 {
             Ok(())
@@ -103,15 +107,6 @@ pub enum ReadSide {
 }
 
 impl ReadSide {
-    #[inline]
-    pub fn to_idx(self) -> usize {
-        match self {
-            ReadSide::R1 => 0,
-            ReadSide::R2 => 1,
-            ReadSide::Unpaired => 0,
-        }
-    }
-
     /// Convert to a char. [`ReadSide::R1`] is `Some('1')`, [`ReadSide::R2`] is
     /// `Some('2')`, and `Unpaired` is `None`.
     #[inline]
@@ -134,266 +129,313 @@ impl ReadSide {
     }
 }
 
-/// A trait for unifying the different ways to process paired reads and
-/// potentially filter them. Currently used in `trimmer` and `preprocess`.
-///
-/// A single read is first processed and potentially filtered using
-/// [`process_read`]. If filtering does not occur, then [`output_read`] is used
-/// to perform any final processing and then output/store the result. Together,
-/// these two actions can be performed with [`handle_read`].
-///
-/// [`process_read`]: PairedReadFilterer::process_read
-/// [`output_read`]: PairedReadFilterer::output_read
-/// [`handle_read`]: PairedReadFilterer::handle_read
-pub trait PairedReadFilterer: Debug {
-    /// Controls whether the order of processing must be preserved. When `true`,
-    /// reads will be processed in alternating order between R1 and R2. When
-    /// `false`, the order may differ.
-    const PRESERVE_ORDER: bool;
-
-    /// The type of the trimmed output.
-    type Processed<'a>;
-
-    /// The type returned by [`finalize`]. For example, this may be
-    /// `std::io::Result` if writers are being flushed, or it could be any
-    /// metadata tallied.
-    ///
-    /// [`finalize`]: Self::finalize
-    type Finalized;
-
-    /// Processes the read (e.g., trimming), performs any filtering (in which
-    /// case `None` is returned) and tallies any relevant metadata (by mutating
-    /// `self`).
-    fn process_read<'a>(&mut self, read: &'a mut FastQ, side: ReadSide) -> Option<Self::Processed<'a>>;
-
-    /// For any read that passed filtering with [`process_read`], perform any
-    /// final processing and output/store it (either mutating `self` or using IO
-    /// operations)
-    ///
-    /// [`process_read`]: PairedReadFilterer::process_read
-    fn output_read<'a>(&mut self, trimmed: Self::Processed<'a>, side: ReadSide) -> std::io::Result<()>;
-
-    /// Finalize the [`PairedReadFilterer`] (e.g., flushing buffers or returning
-    /// saved state).
-    fn finalize(&mut self) -> Self::Finalized;
-
-    /// Processes a read using [`process_read`] followed by [`output_read`].
-    ///
-    /// [`process_read`]: Self::process_read
-    /// [`output_read`]: Self::output_read
-    fn handle_read(&mut self, mut read: FastQ, side: ReadSide) -> std::io::Result<&mut Self> {
-        let Some(trimmed) = self.process_read(&mut read, side) else {
-            return Ok(self);
-        };
-        self.output_read(trimmed, side)?;
-        Ok(self)
-    }
-
-    /// Handles both reads in a read pair using [`process_read`], and then
-    /// outputs/stores them with [`output_read`] only if neither is filtered.
-    ///
-    /// [`process_read`]: Self::process_read
-    /// [`output_read`]: Self::output_read
-    fn handle_read_pair(&mut self, mut read1: FastQ, mut read2: FastQ) -> std::io::Result<&mut Self> {
-        let Some(trimmed1) = self.process_read(&mut read1, ReadSide::R1) else {
-            return Ok(self);
-        };
-        let Some(trimmed2) = self.process_read(&mut read2, ReadSide::R2) else {
-            return Ok(self);
-        };
-
-        self.output_read(trimmed1, ReadSide::R1)?;
-        self.output_read(trimmed2, ReadSide::R2)?;
-        Ok(self)
-    }
-
-    /// Handles all the reads for the given read `side` using [`process_read`].
-    ///
-    /// [`process_read`]: Self::process_read
-    fn handle_single_reads(
-        &mut self, mut reader: impl Iterator<Item = Result<FastQ, std::io::Error>>, side: ReadSide,
-    ) -> std::io::Result<&mut Self> {
-        reader.try_for_each(|read| self.handle_read(read?, side).map(|_| ()))?;
-        Ok(self)
-    }
-
-    /// Handles all paired reads without filtering widows.
-    fn handle_paired_reads_no_filter(
-        &mut self, mut reader1: impl Iterator<Item = Result<FastQ, std::io::Error>>,
-        mut reader2: impl Iterator<Item = Result<FastQ, std::io::Error>>,
-    ) -> std::io::Result<&mut Self> {
-        if Self::PRESERVE_ORDER {
-            for r1 in reader1.by_ref() {
-                self.handle_read(r1?, ReadSide::R1)?;
-                let Some(r2) = reader2.next() else {
-                    break;
-                };
-                self.handle_read(r2?, ReadSide::R2)?;
-            }
-        }
-
-        self.handle_single_reads(reader1, ReadSide::R1)?;
-        self.handle_single_reads(reader2, ReadSide::R2)
-    }
-
-    /// Handles all reads with widow filtering. Strict checking is performed: if
-    /// any mismatch is found between the headers, an error is issued.
-    fn handle_paired_reads_with_filter_strict<I, M>(
-        &mut self, reader1: I, mut reader2: I, header_mismatch: M, extra_read: std::io::Error,
-    ) -> std::io::Result<&mut Self>
-    where
-        I: Iterator<Item = Result<FastQ, std::io::Error>>,
-        M: FnOnce(std::io::Error) -> std::io::Error, {
-        for r1 in reader1 {
-            let Some(r2) = reader2.next() else {
-                return Err(extra_read);
-            };
-            let r1 = r1?;
-            let r2 = r2?;
-            if let Err(e) = check_paired_headers(&r1, &r2) {
-                return Err(header_mismatch(e));
-            }
-            self.handle_read_pair(r1, r2)?;
-        }
-
-        if reader2.next().is_some() {
-            return Err(extra_read);
-        }
-
-        Ok(self)
-    }
-
-    /// Handles all reads with widow filtering. Weak checking is performed: if
-    /// any mismatch is found between the headers, a warning is issued and
-    /// processing continues without widow filtering.
-    fn handle_paired_reads_with_filter_weak<I, M, X>(
-        &mut self, mut reader1: I, mut reader2: I, header_mismatch_warning: M, extra_read_warning: X,
-    ) -> std::io::Result<&mut Self>
-    where
-        I: Iterator<Item = Result<FastQ, std::io::Error>>,
-        M: FnOnce(std::io::Error) -> String,
-        X: FnOnce() -> String, {
-        for r1 in reader1.by_ref() {
-            let Some(r2) = reader2.next() else {
-                eprintln!("{}", extra_read_warning());
-                return self.handle_single_reads(std::iter::once(r1).chain(reader1), ReadSide::R1);
-            };
-            let r1 = r1?;
-            let r2 = r2?;
-            if let Err(e) = check_paired_headers(&r1, &r2) {
-                eprintln!("{}", header_mismatch_warning(e));
-                return self.handle_paired_reads_no_filter(
-                    std::iter::once(Ok(r1)).chain(reader1),
-                    std::iter::once(Ok(r2)).chain(reader2),
-                );
-            }
-            self.handle_read_pair(r1, r2)?;
-        }
-
-        if let Some(r2) = reader2.next() {
-            eprintln!("{}", extra_read_warning());
-            self.handle_single_reads(std::iter::once(r2).chain(reader2), ReadSide::R2)?;
-        }
-
-        Ok(self)
-    }
-}
-
-/// A trait unifying the record types that have a header field.
-pub trait RecordWithHeader {
-    /// Gets the header from the record.
-    #[must_use]
-    fn header(&self) -> &str;
-}
-
-impl RecordWithHeader for FastQ {
-    #[inline]
-    fn header(&self) -> &str {
-        &self.header
-    }
-}
-
-impl RecordWithHeader for FastaSeq {
-    #[inline]
-    fn header(&self) -> &str {
-        &self.name
-    }
-}
-
 /// An iterator over paired reads. This behaves similarly to a zipped iterator,
-/// but ensures the input iterators are the same length and provides appropriate
-/// error messages.
-pub struct ZipPairedReads<I, J, A, B>
+/// but ensures the input iterators are the same length, and provides
+/// appropriate error messages.
+///
+/// If `CHECKED` is true, paired header checking is performed.
+pub struct ZipReads<I, J, A, C>
 where
     I: Iterator<Item = std::io::Result<A>>,
-    J: Iterator<Item = std::io::Result<B>>,
-    A: RecordWithHeader,
-    B: RecordWithHeader, {
-    reads1: I,
-    reads2: J,
+    J: Iterator<Item = std::io::Result<A>>,
+    A: HeaderReadable, {
+    reads1:  I,
+    reads2:  J,
+    phantom: PhantomData<C>,
 }
 
-impl<I, J, A, B> Iterator for ZipPairedReads<I, J, A, B>
+/// The error type when [`ZipReads`] is used without paired header checking.
+#[derive(Debug)]
+pub enum ZipReadsError<A> {
+    /// An IO error from one of the readers
+    IoError(std::io::Error),
+    /// An extra read in the first iterator
+    ExtraFirstRead(A),
+    /// An extra read in the second iterator
+    ExtraSecondRead(A),
+}
+
+/// The error type when [`ZipReads`] is used with paired header checking.
+#[derive(Debug)]
+pub enum ZipPairedReadsError<A> {
+    /// An IO error from one of the readers
+    IoError(std::io::Error),
+    /// A mismatch in the header IDs of the paired reads
+    MismatchedHeaders([A; 2]),
+    /// An extra read in the first iterator
+    ExtraFirstRead(A),
+    /// An extra read in the second iterator
+    ExtraSecondRead(A),
+}
+
+impl<A> From<std::io::Error> for ZipReadsError<A> {
+    #[inline]
+    fn from(value: std::io::Error) -> Self {
+        Self::IoError(value)
+    }
+}
+
+impl<A> From<std::io::Error> for ZipPairedReadsError<A> {
+    #[inline]
+    fn from(value: std::io::Error) -> Self {
+        Self::IoError(value)
+    }
+}
+
+impl<A: HeaderReadable> From<ZipReadsError<A>> for std::io::Error {
+    #[inline]
+    fn from(value: ZipReadsError<A>) -> Self {
+        std::io::Error::other(value.to_string())
+    }
+}
+
+impl<A: HeaderReadable> From<ZipPairedReadsError<A>> for std::io::Error {
+    #[inline]
+    fn from(value: ZipPairedReadsError<A>) -> Self {
+        std::io::Error::other(value.to_string())
+    }
+}
+
+/// A trait marking the checking level in [`ZipReads`], as well as unifying
+/// [`ZipReadsError`] and [`ZipPairedReadsError`] by providing necessary
+/// constructors and a method for zipping a pair of reads (which may or may not
+/// perform checking).
+pub trait ZipReadsCheckingLevel {
+    type Err<A>;
+
+    /// Constructs an error variant corresponding to an IO error from one of the
+    /// readers.
+    #[must_use]
+    fn new_io_error<A>(err: std::io::Error) -> Self::Err<A>;
+
+    /// Constructs an error variant corresponding to an extra read in the first
+    /// iterator.
+    #[must_use]
+    fn new_extra_first_read<A>(r1: A) -> Self::Err<A>;
+
+    /// Constructs an error variant corresponding to an extra read in the second
+    /// iterator.
+    #[must_use]
+    fn new_extra_second_read<A>(r2: A) -> Self::Err<A>;
+
+    /// Groups two reads together, potentially performing paired header
+    /// checking.
+    fn zip_pair<A: HeaderReadable>(r1: A, r2: A) -> Result<[A; 2], Self::Err<A>>;
+}
+
+/// A marker for skipping header checking in [`ZipReads`].
+pub struct UncheckedHeaders;
+
+/// A marker for performing header checking in [`ZipReads`].
+pub struct CheckedHeaders;
+
+impl ZipReadsCheckingLevel for UncheckedHeaders {
+    type Err<A> = ZipReadsError<A>;
+
+    #[inline]
+    fn new_io_error<A>(err: std::io::Error) -> ZipReadsError<A> {
+        ZipReadsError::IoError(err)
+    }
+
+    #[inline]
+    fn new_extra_first_read<A>(r1: A) -> ZipReadsError<A> {
+        ZipReadsError::ExtraFirstRead(r1)
+    }
+
+    #[inline]
+    fn new_extra_second_read<A>(r2: A) -> ZipReadsError<A> {
+        ZipReadsError::ExtraSecondRead(r2)
+    }
+
+    #[inline]
+    fn zip_pair<A>(r1: A, r2: A) -> Result<[A; 2], ZipReadsError<A>> {
+        Ok([r1, r2])
+    }
+}
+
+impl ZipReadsCheckingLevel for CheckedHeaders {
+    type Err<A> = ZipPairedReadsError<A>;
+
+    #[inline]
+    fn new_io_error<A>(err: std::io::Error) -> ZipPairedReadsError<A> {
+        ZipPairedReadsError::IoError(err)
+    }
+
+    #[inline]
+    fn new_extra_first_read<A>(r1: A) -> ZipPairedReadsError<A> {
+        ZipPairedReadsError::ExtraFirstRead(r1)
+    }
+
+    #[inline]
+    fn new_extra_second_read<A>(r2: A) -> ZipPairedReadsError<A> {
+        ZipPairedReadsError::ExtraSecondRead(r2)
+    }
+
+    #[inline]
+    fn zip_pair<A: HeaderReadable>(r1: A, r2: A) -> Result<[A; 2], ZipPairedReadsError<A>> {
+        if check_paired_headers(&r1, &r2).is_ok() {
+            Ok([r1, r2])
+        } else {
+            Err(ZipPairedReadsError::MismatchedHeaders([r1, r2]))
+        }
+    }
+}
+
+impl<A: HeaderReadable> Display for ZipReadsError<A> {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            ZipReadsError::IoError(e) => write!(f, "{e}"),
+            ZipReadsError::ExtraFirstRead(r1) => write!(
+                f,
+                "An extra read in the first file was found with header {header1}",
+                header1 = r1.header()
+            ),
+            ZipReadsError::ExtraSecondRead(r2) => write!(
+                f,
+                "An extra read in the second file was found with header {header2}",
+                header2 = r2.header()
+            ),
+        }
+    }
+}
+
+impl<A: HeaderReadable> Display for ZipPairedReadsError<A> {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            ZipPairedReadsError::IoError(e) => write!(f, "{e}"),
+            ZipPairedReadsError::MismatchedHeaders([r1, r2]) => write!(
+                f,
+                "Paired read IDs out of sync:\n\t{h1}\n\t{h2}\n",
+                h1 = r1.header(),
+                h2 = r2.header()
+            ),
+            ZipPairedReadsError::ExtraFirstRead(r1) => write!(
+                f,
+                "An extra read in the first file was found with header {header1}",
+                header1 = r1.header()
+            ),
+            ZipPairedReadsError::ExtraSecondRead(r2) => write!(
+                f,
+                "An extra read in the second file was found with header {header2}",
+                header2 = r2.header()
+            ),
+        }
+    }
+}
+
+impl<A: HeaderReadable + Debug> Error for ZipReadsError<A> {}
+impl<A: HeaderReadable> GetCode for ZipReadsError<A> {}
+impl<A: HeaderReadable + Debug> Error for ZipPairedReadsError<A> {}
+impl<A: HeaderReadable> GetCode for ZipPairedReadsError<A> {}
+
+impl<I, J, A, C> Iterator for ZipReads<I, J, A, C>
 where
     I: Iterator<Item = std::io::Result<A>>,
-    J: Iterator<Item = std::io::Result<B>>,
-    A: RecordWithHeader,
-    B: RecordWithHeader,
+    J: Iterator<Item = std::io::Result<A>>,
+    A: HeaderReadable,
+    C: ZipReadsCheckingLevel,
 {
-    type Item = std::io::Result<(A, B)>;
+    type Item = Result<[A; 2], C::Err<A>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match (self.reads1.next(), self.reads2.next()) {
-            (Some(a), Some(b)) => {
-                let (a, b) = (unwrap_or_return_some_err!(a), unwrap_or_return_some_err!(b));
-                if check_paired_headers(&a, &b).is_ok() {
-                    Some(Ok((a, b)))
-                } else {
-                    Some(Err(IOError::new(
-                        ErrorKind::InvalidInput,
-                        format!(
-                            "Paired read IDs out of sync:\n\t{h1}\n\t{h2}\n",
-                            h1 = a.header(),
-                            h2 = b.header()
-                        ),
-                    )))
-                }
+            (Some(read1), Some(read2)) => {
+                let read1 = unwrap_or_return_some_err!(read1.map_err(C::new_io_error));
+                let read2 = unwrap_or_return_some_err!(read2.map_err(C::new_io_error));
+                Some(C::zip_pair(read1, read2))
             }
             (Some(read1), None) => {
-                let read1 = unwrap_or_return_some_err!(read1);
-                Some(Err(std::io::Error::other(format!(
-                    "Zip reads failed! An extra read in the first file was found with header {header1}",
-                    header1 = read1.header()
-                ))))
+                let read1 = unwrap_or_return_some_err!(read1.map_err(C::new_io_error));
+                Some(Err(C::new_extra_first_read(read1)))
             }
             (None, Some(read2)) => {
-                let read2 = unwrap_or_return_some_err!(read2);
-                Some(Err(std::io::Error::other(format!(
-                    "Zip reads failed! An extra read in the second file was found with header {header2}",
-                    header2 = read2.header()
-                ))))
+                let read2 = unwrap_or_return_some_err!(read2.map_err(C::new_io_error));
+                Some(Err(C::new_extra_second_read(read2)))
             }
             (None, None) => None,
         }
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let (i_lower, i_upper) = self.reads1.size_hint();
+        let (j_lower, j_upper) = self.reads2.size_hint();
+        let lower = i_lower.min(j_lower);
+        let upper = match (i_upper, j_upper) {
+            (Some(i_upper), Some(j_upper)) if i_upper == j_upper => Some(i_upper.min(j_upper)),
+            // Potentially unequal iterator lengths, so add 1 for error message
+            (Some(i_upper), Some(j_upper)) => Some(i_upper.min(j_upper) + 1),
+            // Potentially unequal iterator lengths, so add 1 for error message
+            (Some(upper), None) | (None, Some(upper)) => Some(upper + 1),
+            (None, None) => None,
+        };
+        (lower, upper)
+    }
+
+    fn try_fold<B, F, R>(&mut self, init: B, mut f: F) -> R
+    where
+        Self: Sized,
+        F: FnMut(B, Self::Item) -> R,
+        R: std::ops::Try<Output = B>, {
+        let accum = self.reads1.try_fold(init, |accum, r1| {
+            let r1 = match r1 {
+                Ok(r1) => r1,
+                Err(err) => return f(accum, Err(C::new_io_error(err))),
+            };
+
+            let r2 = match self.reads2.next() {
+                None => return f(accum, Err(C::new_extra_first_read(r1))),
+                Some(Err(err)) => return f(accum, Err(C::new_io_error(err))),
+                Some(Ok(r2)) => r2,
+            };
+
+            f(accum, Ok([r1, r2]))
+        })?;
+
+        match self.reads2.next() {
+            None => R::from_output(accum),
+            Some(Ok(r2)) => f(accum, Err(C::new_extra_second_read(r2))),
+            Some(Err(e)) => f(accum, Err(C::new_io_error(e))),
+        }
+    }
 }
 
-/// An extension trait for forming a [`ZipPairedReads`] iterator.
+/// An extension trait for forming a [`ZipReads`] iterator.
 pub trait ZipPairedReadsExt<A>: Sized + Iterator<Item = std::io::Result<A>>
 where
-    A: RecordWithHeader, {
-    /// Zips the iterator of reads with their paired reads. Any IO error is
-    /// propagated, and a mismatch in iterator lengths will yield an error
-    /// containing the header of the extra item.
+    A: HeaderReadable, {
+    /// Zips the iterator of reads with their paired reads, while checking
+    /// compatible headers.
+    ///
+    /// Any IO error is propagated, and a mismatch in iterator lengths will
+    /// yield an error containing the header of the extra item.
     #[inline]
     #[must_use]
-    fn zip_paired_reads<J, B>(self, other: J) -> ZipPairedReads<Self, J::IntoIter, A, B>
+    fn zip_paired_reads<J>(self, other: J) -> ZipReads<Self, J::IntoIter, A, CheckedHeaders>
     where
-        J: IntoIterator<Item = std::io::Result<B>>,
-        B: RecordWithHeader, {
-        ZipPairedReads {
-            reads1: self,
-            reads2: other.into_iter(),
+        J: IntoIterator<Item = std::io::Result<A>>, {
+        ZipReads {
+            reads1:  self,
+            reads2:  other.into_iter(),
+            phantom: PhantomData,
+        }
+    }
+
+    /// Zips the iterator of reads with their paired reads, without checking
+    /// compatible headers.
+    ///
+    /// Any IO error is propagated, and a mismatch in iterator lengths will
+    /// yield an error containing the header of the extra item.
+    #[inline]
+    #[must_use]
+    fn zip_paired_reads_unchecked<J>(self, other: J) -> ZipReads<Self, J::IntoIter, A, UncheckedHeaders>
+    where
+        J: IntoIterator<Item = std::io::Result<A>>, {
+        ZipReads {
+            reads1:  self,
+            reads2:  other.into_iter(),
+            phantom: PhantomData,
         }
     }
 }
@@ -401,19 +443,19 @@ where
 impl<I, A> ZipPairedReadsExt<A> for I
 where
     I: Iterator<Item = std::io::Result<A>>,
-    A: RecordWithHeader,
+    A: HeaderReadable,
 {
 }
 
 pub struct DeinterleavedPairedReads<I, A>(I)
 where
     I: Iterator<Item = std::io::Result<A>>,
-    A: RecordWithHeader;
+    A: HeaderReadable;
 
 impl<I, A> Iterator for DeinterleavedPairedReads<I, A>
 where
     I: Iterator<Item = std::io::Result<A>>,
-    A: RecordWithHeader,
+    A: HeaderReadable,
 {
     type Item = std::io::Result<[A; 2]>;
 
@@ -444,7 +486,7 @@ where
 
 pub trait DeinterleavedPairedReadsExt<A>: Sized + Iterator<Item = std::io::Result<A>>
 where
-    A: RecordWithHeader, {
+    A: HeaderReadable, {
     #[inline]
     #[must_use]
     fn deinterleave(self) -> DeinterleavedPairedReads<Self, A> {
@@ -455,6 +497,6 @@ where
 impl<I, A> DeinterleavedPairedReadsExt<A> for I
 where
     I: Iterator<Item = std::io::Result<A>>,
-    A: RecordWithHeader,
+    A: HeaderReadable,
 {
 }

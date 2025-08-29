@@ -4,7 +4,10 @@
 
 use crate::io::{FlushWriter, PairedWriters, RecordWriters};
 use std::io::Write;
-use zoe::{data::fasta::FastaSeq, prelude::FastQ};
+use zoe::{
+    data::fasta::FastaSeq,
+    prelude::{FastQ, FastQView, FastQViewMut},
+};
 
 /// A trait providing the ability for a record or record-like struct to write
 /// itself, where the supported writer is given by `W`.
@@ -20,6 +23,20 @@ impl<W: Write> WriteRecord<W> for FastQ {
     }
 }
 
+impl<W: Write> WriteRecord<W> for FastQView<'_> {
+    #[inline]
+    fn write_record(self, writer: &mut W) -> std::io::Result<()> {
+        write!(writer, "{self}")
+    }
+}
+
+impl<W: Write> WriteRecord<W> for FastQViewMut<'_> {
+    #[inline]
+    fn write_record(self, writer: &mut W) -> std::io::Result<()> {
+        write!(writer, "{self}")
+    }
+}
+
 impl<W: Write> WriteRecord<W> for FastaSeq {
     #[inline]
     fn write_record(self, writer: &mut W) -> std::io::Result<()> {
@@ -27,14 +44,44 @@ impl<W: Write> WriteRecord<W> for FastaSeq {
     }
 }
 
-impl<W: Write> WriteRecord<W> for std::io::Result<FastQ> {
+impl<W, E> WriteRecord<W> for Result<FastQ, E>
+where
+    W: Write,
+    std::io::Error: From<E>,
+{
     #[inline]
     fn write_record(self, writer: &mut W) -> std::io::Result<()> {
         write!(writer, "{}", self?)
     }
 }
 
-impl<W: Write> WriteRecord<W> for std::io::Result<FastaSeq> {
+impl<W, E> WriteRecord<W> for Result<FastQView<'_>, E>
+where
+    W: Write,
+    std::io::Error: From<E>,
+{
+    #[inline]
+    fn write_record(self, writer: &mut W) -> std::io::Result<()> {
+        write!(writer, "{}", self?)
+    }
+}
+
+impl<W, E> WriteRecord<W> for Result<FastQViewMut<'_>, E>
+where
+    W: Write,
+    std::io::Error: From<E>,
+{
+    #[inline]
+    fn write_record(self, writer: &mut W) -> std::io::Result<()> {
+        write!(writer, "{}", self?)
+    }
+}
+
+impl<W, E> WriteRecord<W> for Result<FastaSeq, E>
+where
+    W: Write,
+    std::io::Error: From<E>,
+{
     #[inline]
     fn write_record(self, writer: &mut W) -> std::io::Result<()> {
         write!(writer, "{}", self?)
@@ -69,11 +116,12 @@ where
     }
 }
 
-impl<A, B, W> WriteRecord<W> for std::io::Result<(A, B)>
+impl<A, B, W, E> WriteRecord<W> for Result<(A, B), E>
 where
     A: WriteRecord<W>,
     B: WriteRecord<W>,
     W: Write,
+    std::io::Error: From<E>,
 {
     #[inline]
     fn write_record(self, writer: &mut W) -> std::io::Result<()> {
@@ -83,11 +131,12 @@ where
     }
 }
 
-impl<A, B, W> WriteRecord<PairedWriters<W>> for std::io::Result<(A, B)>
+impl<A, B, W, E> WriteRecord<PairedWriters<W>> for Result<(A, B), E>
 where
     A: WriteRecord<W>,
     B: WriteRecord<W>,
     W: Write,
+    std::io::Error: From<E>,
 {
     #[inline]
     fn write_record(self, writer: &mut PairedWriters<W>) -> std::io::Result<()> {
@@ -123,10 +172,11 @@ where
     }
 }
 
-impl<A, W> WriteRecord<W> for std::io::Result<[A; 2]>
+impl<A, W, E> WriteRecord<W> for Result<[A; 2], E>
 where
     A: WriteRecord<W>,
     W: Write,
+    std::io::Error: From<E>,
 {
     #[inline]
     fn write_record(self, writer: &mut W) -> std::io::Result<()> {
@@ -136,10 +186,11 @@ where
     }
 }
 
-impl<A, W> WriteRecord<PairedWriters<W>> for std::io::Result<[A; 2]>
+impl<A, W, E> WriteRecord<PairedWriters<W>> for Result<[A; 2], E>
 where
     A: WriteRecord<W>,
     W: Write,
+    std::io::Error: From<E>,
 {
     #[inline]
     fn write_record(self, writer: &mut PairedWriters<W>) -> std::io::Result<()> {

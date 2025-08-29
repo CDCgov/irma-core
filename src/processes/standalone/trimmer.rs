@@ -1,8 +1,10 @@
 use crate::{
     args::clipping::{ClippingArgs, ParsedClippingArgs, parse_clipping_args},
-    io::{IoThreads, ReadFileZip, RecordWriters, WriteFileZipStdout, get_paired_readers_and_writers},
+    io::{
+        FlushWriter, IoThreads, ReadFileZip, RecordWriters, WriteFileZipStdout, WriteRecord, get_paired_readers_and_writers,
+    },
     utils::{
-        paired_reads::{PairedReadFilterer, ReadSide},
+        paired_reads::{ZipPairedReadsExt, ZipReadsError},
         trimming::trim_read,
     },
 };
@@ -50,7 +52,7 @@ pub struct TrimmerArgs {
 pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
     let ParsedTrimmerArgs {
         io_args: ParsedPairedIoArgs {
-            reader1,
+            mut reader1,
             reader2,
             writer,
         },
@@ -58,38 +60,78 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
         threads,
     } = parse_trimmer_args(args)?;
 
-    if let Some(reader2) = reader2 {
+    if let Some(mut reader2) = reader2 {
         match (writer, trimming_args.filter_widows) {
             // Case 2: In 1, In 2, Out 1 (interleaved Illumina), no widow filtering
-            (RecordWriters::SingleEnd(mut writer), false) => Trimmer::new(&trimming_args, [&mut writer])
-                .handle_paired_reads_no_filter(reader1, reader2)?
-                .finalize()?,
+            (RecordWriters::SingleEnd(mut writer), false) => {
+                let result = reader1
+                    .by_ref()
+                    .zip_paired_reads_unchecked(reader2.by_ref())
+                    .try_for_each(|pair| {
+                        let [read1, read2] = pair?;
+                        trim_and_write_seq(read1, &trimming_args, &mut writer)?;
+                        trim_and_write_seq(read2, &trimming_args, &mut writer)?;
+                        Ok(())
+                    });
+
+                match result {
+                    Ok(()) => {}
+                    Err(ZipReadsError::IoError(e)) => return Err(e),
+                    Err(ZipReadsError::ExtraFirstRead(read1)) => {
+                        std::iter::once(Ok(read1))
+                            .chain(reader1)
+                            .try_for_each(|read1| trim_and_write_seq(read1?, &trimming_args, &mut writer))?;
+                    }
+                    Err(ZipReadsError::ExtraSecondRead(read2)) => {
+                        std::iter::once(Ok(read2))
+                            .chain(reader2)
+                            .try_for_each(|read2| trim_and_write_seq(read2?, &trimming_args, &mut writer))?;
+                    }
+                }
+
+                writer.flush()?;
+            }
 
             // Case 3: In 1, In 2, Out 1, Filtering widows / orphan reads
-            (RecordWriters::SingleEnd(mut writer), true) => Trimmer::new(&trimming_args, [&mut writer])
-                .handle_paired_reads_with_filter_strict(reader1, reader2, |e| e, error_extra_read())?
-                .finalize()?,
+            (RecordWriters::SingleEnd(mut writer), true) => {
+                reader1
+                    .zip_paired_reads(reader2)
+                    .try_for_each(|pair| trim_and_write_pair(pair?, &trimming_args, &mut writer))?;
+                writer.flush()?;
+            }
 
             // Case 4: In 1, In 2, Out 1, Out 2 (separated output Illumina), no filtering
             (RecordWriters::PairedEnd(mut writer), false) => {
-                Trimmer::new(&trimming_args, [&mut writer.writer1, &mut writer.writer2])
-                    .handle_paired_reads_no_filter(reader1, reader2)?
-                    .finalize()?
+                let trimming_args = &trimming_args;
+
+                std::thread::scope(|s| {
+                    let handle = s.spawn(move || {
+                        reader2.try_for_each(|read2| trim_and_write_seq(read2?, trimming_args, &mut writer.writer2))?;
+                        writer.writer2.flush()
+                    });
+
+                    reader1.try_for_each(|read1| trim_and_write_seq(read1?, trimming_args, &mut writer.writer1))?;
+                    writer.writer1.flush()?;
+
+                    handle.join().unwrap()?;
+                    std::io::Result::Ok(())
+                })?;
             }
 
             // Case 5: In 1, In 2, Out 1, Out 2, filter widows
             (RecordWriters::PairedEnd(mut writer), true) => {
-                Trimmer::new(&trimming_args, [&mut writer.writer1, &mut writer.writer2])
-                    .handle_paired_reads_with_filter_strict(reader1, reader2, |e| e, error_extra_read())?
-                    .finalize()?
+                reader1
+                    .zip_paired_reads(reader2)
+                    .try_for_each(|pair| trim_and_write_pair(pair?, &trimming_args, &mut writer))?;
+                writer.flush_all()?;
             }
         }
     } else {
         match writer {
             RecordWriters::SingleEnd(mut writer) => {
                 // Case 1: In 1, Out 1 (ONT, single-end, PacBio)
-                let mut processor = Trimmer::new(&trimming_args, [&mut writer]);
-                processor.handle_single_reads(reader1, ReadSide::Unpaired)?.finalize()?
+                reader1.try_for_each(|read| trim_and_write_seq(read?, &trimming_args, &mut writer))?;
+                writer.flush()?;
             }
             RecordWriters::PairedEnd(_) => unreachable!("Validated by clap"),
         }
@@ -98,71 +140,6 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
     threads.finalize()?;
 
     Ok(())
-}
-
-/// A [`PairedReadFilterer`] struct used by the trimmer process to perform its
-/// core logic. Trimmed sequences are output to 1 (`N=1`) or 2 (`N=2`) files.
-#[derive(Debug)]
-struct Trimmer<'a, const N: usize> {
-    args:    &'a ParsedTrimmerOptions,
-    writers: [&'a mut WriteFileZipStdout; N],
-}
-
-impl<'a, const N: usize> Trimmer<'a, N> {
-    #[inline]
-    fn new(args: &'a ParsedTrimmerOptions, writers: [&'a mut WriteFileZipStdout; N]) -> Self {
-        Self { args, writers }
-    }
-}
-
-impl<'a, const N: usize> PairedReadFilterer for Trimmer<'a, N> {
-    const PRESERVE_ORDER: bool = true;
-    type Processed<'b> = FastQViewMut<'b>;
-    type Finalized = std::io::Result<()>;
-
-    #[inline]
-    fn process_read<'b>(&mut self, read: &'b mut FastQ, _side: ReadSide) -> Option<FastQViewMut<'b>> {
-        if self.args.mask {
-            let fq_view = read.as_view_mut();
-            trim_read(fq_view, self.args.mask, &self.args.clipping_args);
-            if read.len() >= self.args.min_length {
-                return Some(read.as_view_mut());
-            }
-        } else {
-            let fq_view = read.as_view_mut();
-            let edited = trim_read(fq_view, self.args.mask, &self.args.clipping_args);
-            if edited.len() >= self.args.min_length {
-                return Some(edited);
-            }
-        }
-        None
-    }
-
-    #[inline]
-    fn output_read<'b>(&mut self, trimmed: FastQViewMut<'b>, side: ReadSide) -> std::io::Result<()> {
-        if N == 1 {
-            write!(self.writers[0], "{trimmed}")?;
-        } else {
-            write!(self.writers[side.to_idx()], "{trimmed}")?;
-        }
-
-        Ok(())
-    }
-
-    #[inline]
-    fn finalize(&mut self) -> Self::Finalized {
-        for writer in &mut self.writers {
-            writer.flush()?
-        }
-        Ok(())
-    }
-}
-
-fn error_extra_read() -> std::io::Error {
-    std::io::Error::new(
-        std::io::ErrorKind::InvalidData,
-        "Extra unpaired read(s) found at end of one of the input FASTQ files.",
-    )
 }
 
 /// Parsed arguments for the `trimmer` subprocess
@@ -238,4 +215,48 @@ fn parse_trimmer_args(args: TrimmerArgs) -> std::io::Result<ParsedTrimmerArgs> {
     };
 
     Ok(parsed)
+}
+
+/// Trims a read (either with clipping or masking) and checks its length. `Some`
+/// is returned if it passes the length filter.
+fn trim_filter<'a>(read: &'a mut FastQ, args: &ParsedTrimmerOptions) -> Option<FastQViewMut<'a>> {
+    if args.mask {
+        let fq_view = read.as_view_mut();
+        trim_read(fq_view, args.mask, &args.clipping_args);
+        if read.len() >= args.min_length {
+            return Some(read.as_view_mut());
+        }
+    } else {
+        let fq_view = read.as_view_mut();
+        let edited = trim_read(fq_view, args.mask, &args.clipping_args);
+        if edited.len() >= args.min_length {
+            return Some(edited);
+        }
+    }
+    None
+}
+
+/// Trims a read (either with clipping or masking) and writes it if it passes
+/// the length filter.
+fn trim_and_write_seq<W: Write>(mut read: FastQ, args: &ParsedTrimmerOptions, writer: &mut W) -> std::io::Result<()> {
+    if let Some(trimmed) = trim_filter(&mut read, args) {
+        trimmed.write_record(writer)
+    } else {
+        Ok(())
+    }
+}
+
+/// Trims a pair of reads (either with clipping or masking) and writes them if
+/// both pass the length filter.
+fn trim_and_write_pair<'a, W>(pair: [FastQ; 2], args: &ParsedTrimmerOptions, writer: &mut W) -> std::io::Result<()>
+where
+    for<'b> [FastQViewMut<'b>; 2]: WriteRecord<W>, {
+    let [mut read1, mut read2] = pair;
+    let Some(r1_trimmed) = trim_filter(&mut read1, args) else {
+        return Ok(());
+    };
+    let Some(r2_trimmed) = trim_filter(&mut read2, args) else {
+        return Ok(());
+    };
+    [r1_trimmed, r2_trimmed].write_record(writer)
 }

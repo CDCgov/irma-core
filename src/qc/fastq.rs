@@ -17,7 +17,7 @@ const MAX_KMER_LENGTH: usize = 21;
 pub(crate) fn fix_sra_format(header: &mut String, read_side: char) {
     let delim = if header.contains(' ') { ' ' } else { '_' };
     let mut pieces = header.split(delim);
-    let maybe_id = pieces.next().map(|s| s.strip_prefix('@').unwrap_or(s));
+    let maybe_id = pieces.next();
 
     if let Some(id) = maybe_id
         && (id.starts_with("SRR") || id.starts_with("DRR") || id.starts_with("ERR"))

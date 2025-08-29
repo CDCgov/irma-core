@@ -18,7 +18,7 @@ readme = "README.md"
 
 
 [dependencies]
-zoe = { version = "0.0.21", default-features = false, features = [
+zoe = { git = "https://github.com/CDCgov/zoe.git", default-features = false, features = [
     "multiversion",
 ] }
 clap = { version = "4", features = ["derive"] }

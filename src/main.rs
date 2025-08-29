@@ -1,5 +1,5 @@
 #![allow(unreachable_patterns)]
-#![feature(portable_simd)]
+#![feature(portable_simd, try_trait_v2)]
 
 use crate::processes::{merge_sam_pairs::*, num_procs::*, preprocess::*, trimmer::*, xflate::*};
 use clap::{Parser, Subcommand};
