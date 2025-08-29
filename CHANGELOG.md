@@ -7,6 +7,10 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 
 ## [0.6.1] - TBD
 
+### Changed
+
+- The `fastq-converter` process has been removed.
+
 ### Fixes
 
 - SRA paired-end headers could be could be incorrectly flagged as unmated when

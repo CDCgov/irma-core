@@ -66,6 +66,7 @@ pub(crate) trait ReadTransforms {
 
     fn process_left_polyg(&mut self, left_threshold: usize, masking: bool) -> &mut Self;
     fn process_right_polyg(&mut self, right_threshold: usize, masking: bool) -> &mut Self;
+    #[allow(dead_code)]
     fn fix_header(&mut self, read_side: Option<char>) -> &mut Self;
     fn clip_exact(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self;
     fn clip_exact_or_fuzzy(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self;

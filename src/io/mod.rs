@@ -47,6 +47,8 @@ define_whichever! {
 }
 
 define_whichever! {
+    // TODO: Implement reading from stdin for select processes
+    #[allow(dead_code)]
     pub(crate) enum ReadFileStdin {
         File(File),
         Stdin(Stdin),

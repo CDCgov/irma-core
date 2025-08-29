@@ -1,7 +1,7 @@
 #![allow(unreachable_patterns)]
 #![feature(portable_simd)]
 
-use crate::processes::{fastq_converter::*, merge_sam_pairs::*, num_procs::*, preprocess::*, trimmer::*, xflate::*};
+use crate::processes::{merge_sam_pairs::*, num_procs::*, preprocess::*, trimmer::*, xflate::*};
 use clap::{Parser, Subcommand};
 use processes::sampler::{SamplerArgs, sampler_process};
 use zoe::data::err::OrFail;
@@ -19,8 +19,6 @@ enum Commands {
     /// Performs all-in-one FastQ quality control, trimming, and deflation to
     /// XFL and FASTA formats.
     Preprocess(PreprocessArgs),
-    /// Performs FastQ quality control, file conversions, and adapter trimming.
-    FastqConverter(FastqConverterArgs),
     /// Merges Illumina paired-end reads with parsimonious error correction and
     /// detection.
     MergeSAM(MergeSAMArgs),
@@ -46,7 +44,6 @@ fn main() {
 
     match args.command {
         Commands::Preprocess(cmd_args) => preprocess_process(cmd_args).unwrap_or_die(&format!("{module}::Preprocess")),
-        Commands::FastqConverter(cmd_args) => fastqc_process(cmd_args).unwrap_or_die(&format!("{module}::FastqConverter")),
         Commands::MergeSAM(cmd_args) => merge_sam_pairs_process(cmd_args),
         Commands::Xflate(cmd_args) => xflate_process(cmd_args).unwrap_or_die(&format!("{module}::Xflate")),
         Commands::Trimmer(cmd_args) => trimmer_process(cmd_args).unwrap_or_die(&format!("{module}::Trimmer")),
