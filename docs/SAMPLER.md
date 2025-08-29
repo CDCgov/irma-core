@@ -2,9 +2,9 @@
 
 ## Motivation and Goals
 
-Next generation sequencers often produce an excess of sequences, for reasons such as to create redundancy for enabling consensus generation, due to requiring a minimum amount of materials per run, or other reasons. Running the large amount of sequences through a pipeline can be computationally expensive, so it may be desirable to transform the data into a smaller subset before further manipulation to increase efficiency.
+Next generation sequencers often produce an excess of reads, for reasons such as to create redundancy for enabling consensus generation, due to requiring a minimum amount of reagents per run, or other reasons. Running the full read set through a pipeline can be computationally expensive, so it may be desirable to transform the data into a smaller subset to save time.
 
-IRMA-core's sampler provides efficient, random, and fully-representative downsampling (also referred to as subsampling), as well as some other useful functionality.
+IRMA-core's sampler process provides efficient, random, and fully-representative downsampling (also referred to as subsampling), as well as some other useful functionality.
 
 ## Downsampling Targets
 
@@ -12,56 +12,56 @@ IRMA-core's sampler requires a target for downsampling. This can either be provi
 
 Percent targets must be provided as an integer [0-100] and may not provide an exact percentage downsampled in the cases of streamed or compressed input.
 
-If a `--percent-target` of 100 is provided, no downsampling will occur. This could be useful for de-interleaving without downsampling.
-
-If a `--subsample-target` is provided that is *greater* than the amount of sequences in the input, the process will succeed and give an output that is identical to the input, but provide a warning for the user.
+- If a `--percent-target` of 100 is provided, no downsampling will occur. This could be useful for de-interleaving without downsampling.
+- If a `--subsample-target` is provided that is *greater* than the amount of sequences in the input, the process will succeed and give an output that is identical to the input, but provide a warning for the user.
 
 ## Inputs and Outputs
 
 Sampler can downsample `FASTQ` and `FASTA` formats. Inputs are provided as positional arguments, with sampler accepting either a single file, or as a pair of paired-read files. The files may also be a stream (e.g., from a process substitution) or a `.gz` compressed file.
 
-For outputs, provide one output with `-o` or two outputs with `-1` and `-2`. If no output is provided, IRMA-core will output the subsampled data to `stdout`. *Note* for paired-read input, if no output is provided when there are two inputs, the `stdout` output will be interleaved.
+For outputs, you can select one output file with `-o` or two output files with `-1` and `-2`. If no output is provided, IRMA-core will output the subsampled data to `stdout`.
+
+*Note:* if only one output is selected (`stdout` or a file) for paired-end inputs, that output will be interleaved.
 
 ### Streamed and Piped inputs
 
-Inputs can be provided via pipes or with command substitution.
-The following will stream data from the `input.fasta` file, randomly downsample it to 10000 sequences, and print the output to `stdout`.
+Inputs can be provided via a file (or command substitution for multiple files). The following will stream data from the `input.fasta` file, randomly downsample it to 10,000 sequences, and print the output to `stdout`.
 
 ```bash
-irma-core sampler \
-    <(cat input.fasta) \
-    --subsample-target 10000
+# simple file
+irma-core sampler input.fasta --subsample-target 10000
+
+# lots of files together
+irma-core sampler <(cat *.fasta *.fa *.fas) --subsample-target 10000
 ```
 
-### Zipped  Input/Output
+### Zipped Input/Output
 
 The following will take a zipped `.fastq.gz` input, perform downsampling to approximately 10% of the file size, and output a standard `.fastq` file.
 
 ```bash
-irma-core sampler \
-    intput.fastq.gz \
-    --output_file1 sampled.fastq
+irma-core sampler intput.fastq.gz \
+    --output_file1 sampled.fastq \
     --percent-target 10
 ```
 
 ## Paired Reads
 
-Some sequencers (including Illumina sequencers) generate reads from both ends of the DNA fragments, resulting in two FASTQ files of paired reads. To handle these, you can provide an additional paired input file as a positional argument after the first, and/or provide an additional output file with `--output_file2` or `-2`. The paired reads will be downsampled simultaneously, ensuring that pairs get either kept or removed together.
+Some sequencers (including Illumina sequencers) generate reads from both ends of the DNA fragments, resulting in two paired-end read files. To handle these, you can provide an additional paired input file as a positional argument after the first, and/or provide an additional output file with `--output_file2` or `-2`. Paired-end reads will be **downsampled together**, ensuring that pairs get either kept or removed together.
 
 The following will take paired input, downsample them to 10000 paired sequences, and output two zipped files (each file will contain 10000 sequences).
 
 ```bash
 irma-core sampler \
-    input.fastq \
-    input2.fastq \
-    --output-file1 sampled.fastq.gz \
-    --output-file2 sampled2.fastq.gz\
+    input_R1.fastq input_R2.fastq \
+    --output-file1 sampled_R1.fastq.gz \
+    --output-file2 sampled_R2.fastq.gz \
     --subsample-target 10000
 ```
 
 ### Interleaving and De-interleaving
 
-Paired reads can sometimes be in interleaved formats, where alternating sequences in the file will belong to the "left" and "right" paired ends.
+Paired-end reads can sometimes be in interleaved formats (for example, downloading from the SRA web UI), where alternating sequences in the file will belong to the "left" and "right" paired ends.
 
 For example:
 
@@ -84,26 +84,22 @@ ACCTCGGTAAACAACAGCATCAGGTGAAGAAACAGA
 FFFFFFFFFFFFFFFFFFFFFFFFFFFFF:FFFFF:
 ```
 
-Here two sequences are paired.
-
-Sampler can handle two paired inputs, and output a single interleaved file:
+**Two** paired-end inputs / **one** interleaved output:
 
 ```bash
 irma-core sampler \
-    input1.fastq \
-    input2.fastq \
+    input_R1.fastq input_R2.fastq \
     --subsample-target 10000 \
     -o interleaved.fastq
 ```
 
-Sampler can also take an interleaved input and output two *de-interleaved* files:
+**One** interleaved input / **two** deinterleaved outputs:
 
 ```bash
 irma-core sampler \
     interleaved.fastq.gz \
     --percent-target 10 \
-    -1 output1.fastq \
-    -2 output2.fastq
+    -1 output_R1.fastq -2 output_R2.fastq
 ```
 
-Currently, if a single input and single output are provided, each read will be treated individually; interleaved input with interleaved output is *not* supported.
+If a single input and output are provided, no interleaving is assumed.

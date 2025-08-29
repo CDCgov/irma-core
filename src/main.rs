@@ -36,7 +36,7 @@ enum Commands {
     )]
     /// Read FastQ files and trim with various options.
     Trimmer(TrimmerArgs),
-    /// Downsample FastQ files
+    /// Randomly downsamples FastQ or FASTA files. Deinterleaving supported.
     Sampler(SamplerArgs),
 }
 

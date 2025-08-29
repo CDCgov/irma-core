@@ -5,16 +5,22 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 [Semantic Versioning]. For IRMA vs IRMA-core compatibility, please see the
 [version matrix](VERSION_MATRIX.md).
 
-## [0.5.2] - TBD
+## [0.6.0] - 2025-08-29
+
+### Added
+
+-Adds a new standalone process called `sampler` that provides support for
+randomly downsampling FastQ or FASTA files. Deinterleaving is also supported.
 
 ### Changed
 
 - Use threads and anonymous pipes (in Rust) when decompressing zipped inputs
 - Improve error messages to include file names in `trimmer` and `preprocess`
+- Other dependencies updated, such as a faster foldhash.
 
 ### Fixes
 
-- Updated Zoe dependency (v0.0.19) fixes hard clipping in merged reads. Reader
+- `mergeSAMpairs`: updated Zoe dependency (in v0.0.19, using v0.0.20) fixes hard clipping in merged reads. Reader
   error messages are also improved generally.
 
 ## [0.5.1] - 2025-06-03
@@ -124,7 +130,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 - **Added**: custom inexact matching algorithm from [Zoe]
 
 <!-- Versions -->
-[0.5.2]: https://github.com/CDCgov/irma-core/compare/v0.5.1...v0.5.2
+[0.6.0]: https://github.com/CDCgov/irma-core/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/CDCgov/irma-core/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/CDCgov/irma-core/compare/v0.4.3...v0.5.0
 [0.4.3]: https://github.com/CDCgov/irma-core/compare/v0.4.2...v0.4.3

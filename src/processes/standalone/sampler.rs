@@ -24,12 +24,12 @@ pub struct SamplerArgs {
     pub input_file2: Option<PathBuf>,
 
     #[arg(short = '1', short_alias = 'o')]
-    /// Output filepath for sampled reads. Sampled reads print to STDOUT if not
+    /// Output file path for sampled reads. Sampled reads print to STDOUT if not
     /// provided. May also use '-o'
     pub output_file1: Option<PathBuf>,
 
     #[arg(short = '2', requires = "output_file1")]
-    /// Output path for secondary sampled file if using paired reads. If this
+    /// Output path for a second sampled file if using paired-end reads. If this
     /// argument is omitted, output is interleaved
     pub output_file2: Option<PathBuf>,
 
@@ -43,7 +43,8 @@ pub struct SamplerArgs {
     pub percent_target: Option<usize>,
 
     #[arg(short = 's', long)]
-    /// The seed for the random number generator
+    /// For reproducibility, provide an optional seed for the random number
+    /// generator
     pub rng_seed: Option<u64>,
 }
 

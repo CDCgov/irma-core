@@ -1,6 +1,6 @@
 [package]
 name = "irma-core"
-version = "0.5.2-dev"
+version = "0.6.0"
 edition = "2024"
 description = "A tool to aid virus sequencing and accelerating IRMA."
 license = "Apache-2.0"
@@ -18,15 +18,15 @@ readme = "README.md"
 
 
 [dependencies]
-clap = { version = "4.5", features = ["derive"] }
-foldhash = "0.2"
-num_cpus = "1.16"
-flate2 = "1.1"
-zoe = { git = "https://github.com/CDCgov/zoe.git", branch = "main", default-features = false, features = [
+zoe = { version = "0.0.20", default-features = false, features = [
     "multiversion",
 ] }
-rand_xoshiro = "0.7.0"
-rand = "0.9.1"
+clap = { version = "4", features = ["derive"] }
+foldhash = "0.2"
+num_cpus = "1"
+flate2 = "1"
+rand_xoshiro = "0.7"
+rand = "0.9"
 
 [profile.dev]
 opt-level = 1
