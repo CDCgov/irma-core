@@ -1,13 +1,12 @@
-use crate::utils::whichever::define_whichever;
 use flate2::{Compression, read::MultiGzDecoder, write::GzEncoder};
 use std::{
     error::Error,
     fs::File,
-    io::{stdout, BufWriter, PipeReader, Stdin, Stdout, Write, ErrorKind},
+    io::{BufWriter, ErrorKind, PipeReader, Read, Stdin, Stdout, Write, stdout},
     path::{Path, PathBuf},
     thread::{self, JoinHandle},
 };
-use zoe::prelude::FastQReader;
+use zoe::{define_whichever, prelude::FastQReader};
 
 mod fastx;
 mod write_records;
@@ -329,7 +328,6 @@ impl RecordWriters<WriteFileZipStdout> {
         Ok(Self::new(writer1, writer2))
     }
 }
-
 
 impl Error for OpenFastqError {
     #[inline]

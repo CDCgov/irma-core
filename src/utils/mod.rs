@@ -3,7 +3,6 @@ use std::env;
 
 pub(crate) mod paired_reads;
 pub(crate) mod trimming;
-pub(crate) mod whichever;
 
 const SEED_ENV_VAR: &str = "IRMA_SEED";
 
