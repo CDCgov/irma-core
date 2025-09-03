@@ -5,8 +5,6 @@ use zoe::{
 
 use crate::qc::fastq::ReadTransforms;
 
-use super::fastq::fix_sra_format;
-
 static QNAMES: [&str; 26] = [
     "SRR26182418.1 M07901:28:000000000-KP3NB:1:1101:10138:2117 length=147",
     "SRR26182418.1 M07901:28:000000000-KP3NB:1:1101:10138:2117 length=301",
@@ -68,8 +66,6 @@ fn test_fix_sra_names() {
     ];
 
     for (i, &o) in QNAMES.iter().enumerate() {
-        assert_eq!(fix_sra_format(o.to_string(), '0'), fixed[i]);
-
         let mut fq = FastQ {
             header:   o.to_string(),
             sequence: Nucleotides::new(),

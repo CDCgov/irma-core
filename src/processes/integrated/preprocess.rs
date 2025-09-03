@@ -5,10 +5,7 @@
 use crate::{
     args::clipping::{ClippingArgs, ParsedClippingArgs, parse_clipping_args},
     io::{IoThreads, ReadFileZip, open_fastq_files},
-    qc::{
-        fastq::{ReadTransforms, fix_sra_format},
-        fastq_metadata::*,
-    },
+    qc::{fastq::ReadTransforms, fastq_metadata::*},
     utils::{
         get_hasher,
         paired_reads::{PairedReadFilterer, ReadSide},
@@ -362,26 +359,9 @@ impl<'a> Preprocessor<'a> {
     }
 }
 
-struct TrimmedRead<'a> {
-    sequence: NucleotidesViewMut<'a>,
-    quality:  QualityScoresViewMut<'a>,
-    header:   String,
-}
-
-impl<'a> TrimmedRead<'a> {
-    #[inline]
-    fn new(fastq: FastQViewMut<'a>) -> Self {
-        Self {
-            sequence: fastq.sequence,
-            quality:  fastq.quality,
-            header:   std::mem::take(fastq.header),
-        }
-    }
-}
-
 impl<'a> PairedReadFilterer for Preprocessor<'a> {
     const PRESERVE_ORDER: bool = false;
-    type Processed<'b> = TrimmedRead<'b>;
+    type Processed<'b> = FastQViewMut<'b>;
     type Finalized = (DeflatedSequences, FastQMetadata);
 
     #[inline]
@@ -414,18 +394,14 @@ impl<'a> PairedReadFilterer for Preprocessor<'a> {
 
         self.metadata.passed_qc_count += 1;
 
-        Some(TrimmedRead::new(clipped))
+        Some(clipped)
     }
 
     #[inline]
     fn output_read<'b>(&mut self, mut trimmed: Self::Processed<'b>, side: ReadSide) -> std::io::Result<()> {
-        let header = {
-            if let Some(side) = side.to_char() {
-                trimmed.header = fix_sra_format(trimmed.header, side);
-            }
-            trimmed.header
-        };
+        trimmed.fix_header(side.to_char());
 
+        let header = std::mem::take(trimmed.header);
         let sequence = trimmed.sequence.to_owned_data();
         let quality = trimmed.quality.to_owned_data();
 

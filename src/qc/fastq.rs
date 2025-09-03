@@ -14,7 +14,7 @@ use zoe::{
 // const BAM_QNAME_LIMIT: usize = 254;
 const MAX_KMER_LENGTH: usize = 21;
 
-pub(crate) fn fix_sra_format(header: String, read_side: char) -> String {
+pub(crate) fn fix_sra_format(header: &mut String, read_side: char) {
     let delim = if header.contains(' ') { ' ' } else { '_' };
     let mut pieces = header.split(delim);
     let maybe_id = pieces.next().map(|s| s.strip_prefix('@').unwrap_or(s));
@@ -23,18 +23,9 @@ pub(crate) fn fix_sra_format(header: String, read_side: char) -> String {
         && (id.starts_with("SRR") || id.starts_with("DRR") || id.starts_with("ERR"))
         && id.chars().filter(|&c| c == '.').count() == 1
     {
-        let mut updated = String::with_capacity(header.len() + 2);
-        updated.push_str(id);
-        updated.push('.');
-        updated.push(read_side);
-        for p in pieces {
-            updated.push(delim);
-            updated.push_str(p);
-        }
-
-        updated
-    } else {
-        header
+        let idx = id.len();
+        let s = [b'.', read_side as u8];
+        header.insert_str(idx, std::str::from_utf8(&s).unwrap());
     }
 }
 
@@ -254,7 +245,7 @@ impl ReadTransforms for FastQ {
     #[inline]
     fn fix_header(&mut self, read_side: Option<char>) -> &mut Self {
         if let Some(read_side) = read_side {
-            self.header = fix_sra_format(std::mem::take(&mut self.header), read_side);
+            fix_sra_format(&mut self.header, read_side);
         }
         self
     }
@@ -484,7 +475,7 @@ impl ReadTransforms for FastQViewMut<'_> {
     #[inline]
     fn fix_header(&mut self, read_side: Option<char>) -> &mut Self {
         if let Some(read_side) = read_side {
-            *self.header = fix_sra_format(std::mem::take(self.header), read_side);
+            fix_sra_format(self.header, read_side);
         }
         self
     }
