@@ -1,13 +1,13 @@
 name: CI
 
 on:
-    push:
-      branches:
-        - main
-    pull_request:
-      types: [assigned, opened, synchronize, reopened]
-      branches:
-        - main
+  push:
+    branches:
+      - main
+  pull_request:
+    types: [assigned, opened, synchronize, reopened]
+    branches:
+      - main
 
 env:
   CARGO_TERM_COLOR: always
@@ -18,6 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - run: perl .github/scripts/check_versions_changelog.pl
       - run: rustup update nightly && rustup default nightly
       - run: cargo build --verbose
       - run: cargo test --verbose
