@@ -1,6 +1,6 @@
 use crate::io::{
-    FastXReader, IoThreads, ReadFileZip, RecordWriters, WriteFileZipStdout, WriteRecord, WriteRecords, is_gz,
-    open_fastx_files,
+    FastXReader, IoThreads, ReadFileZip, RecordWriters, WriteFileZipStdout, WriteRecord, WriteRecords,
+    get_paired_readers_and_writers, is_gz,
 };
 use crate::utils::paired_reads::{
     DeinterleavedPairedReads, DeinterleavedPairedReadsExt, RecordWithHeader, ZipPairedReadsExt,
@@ -233,7 +233,12 @@ fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, 
         Xoshiro256StarStar::from_os_rng()
     };
 
-    let (fastq_reader1, fastq_reader2, threads) = open_fastx_files(&args.input_file1, args.input_file2.as_ref())?;
+    let (fastq_reader1, fastq_reader2, writer, threads) = get_paired_readers_and_writers(
+        &args.input_file1,
+        args.input_file2.as_ref(),
+        args.output_file1,
+        args.output_file2,
+    )?;
 
     // ensure no mismatch of paired read inputs
     match (&fastq_reader1, &fastq_reader2) {
@@ -249,8 +254,6 @@ fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, 
         }
         _ => (),
     }
-
-    let writer = RecordWriters::from_filename(args.output_file1, args.output_file2)?;
 
     let fastq_path1 = if args.input_file1.is_file() && !is_gz(&args.input_file1) {
         Some(args.input_file1)

@@ -10,6 +10,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 ### Changed
 
 - The `fastq-converter` process has been removed.
+- More context is added for IO errors in `sampler`
 
 ### Fixes
 
