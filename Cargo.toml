@@ -33,5 +33,8 @@ opt-level = 1
 
 [profile.release]
 strip = true
+
+[profile.prod]
+inherits = "release"
+codegen-units = 1
 lto = "fat"
-# Long-term maintainers of the IRMA-core

@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - "v[0-9]+.[0-9]+.[0-9]+"
       - test
 
 permissions: {}
@@ -160,12 +160,12 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --release --target ${{ matrix.target }}
+          args: --profile prod --target ${{ matrix.target }}
 
       - name: Package Binary
         shell: bash
         run: |
-          cd target/${{ matrix.target }}/release
+          cd target/${{ matrix.target }}/prod
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             7z a ../../../${{ matrix.artifact_name }}-${{ github.ref_name }}.zip ${{ env.RELEASE_BIN }}.exe
           else
@@ -181,7 +181,8 @@ jobs:
 
   create-integrated-package:
     name: Create Integrated Package
-    needs: [build-mac-windows-for-release, build-release-image-and-rhel8-artifacts]
+    needs:
+      [build-mac-windows-for-release, build-release-image-and-rhel8-artifacts]
     runs-on: macos-latest
     permissions:
       contents: write

@@ -26,7 +26,7 @@ COPY . .
 
 RUN latest=$(git tag|tail -n1) \
     && git checkout ${irma_core_branch:-$latest} \
-    && cargo build --release \
+    && cargo build --profile prod \
     && cargo test
 
 FROM debian:bookworm-slim AS base
@@ -42,7 +42,7 @@ RUN apt-get update --allow-releaseinfo-change --fix-missing \
 WORKDIR /app
 COPY  --from=builder /irma-core/docs /app/docs
 COPY   --from=builder \
-    /irma-core/target/release/irma-core \
+    /irma-core/target/prod/irma-core \
     /irma-core/Cargo.toml \
     /irma-core/Cargo.lock \
     /irma-core/LICENSE \
