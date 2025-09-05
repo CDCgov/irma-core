@@ -417,7 +417,7 @@ impl<'a, I: Iterator> MethodDSampler<'a, I> {
         let remaining_population = total_items;
         let max_start_index = remaining_population - remaining_samples + 1;
         let rem_samples_inv = (remaining_samples as f32).recip();
-        let vprime = rand::random::<f32>().powf(rem_samples_inv);
+        let vprime = rng.random::<f32>().powf(rem_samples_inv);
 
         Ok(MethodDSampler {
             reader,

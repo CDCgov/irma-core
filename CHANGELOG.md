@@ -15,6 +15,8 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 
 - SRA paired-end headers could be could be incorrectly flagged as unmated when
   `--filter-widows` was selected in `trimmer` or `sampler`. This has been fixed.
+- Fixes a reproducibility issue in `sampler` where the seed wasn't being used in
+  one case
 
 ## [0.6.0] - 2025-08-29
 
