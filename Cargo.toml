@@ -1,6 +1,6 @@
 [package]
 name = "irma-core"
-version = "0.6.1-dev"
+version = "0.6.1"
 edition = "2024"
 description = "A tool to aid virus sequencing and accelerating IRMA."
 license = "Apache-2.0"
@@ -18,7 +18,7 @@ readme = "README.md"
 
 
 [dependencies]
-zoe = { version = "0.0.20", default-features = false, features = [
+zoe = { version = "0.0.21", default-features = false, features = [
     "multiversion",
 ] }
 clap = { version = "4", features = ["derive"] }
