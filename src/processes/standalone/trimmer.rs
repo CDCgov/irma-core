@@ -2,7 +2,7 @@ use crate::{
     args::clipping::{ClippingArgs, ParsedClippingArgs, parse_clipping_args},
     io::{ReadFileZipPipe, RecordReaders, RecordWriters, WriteFileZipStdout, WriteRecord, check_distinct_files},
     utils::{
-        paired_reads::{ZipPairedReadsExt, ZipReadsError},
+        paired_reads::{DeinterleavedPairedReadsExt, ZipPairedReadsExt, ZipReadsError},
         trimming::trim_read,
     },
 };
@@ -23,7 +23,7 @@ pub struct TrimmerArgs {
     /// provided. May also use '-o'.
     fastq_output_file: Option<PathBuf>,
 
-    #[arg(short = '2', long = "fastq-output2", requires = "fastq_input_file2")]
+    #[arg(short = '2', long = "fastq-output2")]
     /// Output path for secondary trimmed file if using paired reads. If this
     /// argument is omitted, output is interleaved.
     fastq_output_file2: Option<PathBuf>,
@@ -38,7 +38,7 @@ pub struct TrimmerArgs {
     /// filtered from output.
     min_length: NonZeroUsize,
 
-    #[arg(short = 'f', long, requires = "fastq_input_file2")]
+    #[arg(short = 'f', long)]
     /// Filter widowed reads
     filter_widows: bool,
 
@@ -124,13 +124,36 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
             }
         }
     } else {
-        match writer {
-            RecordWriters::SingleEnd(mut writer) => {
+        match (writer, trimming_args.filter_widows) {
+            (RecordWriters::SingleEnd(mut writer), false) => {
                 // Case 1: In 1, Out 1 (ONT, single-end, PacBio)
                 reader1.try_for_each(|read| trim_and_write_seq(read?, &trimming_args, &mut writer))?;
                 writer.flush()?;
             }
-            RecordWriters::PairedEnd(_) => unreachable!("Validated by clap"),
+
+            (RecordWriters::SingleEnd(mut writer), true) => {
+                reader1
+                    .deinterleave()
+                    .try_for_each(|pair| trim_and_write_pair(pair?, &trimming_args, &mut writer))?;
+                writer.flush()?;
+            }
+
+            (RecordWriters::PairedEnd(mut writer), false) => {
+                reader1.deinterleave().try_for_each(|pair| {
+                    let [read1, read2] = pair?;
+                    trim_and_write_seq(read1, &trimming_args, &mut writer.writer1)?;
+                    trim_and_write_seq(read2, &trimming_args, &mut writer.writer2)?;
+                    std::io::Result::Ok(())
+                })?;
+                writer.flush()?;
+            }
+
+            (RecordWriters::PairedEnd(mut writer), true) => {
+                reader1
+                    .deinterleave()
+                    .try_for_each(|pair| trim_and_write_pair(pair?, &trimming_args, &mut writer))?;
+                writer.flush()?;
+            }
         }
     }
 

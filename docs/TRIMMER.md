@@ -50,12 +50,25 @@ Details about each trimming operation and their arguments are given below.
 
 ## Input, Output, and Compressed Files
 
-IRMA-core takes `.fastq` files as inputs and outputs. IRMA-core is also able to handle compressed input and output files for files compressed with `gzip`. For the both, simply include the path to your `.fastq` or `.fastq.gz` input and output filepaths. Inputs are taken as positional arguments, and outputs use `-o` or `-1` and `-2`.
+`trimmer` takes `.fastq` files as inputs and outputs. IRMA-core is also able to handle compressed input and output files for files compressed with `gzip`. For the both, simply include the path to your `.fastq` or `.fastq.gz` input and output filepaths. Inputs are taken as positional arguments, and outputs use `-o` or `-1` and `-2`.
 
 | Parameter                       | Default  | Kind              | Description                                                                                                                          |
 | ------------------------------- | -------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `--fastq-output` (`-1` or `-o`) | `STDOUT` | Filepath          | Path to the output file for trimmed FASTQ. If not provided, the output will print to STDOUT.                                         |
-| `--fastq-output2` (`-2`)        | `None`   | Optional Filepath | Optional path to secondary output file for paired FASTQ. If this argument is omitted, output is interleaved.                         |
+| `--fastq-output2` (`-2`)        | `None`   | Optional Filepath | Optional path to secondary output file for paired FASTQ. If this argument is omitted, output is interleaved.
+
+Below is a table describing `trimmer`'s behavior for different IO args:
+
+| Number of Inputs | Number of Outputs | `--filter-widows` | Description |
+| ---------------- | ----------------- | ----------------- | ----------- |
+| 1                | 1                 | Not enabled       | The reads are interpretted as single-end reads and are trimmed/filtered independently. |
+| 1                | 1                 | Enabled           | The reads are de-interleaved, pairs are trimmed/filtered, and then the output is interleaved again |
+| 1                | 2                 | Not enabled       | The reads are de-interleaved, then are trimmed/filtered independently, output to two files |
+| 1                | 2                 | Enabled           | The reads are de-interleaved, pairs are trimmed/filtered, and then are output to two files. |
+| 2                | 1                 | Not enabled       | The reads are interleaved, then are trimmed/filtered independently |
+| 2                | 1                 | Enabled           | The pairs are trimmed/filtered, and then the outputs are interleaved. |
+| 2                | 2                 | Not enabled       | The reads from each file are trimmed/filtered independently and written to the corresponding output file. |
+| 2                | 2                 | Enabled           | The pairs are trimmed/filtered, and then each read is output to the corresponding file. |
 
 ### Example Zipped Input/Output
 
