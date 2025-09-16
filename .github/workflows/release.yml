@@ -90,12 +90,12 @@ jobs:
           docker create --name temp-container $IMAGE_TAG \
           && docker cp temp-container:/app/irma-core ./irma-core \
           && docker rm temp-container \
-          && tar -czf irma-core-linux-${{ matrix.arch }}-${{ github.ref_name }}.tar.gz irma-core
+          && tar -czf ${{ env.RELEASE_BIN }}-linux-${{ matrix.arch }}-${{ github.ref_name }}.tar.gz irma-core
 
       - name: Upload Linux Release Asset
         shell: bash
         run: |
-          gh release upload "${{ github.ref_name }}" irma-core-linux-${{ matrix.arch }}-${{ github.ref_name }}.tar.gz
+          gh release upload "${{ github.ref_name }}" ${{ env.RELEASE_BIN }}-linux-${{ matrix.arch }}-${{ github.ref_name }}.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -127,22 +127,10 @@ jobs:
           docker manifest create $LATEST --amend ${LATEST}-x86_64 --amend ${LATEST}-aarch64 \
             && docker manifest push $LATEST
 
-  build-mac-windows-for-release:
-    name: Build Release
+  build-mac-artifacts:
+    name: Build Mac Artifacts
     needs: create-release
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            artifact_name: irma-core-macos-x86_64
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            artifact_name: irma-core-macos-aarch64
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact_name: irma-core-windows-x86_64
+    runs-on: macos-latest
 
     permissions:
       contents: write
@@ -154,35 +142,31 @@ jobs:
         run: |
           rustup update nightly
           rustup default nightly
-          rustup target add ${{ matrix.target }}
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
       - name: Build
-        uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --profile prod --target ${{ matrix.target }}
+        run: |
+          cargo build --profile prod --target aarch64-apple-darwin --target x86_64-apple-darwin
 
       - name: Package Binary
         shell: bash
         run: |
-          cd target/${{ matrix.target }}/prod
-          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            7z a ../../../${{ matrix.artifact_name }}-${{ github.ref_name }}.zip ${{ env.RELEASE_BIN }}.exe
-          else
-            tar -czf ../../../${{ matrix.artifact_name }}-${{ github.ref_name }}.tar.gz ${{ env.RELEASE_BIN }}
-          fi
+          lipo -create -output ${{ env.RELEASE_BIN }} \
+            target/aarch64-apple-darwin/prod/${{ env.RELEASE_BIN }} \
+            target/x86_64-apple-darwin/prod/${{ env.RELEASE_BIN }}
+          tar -czf ${{ env.RELEASE_BIN }}-apple-universal-${{ github.ref_name }}.tar.gz ${{ env.RELEASE_BIN }}
 
       - name: Upload Release Asset
         shell: bash
         run: |
-          gh release upload "${{ github.ref_name }}" ${{ matrix.artifact_name }}-${{ github.ref_name }}.*
+          gh release upload "${{ github.ref_name }}" ${{ env.RELEASE_BIN }}-apple-universal-${{ github.ref_name }}.*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   create-integrated-package:
     name: Create Integrated Package
     needs:
-      [build-mac-windows-for-release, build-release-image-and-rhel8-artifacts]
+      [build-mac-artifacts, build-release-image-and-rhel8-artifacts]
     runs-on: macos-latest
     permissions:
       contents: write
@@ -192,24 +176,24 @@ jobs:
       - name: Download Release Assets
         shell: bash
         run: |
-          gh release download "${{ github.ref_name }}" -p irma-core-*.tar.gz
+          gh release download "${{ github.ref_name }}" -p ${{ env.RELEASE_BIN }}-*.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract Binaries and Create Integrated Package
         shell: bash
         run: |
-          tar -xzf irma-core-macos-x86_64-${{ github.ref_name }}.tar.gz && mv irma-core x86_gz \
-          && tar -xzf irma-core-macos-aarch64-${{ github.ref_name }}.tar.gz && mv irma-core arm_gz \
-          && lipo -create -output irma-core_Darwin x86_gz arm_gz \
-          && tar -xzf irma-core-linux-x86_64-${{ github.ref_name }}.tar.gz && mv irma-core irma-core_Linux_x86_64 \
-          && tar -xzf irma-core-linux-aarch64-${{ github.ref_name }}.tar.gz && mv irma-core irma-core_Linux_aarch64  \
+          bin=${{ env.RELEASE_BIN }}
+          tag=${{ github.ref_name }}
+          tar -xzf ${bin}-apple-universal-${tag}.tar.gz && mv ${bin} ${bin}_Darwin \
+          && tar -xzf ${bin}-linux-x86_64-${tag}.tar.gz && mv ${bin} ${bin}_Linux_x86_64 \
+          && tar -xzf ${bin}-linux-aarch64-${tag}.tar.gz && mv ${bin} ${bin}_Linux_aarch64  \
           && rm *gz \
-          && zip irma-core-integrated-${{ github.ref_name }}.zip irma-core_*
+          && zip ${bin}-integrated-${tag}.zip irma-core_*
 
       - name: Upload Integrated Package
         shell: bash
         run: |
-          gh release upload "${{ github.ref_name }}" irma-core-integrated-${{ github.ref_name }}.zip
+          gh release upload "${{ github.ref_name }}" ${{ env.RELEASE_BIN }}-integrated-${{ github.ref_name }}.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
