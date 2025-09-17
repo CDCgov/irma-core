@@ -570,7 +570,8 @@ where
 
     /// Calculates the number of skips and then skips it for the iterator inside
     fn next(&mut self) -> Option<Self::Item> {
-        // makes sure to validate all remaining reads even if the target number of reads is reached
+        // makes sure to validate all remaining reads even if the target number
+        // of reads is reached
         let Some(skip) = self.next_skip() else {
             unwrap_or_return_some_err!(self.reader.try_for_each(|read| read.map(|_| ())));
             return None;

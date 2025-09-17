@@ -1,7 +1,7 @@
 {
     "files.trimTrailingWhitespace": true,
-    "rust-analyzer.procMacro.attributes.enable": true,
-    "rust-analyzer.check.command": "clippy",
+    //"rust-analyzer.procMacro.attributes.enable": true,
+    //"rust-analyzer.check.command": "clippy",
     "shellformat.flag": "-i 4 -ci -bn -sr",
     "perltidy-more.autoDisable": true,
     "perltidy-more.profile": ".../.perltidyrc",

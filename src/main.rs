@@ -1,7 +1,7 @@
 #![allow(unreachable_patterns)]
 #![feature(portable_simd, try_trait_v2)]
 
-use crate::processes::{merge_sam_pairs::*, num_procs::*, preprocess::*, trimmer::*, xflate::*};
+use crate::processes::{merge_sam_pairs::*, num_procs::*, preprocess::*, trimmer::*, xflate::*, xleave::*};
 use clap::{Parser, Subcommand};
 use processes::sampler::{SamplerArgs, sampler_process};
 use zoe::data::err::OrFail;
@@ -36,6 +36,8 @@ enum Commands {
     Trimmer(TrimmerArgs),
     /// Randomly downsamples FastQ or FASTA files. Deinterleaving supported.
     Sampler(SamplerArgs),
+    /// Interleaves or De-interleaves paired FastQ or FASTA files.
+    Xleave(XLeaveArgs),
 }
 
 fn main() {
@@ -49,6 +51,7 @@ fn main() {
         Commands::Trimmer(cmd_args) => trimmer_process(cmd_args).unwrap_or_die(&format!("{module}::Trimmer")),
         Commands::Sampler(cmd_args) => sampler_process(cmd_args).unwrap_or_die(&format!("{module}::Sampler")),
         Commands::NumProcs(cmd_args) => num_procs_process(cmd_args).unwrap_or_die(&format!("{module}::NumProcs")),
+        Commands::Xleave(cmd_args) => xleave_process(cmd_args).unwrap_or_die(&format!("{module}::XLeave")),
         _ => {
             eprintln!("IRMA-CORE: unrecognized command {:?}", args.command);
             std::process::exit(1)

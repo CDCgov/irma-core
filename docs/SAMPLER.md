@@ -23,9 +23,11 @@ For outputs, you can select one output file with `-o` or two output files with `
 
 *Note:* if only one output is selected (`stdout` or a file) for paired-end inputs, that output will be interleaved.
 
-### Streamed and Piped inputs
+### Streamed Inputs
 
 Inputs can be provided via a file (or command substitution for multiple files). The following will stream data from the `input.fasta` file, randomly downsample it to 10,000 sequences, and print the output to `stdout`.
+
+*Note:* in cases of multiple files being provided, `sampler` will treat these as one continuous stream of the files concatenated together.
 
 ```bash
 # simple file

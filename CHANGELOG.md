@@ -5,6 +5,13 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 [Semantic Versioning]. For IRMA vs IRMA-core compatibility, please see the
 [version matrix](VERSION_MATRIX.md).
 
+## [0.7.0] - 2025-09-17
+
+### Added
+
+- Adds standalone `xleave` process for interleaving and de-interleaving
+  paired-end FastQ and FASTA files
+
 ## [0.6.2] - 2025-09-25
 
 ### Fixes
@@ -152,6 +159,7 @@ randomly downsampling FastQ or FASTA files. Deinterleaving is also supported.
 - **Added**: custom inexact matching algorithm from [Zoe]
 
 <!-- Versions -->
+[0.7.0]: https://github.com/CDCgov/irma-core/compare/v0.6.1...v0.7.0
 [0.6.2]: https://github.com/CDCgov/irma-core/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/CDCgov/irma-core/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/CDCgov/irma-core/compare/v0.5.1...v0.6.0

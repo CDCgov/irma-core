@@ -1,5 +1,5 @@
 use crate::utils::get_hasher;
-use clap::{Args, ValueEnum, arg, builder::PossibleValue};
+use clap::{Args, ValueEnum, builder::PossibleValue};
 use foldhash::fast::SeedableRandomState;
 use std::{fmt::Debug, num::NonZeroUsize, path::PathBuf};
 use zoe::{
