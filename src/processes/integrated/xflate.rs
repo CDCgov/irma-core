@@ -72,7 +72,7 @@ fn inflate(table_file: &Path, fasta_files: &Vec<PathBuf>) -> Result<(), std::io:
         {
             if let Some(sequence) = sequence_by_cluster.get(&cluster_num) {
                 while let (Some(header), Some(quality)) = (split.next(), split.next()) {
-                    stdout_writer.write_all(format!("{header}\n{sequence}\n+\n{quality}\n").as_bytes())?;
+                    stdout_writer.write_all(format!("@{header}\n{sequence}\n+\n{quality}\n").as_bytes())?;
                 }
             }
         } else if !data.is_empty() {

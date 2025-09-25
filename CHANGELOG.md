@@ -5,6 +5,13 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 [Semantic Versioning]. For IRMA vs IRMA-core compatibility, please see the
 [version matrix](VERSION_MATRIX.md).
 
+## [0.6.2] - 2025-09-25
+
+### Fixes
+
+- `xflate` recently produced invalid FASTQ during inflation. This has been
+  fixed. This bug was not surfaced in IRMA.
+
 ## [0.6.1] - 2025-09-09
 
 ### Changed
@@ -145,6 +152,7 @@ randomly downsampling FastQ or FASTA files. Deinterleaving is also supported.
 - **Added**: custom inexact matching algorithm from [Zoe]
 
 <!-- Versions -->
+[0.6.2]: https://github.com/CDCgov/irma-core/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/CDCgov/irma-core/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/CDCgov/irma-core/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/CDCgov/irma-core/compare/v0.5.0...v0.5.1

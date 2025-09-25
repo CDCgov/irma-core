@@ -11,6 +11,7 @@
 | Process   | Description                                                                                             | Usage                      |
 | --------- | ------------------------------------------------------------------------------------------------------- | -------------------------- |
 | `trimmer` | Used for removing adapters, barcodes, and primers among other things. [Read the docs](docs/TRIMMER.md). | `irma-core trimmer --help` |
+| `sampler` | Representative random downsampling of FASTA and FastQ files. [Read the docs](docs/SAMPLER.md).          | `irma-core sampler --help` |
 
 ### Integrated with IRMA
 
