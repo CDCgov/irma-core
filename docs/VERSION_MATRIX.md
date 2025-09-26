@@ -2,9 +2,10 @@
 
 This matrix can help with tracking which version of IRMA-core shipped with which version of [IRMA]. Using IRMA's pre-packaged [releases](https://github.com/CDCgov/irma/releases) is preferred.
 
-| IRMA version | IRMA-core version | Notes                                                                                           |
-| ------------ | ----------------- | ----------------------------------------------------------------------------------------------- |
-| v1.3.0       | 0.5.1             | Unified preprocessing + mandatory IRMA-core; new trimming functionality exists but not exposed. |
+| IRMA version | IRMA-core version | Notes                                                                                              |
+| ------------ | ----------------- | -------------------------------------------------------------------------------------------------- |
+| v1.3.1       | 0.6.2             | Better errors, zipped reader used in `preprocess`; `sampler` functionality exists but not exposed. |
+| v1.3.0       | 0.5.1             | Unified preprocessing + mandatory IRMA-core; `trimmer` functionality exists but not exposed.       |
 
 ## Legacy tagging
 
