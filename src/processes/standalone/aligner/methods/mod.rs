@@ -1,7 +1,6 @@
 //! Traits and structs for the different methods of pairwise alignment used by
 //! aligner
 
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use std::fmt::Display;
 use zoe::{
     alignment::Alignment,
@@ -9,6 +8,9 @@ use zoe::{
     math::AnyInt,
     prelude::NucleotidesView,
 };
+
+#[cfg(not(feature = "dev_no_rayon"))]
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 mod striped_sw_local;
 mod striped_sw_shared;
@@ -90,7 +92,7 @@ pub trait AlignmentMethod: Sync + Send {
         &'a self, profile_seqs: &'a [FastaSeq],
     ) -> std::io::Result<Vec<(&'a FastaSeq, Self::Profile<'a>)>> {
         profile_seqs
-            .par_iter()
+            .maybe_par_iter()
             .map(|profile_seq| -> std::io::Result<_> { Ok((profile_seq, self.build_profile(profile_seq)?)) })
             .collect()
     }
@@ -104,7 +106,7 @@ pub trait AlignmentMethod: Sync + Send {
     ) -> Vec<(&'a FastaSeq, Option<Vec<u8>>)> {
         if rev_comp {
             regular_seqs
-                .par_iter()
+                .maybe_par_iter()
                 .map(|seq| {
                     (
                         seq,
@@ -121,3 +123,49 @@ pub trait AlignmentMethod: Sync + Send {
         }
     }
 }
+
+/// An extension trait providing [`maybe_par_iter`], which calls [`par_iter`]
+/// when the `one-thread` feature is not set and [`into_iter`] otherwise.
+///
+/// [`par_iter`]: rayon::iter::IntoParallelRefIterator::par_iter
+/// [`into_iter`]: IntoIterator::into_iter
+#[cfg(not(feature = "dev_no_rayon"))]
+trait MaybeParIter<'a>: IntoParallelRefIterator<'a> {
+    /// Calls [`par_iter`] if the `one-thread` feature is not set and
+    /// [`into_iter`] otherwise.
+    ///
+    /// [`par_iter`]: rayon::iter::IntoParallelRefIterator::par_iter
+    /// [`into_iter`]: IntoIterator::into_iter
+    #[inline]
+    fn maybe_par_iter(&'a self) -> Self::Iter {
+        self.par_iter()
+    }
+}
+
+#[cfg(not(feature = "dev_no_rayon"))]
+impl<'a, T: ?Sized + IntoParallelRefIterator<'a>> MaybeParIter<'a> for T {}
+
+/// An extension trait providing [`maybe_par_iter`], which calls [`par_iter`]
+/// when the `one-thread` feature is not set and [`into_iter`] otherwise.
+///
+/// [`maybe_par_iter`]: MaybeParIter::maybe_par_iter
+/// [`par_iter`]: rayon::iter::IntoParallelRefIterator::par_iter
+/// [`into_iter`]: IntoIterator::into_iter
+#[cfg(feature = "dev_no_rayon")]
+trait MaybeParIter<'a>
+where
+    &'a Self: IntoIterator,
+    Self: 'a, {
+    /// Calls [`par_iter`] if the `one-thread` feature is not set and
+    /// [`into_iter`] otherwise.
+    ///
+    /// [`par_iter`]: rayon::iter::IntoParallelRefIterator::par_iter
+    /// [`into_iter`]: IntoIterator::into_iter
+    #[inline]
+    fn maybe_par_iter(&'a self) -> <&'a Self as IntoIterator>::IntoIter {
+        self.into_iter()
+    }
+}
+
+#[cfg(feature = "dev_no_rayon")]
+impl<'a, T: 'a + ?Sized> MaybeParIter<'a> for T where &'a T: IntoIterator {}

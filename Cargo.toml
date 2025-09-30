@@ -27,7 +27,11 @@ num_cpus = "1"
 flate2 = "1"
 rand_xoshiro = "0.7"
 rand = { version = "0.9", default-features = false, features = ["os_rng"] }
-rayon = "1"
+rayon = { version = "1" }
+
+[features]
+# An optional feature for disabling rayon parallelization in aligner
+dev_no_rayon = []
 
 [profile.dev]
 opt-level = 1

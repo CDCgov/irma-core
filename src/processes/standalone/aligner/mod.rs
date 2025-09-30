@@ -2,24 +2,24 @@ use crate::{
     aligner::{
         arg_parsing::{AlignerConfig, Alphabet, AnyMatrix, ParsedAlignerArgs, parse_aligner_args},
         methods::{AlignmentMethod, StripedSmithWatermanLocal, StripedSmithWatermanShared},
-        writers::send_alignment,
+        writers::{AdditionalBounds, AlignmentWriter},
     },
-    io::FastXReader,
+    io::{FastX, FastXReader},
 };
 use clap::{Args, builder::RangedI64ValueParser};
-use rayon::iter::{ParallelBridge, ParallelIterator};
-use std::{
-    borrow::Borrow,
-    io::{Read, Write},
-    path::PathBuf,
-    sync::mpsc,
-    thread,
-};
+use std::{borrow::Borrow, io::Read, path::PathBuf};
 use zoe::{
     data::{fasta::FastaSeq, matrices::WeightMatrix},
     math::AnyInt,
     prelude::NucleotidesView,
 };
+
+#[cfg(feature = "dev_no_rayon")]
+use crate::io::WriteFileZipStdout;
+#[cfg(not(feature = "dev_no_rayon"))]
+use rayon::iter::{ParallelBridge, ParallelIterator};
+#[cfg(not(feature = "dev_no_rayon"))]
+use std::sync::mpsc::Sender;
 
 mod arg_parsing;
 mod methods;
@@ -98,232 +98,239 @@ pub fn aligner_process(args: AlignerArgs) -> std::io::Result<()> {
     let ParsedAlignerArgs {
         query_reader,
         references,
-        mut output,
+        output,
         weight_matrix,
         config,
     } = parse_aligner_args(args)?;
 
+    #[cfg(not(feature = "dev_no_rayon"))]
     if config.single_thread {
         rayon::ThreadPoolBuilder::new().num_threads(1).build_global().unwrap();
     }
 
-    let (sender, receiver) = mpsc::channel();
-    let writer_thread = thread::spawn(move || -> std::io::Result<()> {
-        while let Ok(string) = receiver.recv() {
-            writeln!(output, "{string}")?;
-        }
-        Ok(())
-    });
+    #[cfg(not(feature = "dev_no_rayon"))]
+    let (mut writer, handle) = Sender::new_writer(output)?;
+    #[cfg(feature = "dev_no_rayon")]
+    let (mut writer, handle) = WriteFileZipStdout::new_writer(output)?;
 
-    dispatch_alphabet(query_reader, references, sender, weight_matrix, config)?;
+    dispatch_alphabet(query_reader, references, &mut writer, weight_matrix, config)?;
 
-    writer_thread.join().unwrap()
+    // The join the writer thread, if present
+    writer.finalize_writer(handle)
 }
 
 /// Dispatches the aligner based on the alphabet and weight matrix
-fn dispatch_alphabet<R: Read + Send>(
-    query_reader: FastXReader<R>, references: Vec<FastaSeq>, sender: mpsc::Sender<String>,
-    weight_matrix: AnyMatrix<'static, i8>, config: AlignerConfig,
-) -> std::io::Result<()> {
-    match weight_matrix {
-        AnyMatrix::Dna(weight_matrix) => dispatch_runner(query_reader, references, sender, weight_matrix, config),
-        AnyMatrix::AaNamed(weight_matrix) => dispatch_runner(query_reader, references, sender, weight_matrix, config),
-        AnyMatrix::AaSimple(weight_matrix) => dispatch_runner(query_reader, references, sender, weight_matrix, config),
-    }
-}
-
-/// Dispatches the aligner based on profile_from and best_match
-fn dispatch_runner<R, W, const S: usize>(
-    query_reader: FastXReader<R>, references: Vec<FastaSeq>, sender: mpsc::Sender<String>, weight_matrix: W,
+fn dispatch_alphabet<R, W>(
+    query_reader: FastXReader<R>, references: Vec<FastaSeq>, writer: &mut W, weight_matrix: AnyMatrix<'static, i8>,
     config: AlignerConfig,
 ) -> std::io::Result<()>
 where
     R: Read + Send,
-    W: Borrow<WeightMatrix<'static, i8, S>> + Sync + Send + 'static, {
+    W: AlignmentWriter + AdditionalBounds, {
+    match weight_matrix {
+        AnyMatrix::Dna(weight_matrix) => dispatch_runner(query_reader, references, writer, weight_matrix, config),
+        AnyMatrix::AaNamed(weight_matrix) => dispatch_runner(query_reader, references, writer, weight_matrix, config),
+        AnyMatrix::AaSimple(weight_matrix) => dispatch_runner(query_reader, references, writer, weight_matrix, config),
+    }
+}
+
+/// Dispatches the aligner based on profile_from and best_match
+fn dispatch_runner<R, W, M, const S: usize>(
+    query_reader: FastXReader<R>, references: Vec<FastaSeq>, writer: &mut W, weight_matrix: M, config: AlignerConfig,
+) -> std::io::Result<()>
+where
+    R: Read + Send,
+    W: AlignmentWriter + AdditionalBounds,
+    M: Borrow<WeightMatrix<'static, i8, S>> + Sync + Send + 'static, {
     match (config.profile_from_ref, config.best_match) {
         (false, false) => {
-            let method = StripedSmithWatermanLocal::<W, S>::new(weight_matrix, config.gap_open, config.gap_extend);
-            align_all_profile_from_query(method, query_reader, references, sender, config)
+            let method = StripedSmithWatermanLocal::<M, S>::new(weight_matrix, config.gap_open, config.gap_extend);
+            align_all_profile_from_query(method, query_reader, references, writer, config)
         }
         (true, false) => {
-            let method = StripedSmithWatermanShared::<W, S>::new(weight_matrix, config.gap_open, config.gap_extend);
-            align_all_profile_from_ref(method, query_reader, references, sender, config)
+            let method = StripedSmithWatermanShared::<M, S>::new(weight_matrix, config.gap_open, config.gap_extend);
+            align_all_profile_from_ref(method, query_reader, references, writer, config)
         }
         (false, true) => {
-            let method = StripedSmithWatermanLocal::<W, S>::new(weight_matrix, config.gap_open, config.gap_extend);
-            align_best_match_profile_from_query(method, query_reader, references, sender, config)
+            let method = StripedSmithWatermanLocal::<M, S>::new(weight_matrix, config.gap_open, config.gap_extend);
+            align_best_match_profile_from_query(method, query_reader, references, writer, config)
         }
         (true, true) => {
-            let method = StripedSmithWatermanShared::<W, S>::new(weight_matrix, config.gap_open, config.gap_extend);
-            align_best_match_profile_from_ref(method, query_reader, references, sender, config)
+            let method = StripedSmithWatermanShared::<M, S>::new(weight_matrix, config.gap_open, config.gap_extend);
+            align_best_match_profile_from_ref(method, query_reader, references, writer, config)
         }
     }
 }
 
 /// Performs all alignments using the provided `method`, with profiles built
 /// from the queries.
-///
-/// The results are sent to `sender`.
-fn align_all_profile_from_query<R, A>(
-    method: A, query_reader: FastXReader<R>, references: Vec<FastaSeq>, sender: mpsc::Sender<String>, config: AlignerConfig,
+fn align_all_profile_from_query<A, R, W>(
+    method: A, query_reader: FastXReader<R>, references: Vec<FastaSeq>, writer: &mut W, config: AlignerConfig,
 ) -> std::io::Result<()>
 where
+    A: AlignmentMethod,
     R: Read + Send,
-    A: AlignmentMethod, {
+    W: AlignmentWriter + AdditionalBounds, {
     // Compute all the reverse complements of the references ahead of time, if
     // rev_comp is true
     let references = method.maybe_zip_with_revcomp(&references, config.rev_comp);
 
-    query_reader
-        .par_bridge()
-        .try_for_each_with(sender, |sender, query| -> std::io::Result<()> {
-            let query = query?;
-            let profile = method.build_profile(&query)?;
+    align_all(query_reader, writer, |writer, query| -> std::io::Result<()> {
+        let query = query?;
+        let profile = method.build_profile(&query)?;
 
-            for (reference, rc_reference) in &references {
-                let mut alignment = method.align(&profile, &reference.sequence, rc_reference.as_ref())?;
-                if let Some((alignment, Strand::Reverse)) = alignment.as_mut() {
-                    // We have the reverse complement of the reference, but we
-                    // want the alignment to correspond to the reverse
-                    // complement of the query
-                    alignment.make_reverse();
-                }
-                send_alignment(sender, alignment, &query, reference, &config);
+        for (reference, rc_reference) in &references {
+            let mut alignment = method.align(&profile, &reference.sequence, rc_reference.as_ref())?;
+            if let Some((alignment, Strand::Reverse)) = alignment.as_mut() {
+                // We have the reverse complement of the reference, but we
+                // want the alignment to correspond to the reverse
+                // complement of the query
+                alignment.make_reverse();
             }
+            writer.write_alignment(alignment, &query, reference, &config)?;
+        }
 
-            Ok(())
-        })
+        Ok(())
+    })
 }
 
 /// Performs all alignments using the provided `method`, with profiles built
 /// from the references.
-///
-/// The results are sent to `sender`.
-fn align_all_profile_from_ref<R, A>(
-    method: A, query_reader: FastXReader<R>, references: Vec<FastaSeq>, sender: mpsc::Sender<String>, config: AlignerConfig,
+fn align_all_profile_from_ref<A, R, W>(
+    method: A, query_reader: FastXReader<R>, references: Vec<FastaSeq>, writer: &mut W, config: AlignerConfig,
 ) -> std::io::Result<()>
 where
+    A: for<'a> AlignmentMethod<Profile<'a>: Sync>,
     R: Read + Send,
-    A: for<'a> AlignmentMethod<Profile<'a>: Sync>, {
+    W: AlignmentWriter + AdditionalBounds, {
     // Build profiles first, which requires SharedProfile
     let ref_profiles = method.zip_with_profiles(&references)?;
 
-    query_reader
-        .par_bridge()
-        .try_for_each_with(sender, |sender, query| -> std::io::Result<()> {
-            let query = query?;
+    align_all(query_reader, writer, |writer, query| -> std::io::Result<()> {
+        let query = query?;
 
-            // Compute the reverse complement of the query, if rev_comp is true
-            let rc_query = config.rev_comp.then(|| {
-                NucleotidesView::from(query.sequence.as_slice())
-                    .to_reverse_complement()
-                    .into_vec()
-            });
+        // Compute the reverse complement of the query, if rev_comp is true
+        let rc_query = config.rev_comp.then(|| {
+            NucleotidesView::from(query.sequence.as_slice())
+                .to_reverse_complement()
+                .into_vec()
+        });
 
-            for (reference, ref_profile) in &ref_profiles {
-                // Invert the alignment, since we built the profile from the
-                // reference
-                let alignment = method
-                    .align(ref_profile, &query.sequence, rc_query.as_ref())?
-                    .map(|(alignment, strand)| (alignment.invert(), strand));
+        for (reference, ref_profile) in &ref_profiles {
+            // Invert the alignment, since we built the profile from the
+            // reference
+            let alignment = method
+                .align(ref_profile, &query.sequence, rc_query.as_ref())?
+                .map(|(alignment, strand)| (alignment.invert(), strand));
 
-                send_alignment(sender, alignment, &query, reference, &config);
-            }
+            writer.write_alignment(alignment, &query, reference, &config)?;
+        }
 
-            Ok(())
-        })
+        Ok(())
+    })
 }
 
 /// Performs all alignments between the streamed queries and the slurped
 /// references using the provided alignment method, but only keeping one
 /// alignment with the best score for each query.
-///
-/// `profile_seqs` corresponds to the queries, and `regular_seqs` corresponds to
-/// the references. The results are sent to `sender`.
-fn align_best_match_profile_from_query<R, A>(
-    method: A, query_reader: FastXReader<R>, references: Vec<FastaSeq>, sender: mpsc::Sender<String>, config: AlignerConfig,
+fn align_best_match_profile_from_query<A, R, W>(
+    method: A, query_reader: FastXReader<R>, references: Vec<FastaSeq>, writer: &mut W, config: AlignerConfig,
 ) -> std::io::Result<()>
 where
+    A: AlignmentMethod,
     R: Read + Send,
-    A: AlignmentMethod, {
+    W: AlignmentWriter + AdditionalBounds, {
     // Compute all the reverse complements of the references ahead of time, if
     // rev_comp is true
     let references = method.maybe_zip_with_revcomp(&references, config.rev_comp);
 
-    query_reader
-        .par_bridge()
-        .try_for_each_with(sender, |sender, query| -> std::io::Result<()> {
-            let query = query?;
-            let profile = method.build_profile(&query)?;
+    align_all(query_reader, writer, |writer, query| -> std::io::Result<()> {
+        let query = query?;
+        let profile = method.build_profile(&query)?;
 
-            let (best_reference, best_alignment) = references
-                .iter()
-                .map(|(reference, rc_reference)| {
-                    let alignment = method.align(&profile, &reference.sequence, rc_reference.as_ref())?;
-                    std::io::Result::Ok((reference, alignment))
-                })
-                .max_by_key(|res| match res {
-                    Ok((_reference, alignment)) => alignment
-                        .as_ref()
-                        .map_or(A::Score::ZERO, |(alignment, _strand)| alignment.score),
-                    // Map errors to maximum value, so they are guaranteed to propagate
-                    Err(_) => A::Score::MAX,
-                })
-                .ok_or(std::io::Error::other("No references were specified!"))??;
+        let (best_reference, best_alignment) = references
+            .iter()
+            .map(|(reference, rc_reference)| {
+                let alignment = method.align(&profile, &reference.sequence, rc_reference.as_ref())?;
+                std::io::Result::Ok((reference, alignment))
+            })
+            .max_by_key(|res| match res {
+                Ok((_reference, alignment)) => alignment
+                    .as_ref()
+                    .map_or(A::Score::ZERO, |(alignment, _strand)| alignment.score),
+                // Map errors to maximum value, so they are guaranteed to propagate
+                Err(_) => A::Score::MAX,
+            })
+            .ok_or(std::io::Error::other("No references were specified!"))??;
 
-            send_alignment(sender, best_alignment, &query, best_reference, &config);
-            Ok(())
-        })
+        writer.write_alignment(best_alignment, &query, best_reference, &config)
+    })
 }
 
 /// Performs all alignments between the streamed queries and the slurped
 /// references using the provided alignment method, but only keeping one
 /// alignment with the best score for each query.
-///
-/// `profile_seqs` corresponds to the references, and `regular_seqs` corresponds
-/// to the queries. The results are sent to `sender`.
-fn align_best_match_profile_from_ref<R, A>(
-    method: A, query_reader: FastXReader<R>, references: Vec<FastaSeq>, sender: mpsc::Sender<String>, config: AlignerConfig,
+fn align_best_match_profile_from_ref<A, R, W>(
+    method: A, query_reader: FastXReader<R>, references: Vec<FastaSeq>, writer: &mut W, config: AlignerConfig,
 ) -> std::io::Result<()>
 where
+    A: for<'a> AlignmentMethod<Profile<'a>: Sync>,
     R: Read + Send,
-    A: for<'a> AlignmentMethod<Profile<'a>: Sync>, {
+    W: AlignmentWriter + AdditionalBounds, {
     // Build profiles first, which requires `SharedProfile`
     let ref_profiles = method.zip_with_profiles(&references)?;
 
-    query_reader
-        .par_bridge()
-        .try_for_each_with(sender, |sender, query| -> std::io::Result<()> {
-            let query = query?;
+    align_all(query_reader, writer, |writer, query| -> std::io::Result<()> {
+        let query = query?;
 
-            // Compute the reverse complement of the query, if rev_comp is true
-            let rc_query = config.rev_comp.then(|| {
-                NucleotidesView::from(query.sequence.as_slice())
-                    .to_reverse_complement()
-                    .into_vec()
-            });
+        // Compute the reverse complement of the query, if rev_comp is true
+        let rc_query = config.rev_comp.then(|| {
+            NucleotidesView::from(query.sequence.as_slice())
+                .to_reverse_complement()
+                .into_vec()
+        });
 
-            let (best_reference, best_alignment) = ref_profiles
-                .iter()
-                .map(|(reference, ref_profile)| {
-                    let alignment = method.align(ref_profile, &query.sequence, rc_query.as_ref())?;
-                    std::io::Result::Ok((reference, alignment))
-                })
-                .max_by_key(|res| match res {
-                    Ok((_reference, alignment)) => alignment
-                        .as_ref()
-                        .map_or(A::Score::ZERO, |(alignment, _strand)| alignment.score),
-                    // Map errors to maximum value, so they are guaranteed to propagate
-                    Err(_) => A::Score::MAX,
-                })
-                .ok_or(std::io::Error::other("No references were specified!"))??;
+        let (best_reference, best_alignment) = ref_profiles
+            .iter()
+            .map(|(reference, ref_profile)| {
+                let alignment = method.align(ref_profile, &query.sequence, rc_query.as_ref())?;
+                std::io::Result::Ok((reference, alignment))
+            })
+            .max_by_key(|res| match res {
+                Ok((_reference, alignment)) => alignment
+                    .as_ref()
+                    .map_or(A::Score::ZERO, |(alignment, _strand)| alignment.score),
+                // Map errors to maximum value, so they are guaranteed to propagate
+                Err(_) => A::Score::MAX,
+            })
+            .ok_or(std::io::Error::other("No references were specified!"))??;
 
-            // Invert the alignment, since we built profile from reference
-            let best_alignment = best_alignment.map(|(alignment, strand)| (alignment.invert(), strand));
+        // Invert the alignment, since we built profile from reference
+        let best_alignment = best_alignment.map(|(alignment, strand)| (alignment.invert(), strand));
 
-            send_alignment(sender, best_alignment, &query, best_reference, &config);
-            Ok(())
-        })
+        writer.write_alignment(best_alignment, &query, best_reference, &config)
+    })
+}
+
+/// Performs all alignments as indicated by closure `f`, using either a parallel
+/// iterator (`par_bridge`) or a serial iterator depending on the `one-thread`
+/// feature.
+#[inline]
+fn align_all<R, W, F>(query_reader: FastXReader<R>, writer: &mut W, f: F) -> std::io::Result<()>
+where
+    R: Read + Send,
+    W: AlignmentWriter + AdditionalBounds,
+    F: Fn(&mut W, std::io::Result<FastX>) -> std::io::Result<()> + Sync + Send, {
+    #[cfg(not(feature = "dev_no_rayon"))]
+    query_reader.par_bridge().try_for_each_with(writer.clone(), f)?;
+
+    #[cfg(feature = "dev_no_rayon")]
+    {
+        let mut query_reader = query_reader;
+        query_reader.try_for_each(|query| f(writer, query))?;
+    }
+
+    Ok(())
 }
 
 /// An enum to track which strand the alignment mapped to

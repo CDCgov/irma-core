@@ -15,23 +15,23 @@ use zoe::{
 ///
 /// ## Parameters
 ///
-/// * `W` - The type for the weight matrix (either owned or a reference)
+/// * `M` - The type for the weight matrix (either owned or a reference)
 /// * `S` - The alphabet size
-pub struct StripedSmithWatermanLocal<W, const S: usize>
+pub struct StripedSmithWatermanLocal<M, const S: usize>
 where
-    W: Borrow<WeightMatrix<'static, i8, S>>, {
-    weight_matrix: W,
+    M: Borrow<WeightMatrix<'static, i8, S>>, {
+    weight_matrix: M,
     gap_open:      i8,
     gap_extend:    i8,
 }
 
-impl<W, const S: usize> StripedSmithWatermanLocal<W, S>
+impl<M, const S: usize> StripedSmithWatermanLocal<M, S>
 where
-    W: Borrow<WeightMatrix<'static, i8, S>>,
+    M: Borrow<WeightMatrix<'static, i8, S>>,
 {
     /// Creates a new [`StripedSmithWatermanLocal`] alignment method with the
     /// provided scoring parameters.
-    pub fn new(weight_matrix: W, gap_open: i8, gap_extend: i8) -> Self {
+    pub fn new(weight_matrix: M, gap_open: i8, gap_extend: i8) -> Self {
         Self {
             weight_matrix,
             gap_open,
@@ -40,9 +40,9 @@ where
     }
 }
 
-impl<W, const S: usize> AlignmentMethod for StripedSmithWatermanLocal<W, S>
+impl<M, const S: usize> AlignmentMethod for StripedSmithWatermanLocal<M, S>
 where
-    W: Borrow<WeightMatrix<'static, i8, S>> + Sync + Send + 'static,
+    M: Borrow<WeightMatrix<'static, i8, S>> + Sync + Send + 'static,
 {
     type Profile<'a>
         = LocalProfiles<'a, 32, 16, 8, S>

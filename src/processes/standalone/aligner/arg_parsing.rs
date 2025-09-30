@@ -1,9 +1,9 @@
-use std::fmt::Display;
+use std::{fmt::Display, path::PathBuf};
 
 use crate::{
     aligner::AlignerArgs,
     args::abort_clap,
-    io::{FastXReader, FromFilename, ReadFileZip, ReadFileZipPipe, WriteFileZipStdout},
+    io::{FastXReader, FromFilename, ReadFileZip, ReadFileZipPipe},
 };
 use clap::{ValueEnum, builder::PossibleValue, error::ErrorKind};
 use zoe::{
@@ -22,8 +22,8 @@ pub struct ParsedAlignerArgs {
     pub query_reader:  FastXReader<ReadFileZipPipe>,
     /// The slurped reference sequences
     pub references:    Vec<FastaSeq>,
-    /// The output for the alignments
-    pub output:        WriteFileZipStdout,
+    /// The output path for the alignments
+    pub output:        Option<PathBuf>,
     /// The weight matrix to use for the alignment
     pub weight_matrix: AnyMatrix<'static, i8>,
     /// Any additional configuration
@@ -45,6 +45,7 @@ pub struct AlignerConfig {
     /// Whether to perform best match alignment
     pub best_match:       bool,
     /// Whether to set the Rayon number of threads to one
+    #[cfg(not(feature = "dev_no_rayon"))]
     pub single_thread:    bool,
 }
 
@@ -90,12 +91,11 @@ pub fn parse_aligner_args(args: AlignerArgs) -> std::io::Result<ParsedAlignerArg
 
     let query_reader = FastXReader::<ReadFileZipPipe>::from_filename(args.query_file)?;
     let references = FastaReader::<ReadFileZip>::from_filename(args.ref_file)?.collect::<Result<_, _>>()?;
-    let output = WriteFileZipStdout::from_optional_filename(args.output)?;
 
     Ok(ParsedAlignerArgs {
         query_reader,
         references,
-        output,
+        output: args.output,
         weight_matrix,
         config: AlignerConfig {
             gap_open,
@@ -104,6 +104,7 @@ pub fn parse_aligner_args(args: AlignerArgs) -> std::io::Result<ParsedAlignerArg
             profile_from_ref: args.profile_from_ref,
             exclude_unmapped: args.exclude_unmapped,
             best_match: args.best_match,
+            #[cfg(not(feature = "dev_no_rayon"))]
             single_thread: args.single_thread,
         },
     })

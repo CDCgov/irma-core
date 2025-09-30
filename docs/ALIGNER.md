@@ -4,6 +4,12 @@
 
 IRMA-core's `aligner` provides an efficient and exact local sequence alignment routine using Striped Smith-Waterman. This is particularly useful for aligning Next Generation Sequencing (NGS) reads and performing full alignment between short genomes.
 
+## Multithreading
+
+`aligner` uses `rayon` to perform multithreading to enable higher throughput. To specify the number of threads, set the `RAYON_NUM_THREADS` environmental variable as described [here](https://docs.rs/rayon/latest/rayon/fn.max_num_threads.html). Or, to limit to a single thread, pass `--single-thread` to `aligner`.
+
+For benchmarking or scenarios where a single thread is always used, the `dev_no_rayon` feature can be enabled in IRMA-core to remove the use of channels. This will also remove the `--single-thread` flag since it is no longer relevant. This feature may be removed in future releases, and so should not be relied upon except for testing.
+
 ## Inputs and Outputs
 
 The first positional argument is a FASTA file containing the reference sequence(s), and the second argument is a FASTA or FASTQ file containing the queries. Either file may be gzip-compressed, in which case it is assumed to end in `.gz`. The output is in the [SAM alignment format](https://samtools.github.io/hts-specs/SAMv1.pdf). The score is reported with the `AS` tag for mapped reads, and the `MAPQ` field is not used (it is set to 255). The output file is specified with `--out` or `--output` flags. If not specified, output is directed to `STDOUT`. If the provided file ends in `.gz`, the output will be zipped.
@@ -95,3 +101,4 @@ By default, `aligner` will align all references against all queries and output e
 | `--exclude-unmapped` | Excludes unmapped alignments from the output file                                                 |
 | `--best-match`       | The best matching alignment for each query is output, instead of all of them                      |
 | `--profile-from-ref` | Which sequence to build the striped profiles from                                                 |
+| `--single-thread`    | Sets the number of `rayon` threads to 1. See [here](#features) for more details                   |
