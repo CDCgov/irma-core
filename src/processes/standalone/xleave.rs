@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use zoe::data::records::HeaderReadable;
 
 #[derive(Args, Debug)]
-pub struct XLeaveArgs {
+pub struct XleaveArgs {
     /// Path to FASTQ, FASTA, or .gz file to be interleaved/deinterleaved
     pub input_file1: PathBuf,
 
@@ -27,7 +27,7 @@ pub struct XLeaveArgs {
     pub output_file2: Option<PathBuf>,
 }
 
-pub fn xleave_process(args: XLeaveArgs) -> Result<(), std::io::Error> {
+pub fn xleave_process(args: XleaveArgs) -> Result<(), std::io::Error> {
     check_distinct_files(
         &args.input_file1,
         args.input_file2.as_ref(),

@@ -37,7 +37,7 @@ enum Commands {
     /// Randomly downsamples FastQ or FASTA files. Deinterleaving supported.
     Sampler(SamplerArgs),
     /// Interleaves or De-interleaves paired FastQ or FASTA files.
-    Xleave(XLeaveArgs),
+    Xleave(XleaveArgs),
     /// Perform sequence alignment,
     Aligner(AlignerArgs),
 }

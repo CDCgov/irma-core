@@ -15,6 +15,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 
 ### Fixes
 
+- Adds requirement in `sampler` arguments to provide either a `--subsample-target` or a `--percent-target`, fixing `unreachable` error when neither is provided
 - Fixes a bug where leading whitespace in a record file can cause the program to stall (in `sampler` and `aligner`)
 - Allows repeated input/output files from processes if they are device files (e.g., `/dev/null`)
 - `merge-sam` now respects the seed set in the environmental variable `IRMA_SEED`
