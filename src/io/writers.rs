@@ -29,16 +29,25 @@ define_whichever! {
 /// length-two arrays of records can be written to [`PairedWriters`].
 ///
 /// [`WriteRecord`]: crate::io::WriteRecord
-pub struct PairedWriters<W: Write> {
+pub struct PairedWriters<W> {
     pub writer1: W,
     pub writer2: W,
 }
 
-impl<W: Write> PairedWriters<W> {
+impl<W> PairedWriters<W> {
     /// Creates a new [`PairedWriters`] from two writers.
     #[inline]
     pub fn new(writer1: W, writer2: W) -> Self {
         Self { writer1, writer2 }
+    }
+}
+
+impl<W: Write> PairedWriters<W> {
+    /// Flushes the two stored writers.
+    #[inline]
+    pub fn flush(&mut self) -> std::io::Result<()> {
+        self.writer1.flush()?;
+        self.writer2.flush()
     }
 }
 
@@ -54,7 +63,7 @@ impl<W: Write> PairedWriters<W> {
 ///
 /// [`WriteRecord`]: crate::io::WriteRecord
 /// [`WriteRecords`]: crate::io::WriteRecords
-pub enum RecordWriters<W: Write> {
+pub enum RecordWriters<W> {
     /// A single writer for single end reads.
     SingleEnd(W),
     /// A pair of writers for paired reads.
@@ -128,26 +137,5 @@ impl Default for WriteFileZipStdout {
     #[inline]
     fn default() -> Self {
         Self::Stdout(BufWriter::new(stdout()))
-    }
-}
-
-/// A trait providing the ability to flush all writers in a struct.
-pub trait FlushWriter {
-    /// Flushes all the writers.
-    fn flush_all(&mut self) -> std::io::Result<()>;
-}
-
-impl<W: Write> FlushWriter for W {
-    #[inline]
-    fn flush_all(&mut self) -> std::io::Result<()> {
-        self.flush()
-    }
-}
-
-impl<W: Write> FlushWriter for PairedWriters<W> {
-    #[inline]
-    fn flush_all(&mut self) -> std::io::Result<()> {
-        self.writer1.flush()?;
-        self.writer2.flush()
     }
 }

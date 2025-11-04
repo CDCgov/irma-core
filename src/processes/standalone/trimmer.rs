@@ -1,8 +1,6 @@
 use crate::{
     args::clipping::{ClippingArgs, ParsedClippingArgs, parse_clipping_args},
-    io::{
-        WriteFileZipStdout, FlushWriter, ReadFileZipPipe, RecordReaders, RecordWriters, WriteRecord, check_distinct_files,
-    },
+    io::{ReadFileZipPipe, RecordReaders, RecordWriters, WriteFileZipStdout, WriteRecord, check_distinct_files},
     utils::{
         paired_reads::{ZipPairedReadsExt, ZipReadsError},
         trimming::trim_read,
@@ -122,7 +120,7 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
                 reader1
                     .zip_paired_reads(reader2)
                     .try_for_each(|pair| trim_and_write_pair(pair?, &trimming_args, &mut writer))?;
-                writer.flush_all()?;
+                writer.flush()?;
             }
         }
     } else {

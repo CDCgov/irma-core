@@ -3,7 +3,7 @@ use clap::{Args, ValueEnum, builder::PossibleValue};
 use foldhash::fast::SeedableRandomState;
 use std::{fmt::Debug, num::NonZeroUsize, path::PathBuf};
 use zoe::{
-    kmer::ThreeBitKmerSet,
+    kmer::encoders::three_bit::ThreeBitKmerSet,
     prelude::{CheckNucleotides, FastaReader, IsValidDNA, Nucleotides},
 };
 

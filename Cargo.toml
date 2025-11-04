@@ -18,8 +18,8 @@ readme = "README.md"
 
 
 [dependencies]
-zoe = { version = "0.0.22", default-features = false, features = [
-    "multiversion",
+zoe = { git = "https://github.com/CDCgov/zoe.git", default-features = false, features = [
+    "multiversion", "rand"
 ] }
 clap = { version = "4", features = ["derive"] }
 foldhash = "0.2"

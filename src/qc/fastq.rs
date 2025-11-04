@@ -1,7 +1,7 @@
 use foldhash::fast::SeedableRandomState;
 use zoe::{
     data::fastq::FastQ,
-    kmer::ThreeBitKmerSet,
+    kmer::encoders::three_bit::ThreeBitKmerSet,
     prelude::*,
     search::{RangeSearch, ToRangeSearch},
 };
