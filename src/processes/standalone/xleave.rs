@@ -1,5 +1,8 @@
 use crate::{
-    io::{FastXReader, RecordWriters, WriteFileZipStdout, WriteRecord, WriteRecords, get_paired_readers_and_writers},
+    io::{
+        FastXReader, ReadFileZipPipe, RecordReaders, RecordWriters, WriteFileZipStdout, WriteRecord, WriteRecords,
+        check_distinct_files,
+    },
     utils::paired_reads::{DeinterleavedPairedReadsExt, ZipPairedReadsExt},
 };
 use clap::Args;
@@ -25,14 +28,18 @@ pub struct XLeaveArgs {
 }
 
 pub fn xleave_process(args: XLeaveArgs) -> Result<(), std::io::Error> {
-    let (reader1, reader2, writer) = get_paired_readers_and_writers(
+    check_distinct_files(
         &args.input_file1,
         args.input_file2.as_ref(),
-        args.output_file1,
-        args.output_file2,
+        args.output_file1.as_ref(),
+        args.output_file2.as_ref(),
     )?;
 
-    match (reader1, reader2) {
+    let readers =
+        RecordReaders::<FastXReader<ReadFileZipPipe>>::from_filenames(&args.input_file1, args.input_file2.as_ref())?;
+    let writer = RecordWriters::<WriteFileZipStdout>::from_optional_filenames(args.output_file1, args.output_file2)?;
+
+    match (readers.reader1, readers.reader2) {
         (FastXReader::Fastq(reader), None) => match writer {
             RecordWriters::SingleEnd(_) => {
                 return Err(std::io::Error::other(

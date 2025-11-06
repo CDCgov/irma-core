@@ -4,7 +4,7 @@
 
 use crate::{
     args::clipping::{ClippingArgs, ParsedClippingArgs, parse_clipping_args},
-    io::{ReadFileZip, readers_from_files},
+    io::{ReadFileZipPipe, RecordReaders},
     qc::{fastq::ReadTransforms, fastq_metadata::*},
     utils::{
         get_hasher,
@@ -104,8 +104,8 @@ pub fn preprocess_process(args: PreprocessArgs) -> Result<(), std::io::Error> {
 
 struct ParsedPreprocessIoArgs {
     table_writer: BufWriter<File>,
-    reader1:      FastQReader<ReadFileZip>,
-    reader2:      Option<FastQReader<ReadFileZip>>,
+    reader1:      FastQReader<ReadFileZipPipe>,
+    reader2:      Option<FastQReader<ReadFileZipPipe>>,
     log_writer:   Option<BufWriter<File>>,
     log_file:     Option<PathBuf>,
 }
@@ -139,7 +139,7 @@ fn parse_preprocess_args(args: PreprocessArgs) -> std::io::Result<ParsedPreproce
         clipping_args,
     } = args;
 
-    let (reader1, reader2) = readers_from_files(&fastq_input_file1, fastq_input_file2.as_ref())?;
+    let RecordReaders { reader1, reader2 } = RecordReaders::from_filenames(fastq_input_file1, fastq_input_file2)?;
 
     let log_writer = match log_file {
         Some(ref file_path) => Some(BufWriter::new(File::create(file_path)?)),

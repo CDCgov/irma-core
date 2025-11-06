@@ -17,6 +17,7 @@ pub trait WriteRecord<W> {
 }
 
 impl<W: Write> WriteRecord<W> for FastQ {
+    /// Writes a [`FastQ`] record to a single writer.
     #[inline]
     fn write_record(self, writer: &mut W) -> std::io::Result<()> {
         write!(writer, "{self}")
@@ -24,6 +25,7 @@ impl<W: Write> WriteRecord<W> for FastQ {
 }
 
 impl<W: Write> WriteRecord<W> for FastQView<'_> {
+    /// Writes a [`FastQView`] record to a single writer.
     #[inline]
     fn write_record(self, writer: &mut W) -> std::io::Result<()> {
         write!(writer, "{self}")
@@ -31,6 +33,7 @@ impl<W: Write> WriteRecord<W> for FastQView<'_> {
 }
 
 impl<W: Write> WriteRecord<W> for FastQViewMut<'_> {
+    /// Writes a [`FastQViewMut`] record to a single writer.
     #[inline]
     fn write_record(self, writer: &mut W) -> std::io::Result<()> {
         write!(writer, "{self}")
@@ -38,6 +41,7 @@ impl<W: Write> WriteRecord<W> for FastQViewMut<'_> {
 }
 
 impl<W: Write> WriteRecord<W> for FastaSeq {
+    /// Writes a [`FastaSeq`] record to a single writer.
     #[inline]
     fn write_record(self, writer: &mut W) -> std::io::Result<()> {
         write!(writer, "{self}")
@@ -49,6 +53,8 @@ where
     W: Write,
     std::io::Error: From<E>,
 {
+    /// Writes a [`FastQ`] record to a single writer, propagating an error if
+    /// present.
     #[inline]
     fn write_record(self, writer: &mut W) -> std::io::Result<()> {
         write!(writer, "{}", self?)
@@ -60,6 +66,8 @@ where
     W: Write,
     std::io::Error: From<E>,
 {
+    /// Writes a [`FastQView`] record to a single writer, propagating an error
+    /// if present.
     #[inline]
     fn write_record(self, writer: &mut W) -> std::io::Result<()> {
         write!(writer, "{}", self?)
@@ -71,6 +79,8 @@ where
     W: Write,
     std::io::Error: From<E>,
 {
+    /// Writes a [`FastQViewMut`] record to a single writer, propagating an
+    /// error if present.
     #[inline]
     fn write_record(self, writer: &mut W) -> std::io::Result<()> {
         write!(writer, "{}", self?)
@@ -82,6 +92,8 @@ where
     W: Write,
     std::io::Error: From<E>,
 {
+    /// Writes a [`FastaSeq`] record to a single writer, propagating an error if
+    /// present.
     #[inline]
     fn write_record(self, writer: &mut W) -> std::io::Result<()> {
         write!(writer, "{}", self?)
@@ -94,6 +106,8 @@ where
     B: WriteRecord<W>,
     W: Write,
 {
+    /// Writes a tuple of two individual records to a single writer,
+    /// interleaving them.
     #[inline]
     fn write_record(self, writer: &mut W) -> std::io::Result<()> {
         let (read1, read2) = self;
@@ -108,6 +122,8 @@ where
     B: WriteRecord<W>,
     W: Write,
 {
+    /// Writes a tuple of two individual records to a pair of writers in a
+    /// [`PairedWriters`] struct.
     #[inline]
     fn write_record(self, writer: &mut PairedWriters<W>) -> std::io::Result<()> {
         let (read1, read2) = self;
@@ -123,6 +139,8 @@ where
     W: Write,
     std::io::Error: From<E>,
 {
+    /// Writes a tuple of two individual records to a single writer,
+    /// interleaving them and propagating an error if present.
     #[inline]
     fn write_record(self, writer: &mut W) -> std::io::Result<()> {
         let (read1, read2) = self?;
@@ -138,6 +156,8 @@ where
     W: Write,
     std::io::Error: From<E>,
 {
+    /// Writes a tuple of two individual records to a pair of writers in a
+    /// [`PairedWriters`] struct, propagating an error if present.
     #[inline]
     fn write_record(self, writer: &mut PairedWriters<W>) -> std::io::Result<()> {
         let (read1, read2) = self?;
@@ -151,6 +171,8 @@ where
     A: WriteRecord<W>,
     W: Write,
 {
+    /// Writes an array of two individual records to a single writer,
+    /// interleaving them.
     #[inline]
     fn write_record(self, writer: &mut W) -> std::io::Result<()> {
         let [read1, read2] = self;
@@ -164,6 +186,8 @@ where
     A: WriteRecord<W>,
     W: Write,
 {
+    /// Writes an array of two individual records to a pair of writers in a
+    /// [`PairedWriters`] struct.
     #[inline]
     fn write_record(self, writer: &mut PairedWriters<W>) -> std::io::Result<()> {
         let [read1, read2] = self;
@@ -178,6 +202,8 @@ where
     W: Write,
     std::io::Error: From<E>,
 {
+    /// Writes an array of two individual records to a single writer,
+    /// interleaving them and propagating an error if present.
     #[inline]
     fn write_record(self, writer: &mut W) -> std::io::Result<()> {
         let [read1, read2] = self?;
@@ -192,6 +218,8 @@ where
     W: Write,
     std::io::Error: From<E>,
 {
+    /// Writes an array of two individual records to a pair of writers in a
+    /// [`PairedWriters`] struct, propagating an error if present.
     #[inline]
     fn write_record(self, writer: &mut PairedWriters<W>) -> std::io::Result<()> {
         let [read1, read2] = self?;
@@ -201,9 +229,11 @@ where
 }
 
 /// An extension trait for iterators allowing all of their records to be written
-/// to a supported writer type `W`. This relies on the [`WriteRecord`] trait.
+/// to a supported writer type `W`.
+///
+/// This relies on the [`WriteRecord`] trait.
 pub trait WriteRecords<W> {
-    /// Write all the records the iterator to the `writer` of supported type
+    /// Writes all the records in the iterator to the `writer` of supported type
     /// `W`.
     fn write_records(self, writer: W) -> std::io::Result<()>;
 }
@@ -213,6 +243,8 @@ where
     I: Iterator<Item: WriteRecord<W>>,
     W: FlushWriter,
 {
+    /// Writes all the records in the iterator to the `writer` of supported type
+    /// `W`.
     #[inline]
     fn write_records(mut self, mut writer: W) -> std::io::Result<()> {
         self.try_for_each(|record| record.write_record(&mut writer))?;
@@ -225,6 +257,10 @@ where
     I: Iterator + WriteRecords<W> + WriteRecords<PairedWriters<W>>,
     W: Write,
 {
+    /// Writes all the records in the iterator to the one or two writes
+    /// contained in the [`RecordWriters`] enum.
+    ///
+    /// The reads will be interleaved if there is only one writer.
     #[inline]
     fn write_records(self, writer: RecordWriters<W>) -> std::io::Result<()> {
         match writer {

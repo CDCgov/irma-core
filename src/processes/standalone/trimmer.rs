@@ -1,6 +1,8 @@
 use crate::{
     args::clipping::{ClippingArgs, ParsedClippingArgs, parse_clipping_args},
-    io::{FlushWriter, ReadFileZip, RecordWriters, WriteFileZipStdout, WriteRecord, get_paired_readers_and_writers},
+    io::{
+        WriteFileZipStdout, FlushWriter, ReadFileZipPipe, RecordReaders, RecordWriters, WriteRecord, check_distinct_files,
+    },
     utils::{
         paired_reads::{ZipPairedReadsExt, ZipReadsError},
         trimming::trim_read,
@@ -145,8 +147,8 @@ struct ParsedTrimmerArgs {
 
 /// Parsed IO arguments for single or paired reads
 struct ParsedPairedIoArgs {
-    reader1: FastQReader<ReadFileZip>,
-    reader2: Option<FastQReader<ReadFileZip>>,
+    reader1: FastQReader<ReadFileZipPipe>,
+    reader2: Option<FastQReader<ReadFileZipPipe>>,
     writer:  RecordWriters<WriteFileZipStdout>,
 }
 
@@ -180,8 +182,16 @@ fn parse_trimmer_args(args: TrimmerArgs) -> std::io::Result<ParsedTrimmerArgs> {
         clipping_args,
     } = args;
 
-    let (reader1, reader2, writer) =
-        get_paired_readers_and_writers(fastq_input_file, fastq_input_file2, fastq_output_file, fastq_output_file2)?;
+    check_distinct_files(
+        &fastq_input_file,
+        fastq_input_file2.as_ref(),
+        fastq_output_file.as_ref(),
+        fastq_output_file2.as_ref(),
+    )?;
+    let readers = RecordReaders::from_filenames(fastq_input_file, fastq_input_file2)?;
+    let writer = RecordWriters::from_optional_filenames(fastq_output_file, fastq_output_file2)?;
+
+    let RecordReaders { reader1, reader2 } = readers;
 
     let min_length = min_length.get();
 
