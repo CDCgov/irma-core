@@ -25,7 +25,7 @@ pub struct XLeaveArgs {
 }
 
 pub fn xleave_process(args: XLeaveArgs) -> Result<(), std::io::Error> {
-    let (reader1, reader2, writer, threads) = get_paired_readers_and_writers(
+    let (reader1, reader2, writer) = get_paired_readers_and_writers(
         &args.input_file1,
         args.input_file2.as_ref(),
         args.output_file1,
@@ -77,7 +77,6 @@ pub fn xleave_process(args: XLeaveArgs) -> Result<(), std::io::Error> {
         }
     }
 
-    threads.finalize()?;
     Ok(())
 }
 

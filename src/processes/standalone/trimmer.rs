@@ -1,8 +1,6 @@
 use crate::{
     args::clipping::{ClippingArgs, ParsedClippingArgs, parse_clipping_args},
-    io::{
-        FlushWriter, IoThreads, ReadFileZip, RecordWriters, WriteFileZipStdout, WriteRecord, get_paired_readers_and_writers,
-    },
+    io::{FlushWriter, ReadFileZip, RecordWriters, WriteFileZipStdout, WriteRecord, get_paired_readers_and_writers},
     utils::{
         paired_reads::{ZipPairedReadsExt, ZipReadsError},
         trimming::trim_read,
@@ -57,7 +55,6 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
             writer,
         },
         trimming_args,
-        threads,
     } = parse_trimmer_args(args)?;
 
     if let Some(mut reader2) = reader2 {
@@ -137,8 +134,6 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
         }
     }
 
-    threads.finalize()?;
-
     Ok(())
 }
 
@@ -146,7 +141,6 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
 struct ParsedTrimmerArgs {
     io_args:       ParsedPairedIoArgs,
     trimming_args: ParsedTrimmerOptions,
-    threads:       IoThreads,
 }
 
 /// Parsed IO arguments for single or paired reads
@@ -186,7 +180,7 @@ fn parse_trimmer_args(args: TrimmerArgs) -> std::io::Result<ParsedTrimmerArgs> {
         clipping_args,
     } = args;
 
-    let (reader1, reader2, writer, threads) =
+    let (reader1, reader2, writer) =
         get_paired_readers_and_writers(fastq_input_file, fastq_input_file2, fastq_output_file, fastq_output_file2)?;
 
     let min_length = min_length.get();
@@ -200,7 +194,7 @@ fn parse_trimmer_args(args: TrimmerArgs) -> std::io::Result<ParsedTrimmerArgs> {
     })?;
 
     let parsed = ParsedTrimmerArgs {
-        io_args: ParsedPairedIoArgs {
+        io_args:       ParsedPairedIoArgs {
             reader1,
             reader2,
             writer,
@@ -211,7 +205,6 @@ fn parse_trimmer_args(args: TrimmerArgs) -> std::io::Result<ParsedTrimmerArgs> {
             min_length,
             clipping_args,
         },
-        threads,
     };
 
     Ok(parsed)

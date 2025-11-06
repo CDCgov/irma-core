@@ -4,7 +4,7 @@
 
 use crate::{
     args::clipping::{ClippingArgs, ParsedClippingArgs, parse_clipping_args},
-    io::{IoThreads, ReadFileZip, readers_from_files},
+    io::{ReadFileZip, readers_from_files},
     qc::{fastq::ReadTransforms, fastq_metadata::*},
     utils::{
         get_hasher,
@@ -73,11 +73,7 @@ static MODULE: &str = module_path!();
 ///
 /// Sub-program for processing FASTQ data.
 pub fn preprocess_process(args: PreprocessArgs) -> Result<(), std::io::Error> {
-    let ParsedPreprocessArgs {
-        mut io_args,
-        options,
-        threads,
-    } = parse_preprocess_args(args)?;
+    let ParsedPreprocessArgs { mut io_args, options } = parse_preprocess_args(args)?;
 
     let paired_reads = io_args.reader2.is_some();
 
@@ -103,8 +99,6 @@ pub fn preprocess_process(args: PreprocessArgs) -> Result<(), std::io::Error> {
         )?;
     }
 
-    threads.finalize()?;
-
     Ok(())
 }
 
@@ -129,7 +123,6 @@ struct ParsedPreprocessOptions {
 struct ParsedPreprocessArgs {
     io_args: ParsedPreprocessIoArgs,
     options: ParsedPreprocessOptions,
-    threads: IoThreads,
 }
 
 fn parse_preprocess_args(args: PreprocessArgs) -> std::io::Result<ParsedPreprocessArgs> {
@@ -146,7 +139,7 @@ fn parse_preprocess_args(args: PreprocessArgs) -> std::io::Result<ParsedPreproce
         clipping_args,
     } = args;
 
-    let (reader1, reader2, threads) = readers_from_files(&fastq_input_file1, fastq_input_file2.as_ref())?;
+    let (reader1, reader2) = readers_from_files(&fastq_input_file1, fastq_input_file2.as_ref())?;
 
     let log_writer = match log_file {
         Some(ref file_path) => Some(BufWriter::new(File::create(file_path)?)),
@@ -176,7 +169,6 @@ fn parse_preprocess_args(args: PreprocessArgs) -> std::io::Result<ParsedPreproce
             filter_widows,
             clipping_args,
         },
-        threads,
     };
 
     Ok(parsed)

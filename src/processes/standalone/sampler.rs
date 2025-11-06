@@ -1,6 +1,6 @@
 use crate::io::{
-    FastXReader, IoThreads, ReadFileZip, RecordWriters, WriteFileZipStdout, WriteRecord, WriteRecords,
-    get_paired_readers_and_writers, is_gz,
+    FastXReader, ReadFileZip, RecordWriters, WriteFileZipStdout, WriteRecord, WriteRecords, get_paired_readers_and_writers,
+    is_gz,
 };
 use crate::utils::paired_reads::{DeinterleavedPairedReads, DeinterleavedPairedReadsExt, ZipPairedReadsExt};
 use clap::Args;
@@ -63,7 +63,7 @@ fn validate_percent(value: &str) -> Result<usize, String> {
 
 /// main process getting called by irma-core main.rs
 pub fn sampler_process(args: SamplerArgs) -> Result<(), std::io::Error> {
-    let (io_args, rng, threads, target) = parse_sampler_args(args)?;
+    let (io_args, rng, target) = parse_sampler_args(args)?;
 
     // Get the population sequence count from one of the files if possible
     let mut seq_count = get_paired_seq_count(io_args.input_path1, io_args.input_path2, &io_args.reader1)?;
@@ -102,7 +102,6 @@ pub fn sampler_process(args: SamplerArgs) -> Result<(), std::io::Error> {
         }
     }
 
-    threads.finalize()?;
     Ok(())
 }
 
@@ -229,14 +228,14 @@ enum SamplingTarget {
     Count(usize),
 }
 
-fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, IoThreads, SamplingTarget), std::io::Error> {
+fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, SamplingTarget), std::io::Error> {
     let rng = if let Some(seed) = &args.rng_seed {
         Xoshiro256StarStar::seed_from_u64(*seed)
     } else {
         Xoshiro256StarStar::from_os_rng()
     };
 
-    let (fastq_reader1, fastq_reader2, writer, threads) = get_paired_readers_and_writers(
+    let (fastq_reader1, fastq_reader2, writer) = get_paired_readers_and_writers(
         &args.input_file1,
         args.input_file2.as_ref(),
         args.output_file1,
@@ -271,7 +270,7 @@ fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, 
     } else {
         unreachable!("This can't be reached because clap requires a value for either count or percent")
     };
-    Ok((io_args, rng, threads, target))
+    Ok((io_args, rng, target))
 }
 
 fn get_seq_count(fastq: &PathBuf, reader: &FastXReader<ReadFileZip>) -> std::io::Result<usize> {

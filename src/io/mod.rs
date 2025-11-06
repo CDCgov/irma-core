@@ -2,7 +2,7 @@ use flate2::{Compression, read::MultiGzDecoder, write::GzEncoder};
 use std::{
     error::Error,
     fs::File,
-    io::{BufWriter, ErrorKind, PipeReader, Read, Stdin, Stdout, Write, stdout},
+    io::{BufWriter, PipeReader, Read, Stdin, Stdout, Write, stdout},
     path::{Path, PathBuf},
     thread::{self, JoinHandle},
 };
@@ -14,6 +14,78 @@ mod write_records;
 pub use fastx::*;
 pub use write_records::*;
 
+/// A reader for a [gzip file](https://www.rfc-editor.org/rfc/rfc1952#page-5)
+/// that may have multiple members, spawning a separate thread for the unzipping
+/// process.
+///
+/// A separate thread for unzipping to minimize IO overhead, and uses an
+/// anonymous pipe to communicate the unzipped data.
+///
+/// ## Limitations
+///
+/// This is designed for scenarios where the file is read in its entirety. Any
+/// pipe failures are yielded only when EOF is reached (otherwise they may be
+/// ignored). Furthermore, dropping this reader may not necessarily terminate
+/// the thread.
+pub struct GzipReaderPiped {
+    reader: PipeReader,
+    thread: Option<JoinHandle<std::io::Result<()>>>,
+}
+
+impl GzipReaderPiped {
+    /// Creates a new [`GzipReaderPiped`] from a type implementing [`Read`].
+    ///
+    /// `readable` should contain
+    /// [gzip](https://www.rfc-editor.org/rfc/rfc1952#page-5) encoded data.
+    pub fn from_readable<R>(readable: R) -> std::io::Result<Self>
+    where
+        R: Read + Send + 'static, {
+        let (reader, mut writer) = std::io::pipe()?;
+
+        let mut decoder = MultiGzDecoder::new(readable);
+
+        let thread = thread::spawn(move || -> std::io::Result<_> {
+            // This thread may throw a broken pipe error if the reader is
+            // dropped early, but in that case, the thread will never be joined
+            // either
+            std::io::copy(&mut decoder, &mut writer)?;
+            Ok(())
+        });
+
+        Ok(Self {
+            reader,
+            thread: Some(thread),
+        })
+    }
+
+    /// Creates a new [`GzipReaderPiped`] over a file.
+    ///
+    /// The file should contain
+    /// [gzip](https://www.rfc-editor.org/rfc/rfc1952#page-5) encoded data.
+    pub fn from_filename<P>(filename: P) -> std::io::Result<Self>
+    where
+        P: AsRef<Path>, {
+        let file = File::open(filename)?;
+        Self::from_readable(file)
+    }
+}
+
+impl Read for GzipReaderPiped {
+    #[inline]
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let bytes_read = self.reader.read(buf)?;
+
+        // Check if at EOF
+        if bytes_read == 0
+            && !buf.is_empty()
+            && let Some(thread) = std::mem::take(&mut self.thread)
+        {
+            thread.join().unwrap()?;
+        }
+        Ok(bytes_read)
+    }
+}
+
 define_whichever! {
     #[allow(clippy::large_enum_variant)]
     #[doc="An enum for the different acceptable input types"]
@@ -21,7 +93,7 @@ define_whichever! {
         #[doc="A reader for a regular uncompressed file"]
         File(File),
         #[doc="A reader for a gzip compressed file, using a thread and an anonymous pipe for decoding"]
-        Zipped(PipeReader),
+        Zipped(GzipReaderPiped),
     }
 
     impl Read for ReadFileZip {}
@@ -64,10 +136,10 @@ define_whichever! {
 pub(crate) fn get_paired_readers_and_writers<R: RecordReader<ReadFileZip>>(
     input1: impl AsRef<Path>, input2: Option<impl AsRef<Path>>, output1: Option<impl AsRef<Path>>,
     output2: Option<impl AsRef<Path>>,
-) -> std::io::Result<(R, Option<R>, RecordWriters<WriteFileZipStdout>, IoThreads)> {
+) -> std::io::Result<(R, Option<R>, RecordWriters<WriteFileZipStdout>)> {
     fn inner<R: RecordReader<ReadFileZip>>(
         input1: &Path, input2: Option<&Path>, output1: Option<&Path>, output2: Option<&Path>,
-    ) -> std::io::Result<(R, Option<R>, RecordWriters<WriteFileZipStdout>, IoThreads)> {
+    ) -> std::io::Result<(R, Option<R>, RecordWriters<WriteFileZipStdout>)> {
         if let Some(output1) = output1 {
             if input1 == output1 {
                 return Err(std::io::Error::other(
@@ -96,10 +168,9 @@ pub(crate) fn get_paired_readers_and_writers<R: RecordReader<ReadFileZip>>(
             }
         }
 
-        let (reader1, reader2, threads) =
-            readers_from_files::<R, _>(input1, input2).map_err(Into::<std::io::Error>::into)?;
+        let (reader1, reader2) = readers_from_files::<R, _>(input1, input2).map_err(Into::<std::io::Error>::into)?;
         let writer = RecordWriters::from_filename(output1, output2)?;
-        Ok((reader1, reader2, writer, threads))
+        Ok((reader1, reader2, writer))
     }
 
     inner(
@@ -110,64 +181,43 @@ pub(crate) fn get_paired_readers_and_writers<R: RecordReader<ReadFileZip>>(
     )
 }
 
-/// Opens a single FASTQ file.
+/// Checks whether a file is a [gzip
+/// file](https://www.rfc-editor.org/rfc/rfc1952#page-5).
 ///
-/// If the filename ends in `gz`, a thread is spawned with [`spawn_decoder`] to
-/// decode the input. The decoded lines are sent via a pipe to a
-/// [`FastQReader`]. The second return value is the handle to the thread.
-///
-/// If the filename does not end in `gz`, the [`FastQReader`] is backed directly
-/// by the file, and the [`IoThread`] return is `None`.
-///
-/// ## Errors
-///
-/// `path` must exist and contain FASTQ data, and if the file is zipped, then
-/// creation of the pipe must succeed.
-/// Checks whether the file is a gz zipped file.
-///
-/// IRMA-core's current strategy for this is by checking whether the extension
-/// is `.gz`.
+/// This is currently done naively by seeing if it ends with a `gz` extension.
+#[inline]
 pub(crate) fn is_gz<P: AsRef<Path>>(path: P) -> bool {
     path.as_ref().extension().is_some_and(|ext| ext == "gz")
 }
 
 /// Creates a reader from a single file.
 ///
-/// If it ends in `gz`, return a reader backed by [`ReadFileZip::Zipped`], and
-/// return the thread handle for error propagation. Otherwise, returns a reader
-/// backed by [`ReadFileZip::File`].
+/// If it ends in `gz`, return a reader backed by [`ReadFileZip::Zipped`] (which
+/// uses a thread for unzipping). Otherwise, returns a reader backed by
+/// [`ReadFileZip::File`].
 #[inline]
-pub(crate) fn reader_from_file<R: RecordReader<ReadFileZip>, P: AsRef<Path>>(
-    path: P,
-) -> std::io::Result<(R, Option<IoThread>)> {
+pub(crate) fn reader_from_file<R: RecordReader<ReadFileZip>, P: AsRef<Path>>(path: P) -> std::io::Result<R> {
     let file = File::open(&path)?;
 
     if is_gz(&path) {
-        let (pipe, thread) = spawn_decoder(path)?;
-        Ok((R::from_readable(ReadFileZip::Zipped(pipe))?, Some(thread)))
+        R::from_readable(ReadFileZip::Zipped(GzipReaderPiped::from_filename(path)?))
     } else {
-        Ok((R::from_readable(ReadFileZip::File(file))?, None))
+        R::from_readable(ReadFileZip::File(file))
     }
 }
 
 /// Creates one or two readers from one or two files using the strategy given by
-/// [`reader_from_file`]. The thread handles are grouped together in
-/// [`IoThreads`].
+/// [`reader_from_file`].
 #[inline]
 pub(crate) fn readers_from_files<R: RecordReader<ReadFileZip>, P: AsRef<Path>>(
     path1: P, path2: Option<P>,
-) -> Result<(R, Option<R>, IoThreads), ReaderFromFileError> {
-    let Some(path2) = path2 else {
-        let (reader, thread) = reader_from_file(&path1).map_err(|e| ReaderFromFileError::file1(&path1, e))?;
-        let threads = IoThreads(thread, None);
-
-        return Ok((reader, None, threads));
+) -> Result<(R, Option<R>), ReaderFromFileError> {
+    let reader1 = reader_from_file(&path1).map_err(|e| ReaderFromFileError::file1(&path1, e))?;
+    let reader2 = match path2 {
+        Some(path2) => Some(reader_from_file(&path2).map_err(|e| ReaderFromFileError::file2(&path2, e))?),
+        None => None,
     };
-
-    let (reader1, thread1) = reader_from_file(&path1).map_err(|e| ReaderFromFileError::file1(&path1, e))?;
-    let (reader2, thread2) = reader_from_file(&path2).map_err(|e| ReaderFromFileError::file2(&path2, e))?;
-    let threads = IoThreads(thread1, thread2);
-    Ok((reader1, Some(reader2), threads))
+    Ok((reader1, reader2))
 }
 
 /// Creates a [`WriteFileZipStdout`], using `path` to determine whether a
@@ -192,53 +242,6 @@ pub(crate) fn create_writer<P: AsRef<Path>>(path: Option<P>) -> std::io::Result<
     };
 
     Ok(writer)
-}
-
-/// Spawns a thread that decodes the input file using [`MultiGzDecoder`].
-/// Returns a [`PipeReader`] for receiving the decoded data and an [`IoThread`]
-/// handle for handling the thread and propagating errors.
-///
-/// ## Errors
-///
-/// `file_path` must exist, and the creation of the pipe must succeed.
-#[inline]
-fn spawn_decoder(file_path: impl AsRef<Path>) -> std::io::Result<(std::io::PipeReader, IoThread)> {
-    let (reader, mut writer) = std::io::pipe()?;
-
-    let mut decoder = MultiGzDecoder::new(File::open(file_path)?);
-
-    let thread = thread::spawn(move || -> std::io::Result<_> {
-        match std::io::copy(&mut decoder, &mut writer) {
-            // A broken pipe signals that the reader has been dropped, so the
-            // writer can end early (e.g., in sampler). `MultiGzDecoder` will
-            // never yield such an error since it is reading from a file.
-            Err(e) if e.kind() == ErrorKind::BrokenPipe => Ok(()),
-            Ok(_) => Ok(()),
-            Err(e) => Err(e),
-        }
-    });
-
-    Ok((reader, thread))
-}
-
-/// The handle for a thread used for IO.
-type IoThread = JoinHandle<std::io::Result<()>>;
-
-/// A struct holding two optional [`IoThread`] handles.
-pub(crate) struct IoThreads(Option<IoThread>, Option<IoThread>);
-
-impl IoThreads {
-    /// Calls `join` on the underlying threads and propagate any errors.
-    #[inline]
-    pub(crate) fn finalize(self) -> std::io::Result<()> {
-        if let Some(thread1) = self.0 {
-            thread1.join().unwrap()?;
-        };
-        if let Some(thread2) = self.1 {
-            thread2.join().unwrap()?;
-        };
-        Ok(())
-    }
 }
 
 /// A wrapper around [`std::io::Error`] used to indicate whether an error
