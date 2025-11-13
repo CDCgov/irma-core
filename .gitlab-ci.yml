@@ -5,9 +5,7 @@ stages:
   - test
   - deploy
 
-cache:
-  paths:
-    - target
+cache: {}
 
 irma-build:
   stage: build
@@ -15,16 +13,26 @@ irma-build:
     - docker
     - scicomp
   script:
-    - cargo build --verbose
+    - cargo build
+  artifacts:
+    paths:
+      - .cargo
+      - target
 
 irma-test:
   stage: test
   tags:
     - docker
     - scicomp
+  dependencies:
+    - irma-build
   script:
     - perl .github/scripts/check_versions_changelog.pl
-    - cargo test --verbose
+    - cargo test
+    - cargo doc --no-deps --document-private-items
+  artifacts:
+    paths:
+      - target/doc
 
 pages:
   stage: deploy
@@ -33,9 +41,9 @@ pages:
     - pages
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
+  dependencies:
+    - irma-test
   script:
-    - git config --global http.sslCAInfo /etc/gitlab-runner/certs/ca.crt
-    - cargo doc --no-deps --document-private-items
     - mv target/doc public/
     - echo "<meta http-equiv=\"refresh\" content=\"0; url=irma_core\">" > public/index.html
   artifacts:
