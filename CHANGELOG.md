@@ -7,8 +7,14 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 
 ## [0.8.0] - TBD
 
+### Added
+
 - Adds standalone `aligner` process for perform pairwise local sequence
   alignment with the Striped Smith Waterman algorithm
+
+### Changed
+
+- The `trimmer` process now can perform deinterleaving, as well as widow filtering with interleaved inputs and outputs
 
 ## [0.7.0] - 2025-09-17
 
