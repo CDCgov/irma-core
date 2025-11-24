@@ -26,6 +26,8 @@ pub struct ParsedAlignerArgs {
     pub output:        Option<PathBuf>,
     /// The weight matrix to use for the alignment
     pub weight_matrix: AnyMatrix<'static, i8>,
+    /// Whether to write the SAM header
+    pub header:        bool,
     /// Any additional configuration
     pub config:        AlignerConfig,
 }
@@ -97,6 +99,7 @@ pub fn parse_aligner_args(args: AlignerArgs) -> std::io::Result<ParsedAlignerArg
         references,
         output: args.output,
         weight_matrix,
+        header: args.header,
         config: AlignerConfig {
             gap_open,
             gap_extend,

@@ -1,10 +1,12 @@
+#[cfg(not(feature = "dev_no_rayon"))]
+use crate::aligner::writers::AlignmentWriterThreaded;
 use crate::{
     aligner::{
         arg_parsing::{AlignerConfig, Alphabet, AnyMatrix, ParsedAlignerArgs, parse_aligner_args},
         methods::{AlignmentMethod, StripedSmithWatermanLocal, StripedSmithWatermanShared},
-        writers::{AdditionalBounds, AlignmentWriter},
+        writers::{AdditionalBounds, AlignmentWriter, write_header},
     },
-    io::{FastX, FastXReader},
+    io::{FastX, FastXReader, FromFilename, WriteFileZipStdout},
 };
 use clap::{Args, builder::RangedI64ValueParser};
 use std::{borrow::Borrow, io::Read, path::PathBuf};
@@ -14,12 +16,10 @@ use zoe::{
     prelude::NucleotidesView,
 };
 
-#[cfg(feature = "dev_no_rayon")]
-use crate::io::WriteFileZipStdout;
 #[cfg(not(feature = "dev_no_rayon"))]
 use rayon::iter::{ParallelBridge, ParallelIterator};
-#[cfg(not(feature = "dev_no_rayon"))]
-use std::sync::mpsc::Sender;
+#[cfg(feature = "dev_no_rayon")]
+use std::io::Write;
 
 mod arg_parsing;
 mod methods;
@@ -91,6 +91,10 @@ pub struct AlignerArgs {
     #[arg(long)]
     /// Set the code to use only one thread for performing alignments
     single_thread: bool,
+
+    #[arg(long)]
+    /// Include the SAM header line
+    header: bool,
 }
 
 /// Sub-program for performing sequence alignment
@@ -100,6 +104,7 @@ pub fn aligner_process(args: AlignerArgs) -> std::io::Result<()> {
         references,
         output,
         weight_matrix,
+        header,
         config,
     } = parse_aligner_args(args)?;
 
@@ -108,15 +113,19 @@ pub fn aligner_process(args: AlignerArgs) -> std::io::Result<()> {
         rayon::ThreadPoolBuilder::new().num_threads(1).build_global().unwrap();
     }
 
+    let mut writer = WriteFileZipStdout::from_optional_filename(output)?;
+    if header {
+        write_header(&mut writer, &references)?;
+    }
+
     #[cfg(not(feature = "dev_no_rayon"))]
-    let (mut writer, handle) = Sender::new_writer(output)?;
-    #[cfg(feature = "dev_no_rayon")]
-    let (mut writer, handle) = WriteFileZipStdout::new_writer(output)?;
+    let mut writer = AlignmentWriterThreaded::from_writer(writer);
 
     dispatch_alphabet(query_reader, references, &mut writer, weight_matrix, config)?;
 
-    // The join the writer thread, if present
-    writer.finalize_writer(handle)
+    // Must be called to either flush the bufwriter, or properly terminate the
+    // thread
+    writer.flush()
 }
 
 /// Dispatches the aligner based on the alphabet and weight matrix

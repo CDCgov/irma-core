@@ -102,3 +102,4 @@ By default, `aligner` will align all references against all queries and output e
 | `--best-match`       | The best matching alignment for each query is output, instead of all of them                      |
 | `--profile-from-ref` | Which sequence to build the striped profiles from                                                 |
 | `--single-thread`    | Sets the number of `rayon` threads to 1. See [here](#features) for more details                   |
+| `--header`           | Includes a SAM header in the output, containing the `HD` and `SQ` lines                           |

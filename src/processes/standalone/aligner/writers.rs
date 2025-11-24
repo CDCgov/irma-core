@@ -2,20 +2,80 @@
 
 use crate::{
     aligner::{AlignerConfig, Strand},
-    io::{FastX, FromFilename, WriteFileZipStdout},
+    io::{FastX, WriteFileZipStdout},
 };
-use std::{
-    io::Write,
-    path::PathBuf,
-    sync::mpsc,
-    thread::{self, JoinHandle},
-};
+use std::io::Write;
 use zoe::{
     alignment::Alignment,
     data::{fasta::FastaSeq, sam::SamDataView},
     math::AnyInt,
     prelude::{DataOwned, NucleotidesView, QualityScores, QualityScoresView},
 };
+
+/// A clonable writer supporting writing from multiple threads via an [`mpsc`]
+/// channel.
+///
+/// A single dedicated thread is used for writing to the file to avoid
+/// interleaved writes. The handle to this thread is stored in the first
+/// constructed [`AlignmentWriterThreaded`], and all subsequently cloned copies
+/// do not hold the thread handle. It is important to call [`flush`] on the
+/// original writer to properly finalize the thread.
+///
+/// [`flush`]: AlignmentWriterThreaded::flush
+#[cfg(not(feature = "dev_no_rayon"))]
+pub struct AlignmentWriterThreaded {
+    sender:        std::sync::mpsc::Sender<String>,
+    writer_thread: Option<std::thread::JoinHandle<std::io::Result<()>>>,
+}
+
+#[cfg(not(feature = "dev_no_rayon"))]
+impl Clone for AlignmentWriterThreaded {
+    #[inline]
+    fn clone(&self) -> Self {
+        Self {
+            sender:        self.sender.clone(),
+            writer_thread: None,
+        }
+    }
+}
+
+#[cfg(not(feature = "dev_no_rayon"))]
+impl AlignmentWriterThreaded {
+    /// Constructs a [`AlignmentWriterThreaded`] from a regular writer by moving
+    /// it into a thread and creating a channel.
+    #[inline]
+    #[must_use]
+    pub fn from_writer<W>(mut writer: W) -> Self
+    where
+        W: Write + Send + 'static, {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let writer_thread = std::thread::spawn(move || -> std::io::Result<()> {
+            while let Ok(string) = receiver.recv() {
+                writeln!(writer, "{string}")?;
+            }
+            writer.flush()
+        });
+
+        Self {
+            sender,
+            writer_thread: Some(writer_thread),
+        }
+    }
+
+    /// Finalizes the writing by closing the thread and propagating any errors.
+    ///
+    /// This **must** be called on at least the originally created writer in
+    /// order to properly handle all errors.
+    #[inline]
+    pub fn flush(self) -> std::io::Result<()> {
+        if let Some(thread) = self.writer_thread {
+            drop(self.sender);
+            thread.join().unwrap()
+        } else {
+            Ok(())
+        }
+    }
+}
 
 /// A trait alias containing any relevant bounds needed for an
 /// [`AlignmentWriter`], depending on the `dev_no_rayon` feature.
@@ -34,19 +94,8 @@ impl<T> AdditionalBounds for T {}
 /// `aligner`.
 ///
 /// This is specifically designed to share logic between a multi-threaded
-/// channel ([`mpsc::Sender`]) and a single-threaded [`WriteFileZipStdout`].
+/// [`AlignmentWriterThreaded`] and a single-threaded [`WriteFileZipStdout`].
 pub trait AlignmentWriter: Sized {
-    /// Any additional handles or data needed to finalize the writer.
-    type Handle;
-
-    /// Creates a new [`AlignmentWriter`], while also returning any additional
-    /// handles or data needed to finalize the writer.
-    fn new_writer(path: Option<PathBuf>) -> std::io::Result<(Self, Self::Handle)>;
-
-    /// Finalizes the writer, so that all contents are flushed, threads are
-    /// joined, and/or errors are propagated.
-    fn finalize_writer(self, handle: Self::Handle) -> std::io::Result<()>;
-
     /// Given an unmapped alignment in a [`SamDataView`], write the alignment.
     fn write_unmapped<'a>(&mut self, record: SamDataView<'a>) -> std::io::Result<()>;
 
@@ -124,59 +173,7 @@ pub trait AlignmentWriter: Sized {
     }
 }
 
-impl AlignmentWriter for mpsc::Sender<String> {
-    type Handle = JoinHandle<std::io::Result<()>>;
-
-    #[inline]
-    fn new_writer(path: Option<PathBuf>) -> std::io::Result<(Self, Self::Handle)> {
-        let mut output = WriteFileZipStdout::from_optional_filename(path)?;
-        let (sender, receiver) = mpsc::channel();
-        let writer_thread = thread::spawn(move || -> std::io::Result<()> {
-            while let Ok(string) = receiver.recv() {
-                writeln!(output, "{string}")?;
-            }
-            output.flush()
-        });
-        Ok((sender, writer_thread))
-    }
-
-    #[inline]
-    fn finalize_writer(self, handle: Self::Handle) -> std::io::Result<()> {
-        // Must drop the sender before the writer thread can finish
-        drop(self);
-        handle.join().unwrap()
-    }
-
-    #[inline]
-    fn write_unmapped<'a>(&mut self, record: SamDataView<'a>) -> std::io::Result<()> {
-        self.send(format!("{record}"))
-            .expect("The receiver associated with `sender` has been deallocated");
-        Ok(())
-    }
-
-    #[inline]
-    fn write_record<'a, T: AnyInt>(&mut self, record: SamDataView<'a>, score: T) -> std::io::Result<()> {
-        self.send(format!("{record}\tAS:i:{score}"))
-            .expect("The receiver associated with `sender` has been deallocated");
-
-        Ok(())
-    }
-}
-
 impl AlignmentWriter for WriteFileZipStdout {
-    type Handle = ();
-
-    #[inline]
-    fn new_writer(path: Option<PathBuf>) -> std::io::Result<(Self, Self::Handle)> {
-        let writer = WriteFileZipStdout::from_optional_filename(path)?;
-        Ok((writer, ()))
-    }
-
-    #[inline]
-    fn finalize_writer(mut self, _handle: Self::Handle) -> std::io::Result<()> {
-        self.flush()
-    }
-
     #[inline]
     fn write_unmapped<'a>(&mut self, record: SamDataView<'a>) -> std::io::Result<()> {
         writeln!(self, "{record}")
@@ -188,9 +185,44 @@ impl AlignmentWriter for WriteFileZipStdout {
     }
 }
 
+#[cfg(not(feature = "dev_no_rayon"))]
+impl AlignmentWriter for AlignmentWriterThreaded {
+    #[inline]
+    fn write_unmapped<'a>(&mut self, record: SamDataView<'a>) -> std::io::Result<()> {
+        self.sender
+            .send(format!("{record}"))
+            .expect("The receiver associated with `sender` has been deallocated");
+        Ok(())
+    }
+
+    #[inline]
+    fn write_record<'a, T: AnyInt>(&mut self, record: SamDataView<'a>, score: T) -> std::io::Result<()> {
+        self.sender
+            .send(format!("{record}\tAS:i:{score}"))
+            .expect("The receiver associated with `sender` has been deallocated");
+
+        Ok(())
+    }
+}
+
 /// Processes a header by removing everything after the first whitespace, or
 /// using '*' if the header is unavailable.
 #[inline]
 fn process_header(header: &str) -> &str {
     header.split_ascii_whitespace().next().unwrap_or("*")
+}
+
+/// Writes a SAM-style header to the writer, containing the `HD` and `SQ` lines.
+#[inline]
+pub fn write_header<W: Write>(writer: &mut W, references: &[FastaSeq]) -> std::io::Result<()> {
+    writeln!(writer, "@HD\tVN:1.4")?;
+    for reference in references {
+        writeln!(
+            writer,
+            "@SQ\tSN:{name}\tLN:{len}",
+            name = process_header(&reference.name),
+            len = reference.sequence.len()
+        )?;
+    }
+    Ok(())
 }
