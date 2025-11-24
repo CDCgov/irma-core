@@ -5,7 +5,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 [Semantic Versioning]. For IRMA vs IRMA-core compatibility, please see the
 [version matrix](VERSION_MATRIX.md).
 
-## [0.8.0] - TBD
+## [0.8.0] - 2025-11-21
 
 ### Added
 

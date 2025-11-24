@@ -33,6 +33,7 @@ irma-test:
   artifacts:
     paths:
       - target/doc
+    expire_in: 12 hours
 
 pages:
   stage: deploy

@@ -17,7 +17,7 @@ use zoe::{
     data::records::HeaderReadable,
     iter_utils::{
         ProcessResultsExt,
-        sampling::{DownsampleBernoulli, MethodDSampler, method_l},
+        sampling::{DownsampleBernoulli, SkipSampler, downsample_reservoir},
     },
 };
 
@@ -239,9 +239,11 @@ where
             .write_records(writer),
         SamplingTarget::Count(target) => {
             if let Some(total_items) = seq_count {
-                MethodDSampler::new(iterator, target, total_items, &mut rng)?.write_records(writer)
+                SkipSampler::new(iterator, target, total_items, &mut rng)?.write_records(writer)
             } else {
-                method_l(iterator, &mut rng, target).into_iter().write_records(writer)
+                downsample_reservoir(iterator, &mut rng, target)
+                    .into_iter()
+                    .write_records(writer)
             }
         }
     }
