@@ -191,9 +191,9 @@ where
         for (reference, rc_reference) in &references {
             let mut alignment = method.align(&profile, &reference.sequence, rc_reference.as_ref())?;
             if let Some((alignment, Strand::Reverse)) = alignment.as_mut() {
-                // We have the reverse complement of the reference, but we
-                // want the alignment to correspond to the reverse
-                // complement of the query
+                // We have the reverse complement of the reference, but we want
+                // the alignment to correspond to the reverse complement of the
+                // query
                 alignment.make_reverse();
             }
             writer.write_alignment(alignment, &query, reference, &config)?;
@@ -257,7 +257,7 @@ where
         let query = query?;
         let profile = method.build_profile(&query)?;
 
-        let (best_reference, best_alignment) = references
+        let (best_reference, mut best_alignment) = references
             .iter()
             .map(|(reference, rc_reference)| {
                 let alignment = method.align(&profile, &reference.sequence, rc_reference.as_ref())?;
@@ -271,6 +271,13 @@ where
                 Err(_) => A::Score::MAX,
             })
             .ok_or(std::io::Error::other("No references were specified!"))??;
+
+        if let Some((best_alignment, Strand::Reverse)) = best_alignment.as_mut() {
+            // We have the reverse complement of the reference, but we want
+            // the alignment to correspond to the reverse complement of the
+            // query
+            best_alignment.make_reverse();
+        }
 
         writer.write_alignment(best_alignment, &query, best_reference, &config)
     })
