@@ -5,6 +5,13 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 [Semantic Versioning]. For IRMA vs IRMA-core compatibility, please see the
 [version matrix](VERSION_MATRIX.md).
 
+## [0.9.0-dev] - TBD
+
+### Added
+
+- Adds `verbose` flag to `sampler` for printing total number of reads in
+  original input and number of downsampled records to `stderr`
+
 ## [0.8.1] - 2025-12-02
 
 ### Fixes
@@ -15,7 +22,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 
 ### Added
 
-- Adds standalone `aligner` process for perform pairwise local sequence
+- Adds standalone `aligner` process for performing pairwise local sequence
   alignment with the Striped Smith Waterman algorithm
 
 ### Changed
@@ -176,7 +183,11 @@ randomly downsampling FastQ or FASTA files. Deinterleaving is also supported.
 - **Added**: custom inexact matching algorithm from [Zoe]
 
 <!-- Versions -->
+<<<<<<< HEAD
 [0.8.1]: https://github.com/CDCgov/irma-core/compare/v0.8.0...v0.8.1
+=======
+[0.9.0-dev]: https://github.com/CDCgov/irma-core/compare/v0.8.0...v0.9.0
+>>>>>>> cdfb12f (verbose diagnostics for smapler)
 [0.8.0]: https://github.com/CDCgov/irma-core/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/CDCgov/irma-core/compare/v0.6.1...v0.7.0
 [0.6.2]: https://github.com/CDCgov/irma-core/compare/v0.6.1...v0.6.2

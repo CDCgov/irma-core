@@ -52,6 +52,10 @@ pub struct SamplerArgs {
     /// For reproducibility, provide an optional seed for the random number
     /// generator
     pub rng_seed: Option<u64>,
+
+    #[arg(short = 'v', long)]
+    /// Prints the original number of records and subsampled amount to stderr
+    pub verbose: bool,
 }
 
 /// Parses a percent (as a `usize`) from the command line
@@ -70,10 +74,12 @@ fn validate_percent(value: &str) -> Result<usize, String> {
 
 /// main process getting called by irma-core main.rs
 pub fn sampler_process(args: SamplerArgs) -> Result<(), std::io::Error> {
-    let (io_args, rng, target) = parse_sampler_args(args)?;
+    let (io_args, rng, target, verbose) = parse_sampler_args(args)?;
 
     // Get the population sequence count from one of the files if possible
     let mut seq_count = get_paired_seq_count(io_args.filepath1, io_args.filepath2, &io_args.reader1)?;
+
+    let is_single = io_args.reader2.is_none() && matches!(io_args.writer, RecordWriters::SingleEnd(_));
 
     // For de-interleaving, must divide sequence count by 2 to get number of
     // pairs
@@ -88,7 +94,7 @@ pub fn sampler_process(args: SamplerArgs) -> Result<(), std::io::Error> {
         (SamplingTarget::Percent(percent), None) => SamplingTarget::Percent(percent),
     };
 
-    match (io_args.reader1, io_args.reader2) {
+    let (total_original, total_downsampled) = match (io_args.reader1, io_args.reader2) {
         (FastXReader::Fastq(reader), None) => sample_single_input(reader, io_args.writer, target, seq_count, rng)?,
         (FastXReader::Fastq(reader1), Some(FastXReader::Fastq(reader2))) => {
             sample_paired_input(reader1, reader2, io_args.writer, target, seq_count, rng)?
@@ -107,15 +113,27 @@ pub fn sampler_process(args: SamplerArgs) -> Result<(), std::io::Error> {
                 "Paired read inputs must be both FASTQ or both FASTA. Found FASTA for first input and FASTQ for second input.",
             ));
         }
-    }
+    };
 
+    if verbose {
+        let single_paired = if is_single { "total records" } else { "pairs of records" };
+        let percent = 100.0 * total_downsampled as f32 / total_original as f32;
+        eprintln!("Downsampled {total_original} {single_paired} to {total_downsampled} ({percent:.02} %).");
+    }
     Ok(())
 }
 
 /// Performs sampling for a single input file.
+///
+/// This may correspond to either single reads or interleaved paired reads,
+/// depending on the number of writers.
+///
+/// This returns a tuple containing the original counts and downsampled counts.
+/// For single end reads, the counts are the number of records. For paired end
+/// reads, each pair counts once.
 fn sample_single_input<R1, W, A>(
     reader: R1, writer: RecordWriters<W>, target: SamplingTarget, seq_count: Option<usize>, rng: Xoshiro256StarStar,
-) -> std::io::Result<()>
+) -> std::io::Result<(usize, usize)>
 where
     R1: Iterator<Item = std::io::Result<A>>,
     W: Write,
@@ -129,10 +147,15 @@ where
         eprintln!(
             "Sampler Warning: Target sample size ({target_count}) was greater than population size ({seq_count}); no downsampling has occurred.",
         );
-        return match writer {
-            RecordWriters::SingleEnd(writer) => reader.write_records(writer),
-            RecordWriters::PairedEnd(writer) => reader.deinterleave().write_records(writer),
-        };
+        match writer {
+            RecordWriters::SingleEnd(writer) => {
+                reader.write_records(writer)?;
+            }
+            RecordWriters::PairedEnd(writer) => {
+                reader.deinterleave().write_records(writer)?;
+            }
+        }
+        return Ok((seq_count, seq_count));
     }
 
     match writer {
@@ -148,10 +171,13 @@ where
 }
 
 /// Performs sampling for a pair of inputs.
+///
+/// This returns a tuple containing the original counts and downsampled counts.
+/// Each pair of reads counts once.
 fn sample_paired_input<R1, R2, W, A>(
     reader1: R1, reader2: R2, writer: RecordWriters<W>, target: SamplingTarget, seq_count: Option<usize>,
     rng: Xoshiro256StarStar,
-) -> std::io::Result<()>
+) -> std::io::Result<(usize, usize)>
 where
     R1: Iterator<Item = std::io::Result<A>>,
     R2: Iterator<Item = std::io::Result<A>>,
@@ -165,7 +191,8 @@ where
         eprintln!(
             "Sampler Warning: Target sample size ({target_count}) was greater than population size ({seq_count}); no downsampling has occurred.",
         );
-        return reader1.zip_paired_reads(reader2).write_records(writer);
+        reader1.zip_paired_reads(reader2).write_records(writer)?;
+        return Ok((seq_count, seq_count));
     }
 
     // Determine the proper iterator type for the inputs, then dispatch
@@ -180,6 +207,10 @@ where
 /// that any errors in the input (even those that are downsampled) are
 /// propagated.
 ///
+/// This returns a tuple containing the original counts and downsampled counts
+/// from the iterator. For single end reads, the counts are the number of
+/// records. For paired end reads, each pair counts once.
+///
 /// ## Assumptions
 ///
 /// This function must be called on an iterator of results. The `Ok` variant of
@@ -191,7 +222,7 @@ where
 /// [`FastaSeq`]: zoe::data::records::fasta::FastaSeq
 fn sample_and_write_results<I, W, A, E>(
     iterator: I, writer: W, target: SamplingTarget, seq_count: Option<usize>, rng: Xoshiro256StarStar,
-) -> std::io::Result<()>
+) -> std::io::Result<(usize, usize)>
 where
     I: Iterator<Item = Result<A, E>>,
     W: SequenceWriter,
@@ -217,6 +248,10 @@ where
 /// 3. Resovoir sampling (method L), if `target` is a [`Count`] and the
 ///    population `seq_count` is [`None`].
 ///
+/// This returns a tuple containing the original counts and downsampled counts
+/// from the iterator. For single end reads, the counts are the number of
+/// records. For paired end reads, each pair counts once.
+///
 /// ## Validity
 ///
 /// This function should not be called on an iterator of results. Otherwise,
@@ -229,24 +264,36 @@ where
 #[inline]
 fn sample_and_write_records<I, W>(
     iterator: &mut I, writer: W, target: SamplingTarget, seq_count: Option<usize>, mut rng: Xoshiro256StarStar,
-) -> std::io::Result<()>
+) -> std::io::Result<(usize, usize)>
 where
     I: Iterator<Item: WriteRecordCompatibleItem<W>>,
     W: SequenceWriter, {
+    let mut total_original = 0;
+    let mut total_downsampled = 0;
+
     match target {
-        SamplingTarget::Percent(percent) => iterator
-            .downsample_bernoulli(percent as f32 / 100.0, &mut rng)
-            .write_records(writer),
+        SamplingTarget::Percent(percent) => {
+            iterator
+                .inspect(|_| total_original += 1)
+                .downsample_bernoulli(percent as f32 / 100.0, &mut rng)
+                .inspect(|_| total_downsampled += 1)
+                .write_records(writer)?;
+        }
         SamplingTarget::Count(target) => {
             if let Some(total_items) = seq_count {
-                SkipSampler::new(iterator, target, total_items, &mut rng)?.write_records(writer)
+                total_original = total_items;
+                SkipSampler::new(iterator, target, total_items, &mut rng)?
+                    .inspect(|_| total_downsampled += 1)
+                    .write_records(writer)?;
             } else {
-                downsample_reservoir(iterator, &mut rng, target)
-                    .into_iter()
-                    .write_records(writer)
+                let samples = downsample_reservoir(iterator.inspect(|_| total_original += 1), &mut rng, target);
+                total_downsampled = samples.len();
+                samples.into_iter().write_records(writer)?;
             }
         }
     }
+
+    Ok((total_original, total_downsampled))
 }
 
 fn get_paired_seq_count<R: Read>(
@@ -280,7 +327,7 @@ enum SamplingTarget {
     Count(usize),
 }
 
-fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, SamplingTarget), std::io::Error> {
+fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, SamplingTarget, bool), std::io::Error> {
     let rng = if let Some(seed) = &args.rng_seed {
         Xoshiro256StarStar::seed_from_u64(*seed)
     } else {
@@ -327,7 +374,7 @@ fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, 
     } else {
         unreachable!("This can't be reached because clap requires a value for either count or percent")
     };
-    Ok((io_args, rng, target))
+    Ok((io_args, rng, target, args.verbose))
 }
 
 fn get_seq_count<R: Read>(fastq: &PathBuf, reader: &FastXReader<R>) -> std::io::Result<usize> {

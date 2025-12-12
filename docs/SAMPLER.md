@@ -105,3 +105,8 @@ irma-core sampler \
 ```
 
 If a single input and output are provided, no interleaving is assumed.
+
+## Verbose Output
+
+An optional flag of `--verbose` or `-v` can be used to print diagnostics to `stderr`. The output is of the form:
+`Downsampled 177564 total records to 35512 (20.00 %).`
