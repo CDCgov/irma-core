@@ -6,6 +6,7 @@ use crate::{
     args::clipping::{ClippingArgs, ParsedClippingArgs, parse_clipping_args},
     io::{InputOptions, IterWithContext, OutputOptions, ReadFileZipPipe, RecordReaders, WriterWithContext},
     qc::{fastq::ReadTransforms, fastq_metadata::*},
+    utils::trimming::TrimmedCounts,
     utils::{
         get_hasher,
         paired_reads::{ReadSide, ZipPairedReadsError, ZipPairedReadsExt},
@@ -384,7 +385,8 @@ fn trim_filter_tally<'a>(
         return None;
     }
 
-    let clipped = trim_read(read.as_view_mut(), false, &options.clipping_args);
+    let mut _counts = TrimmedCounts::default();
+    let clipped = trim_read(read.as_view_mut(), false, &options.clipping_args, &mut _counts);
 
     metadata.observed_max_clipped_read_len = metadata.observed_max_clipped_read_len.max(clipped.sequence.len());
     if (options.enforce_clipped_length && clipped.sequence.len() < options.min_length) || clipped.sequence.is_empty() {
