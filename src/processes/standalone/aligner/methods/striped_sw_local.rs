@@ -1,11 +1,15 @@
 //! The striped Smith Waterman algorithm
 
 use crate::aligner::methods::AlignmentMethod;
-use std::{borrow::Borrow, fmt::Display};
+use std::borrow::Borrow;
 use zoe::{
     alignment::{Alignment, LocalProfiles, MaybeAligned},
-    data::{matrices::WeightMatrix, records::SequenceReadable},
-    prelude::ProfileSets,
+    data::{
+        err::{ErrorWithContext, ResultWithErrorContext},
+        matrices::WeightMatrix,
+        records::{HeaderReadable, SequenceReadable},
+    },
+    prelude::{ProfileSets, SeqSrc},
 };
 
 /// An [`AlignmentMethod`] for performing Striped Smith Waterman with
@@ -51,26 +55,27 @@ where
 
     type Score = u32;
 
-    fn build_profile<'a, R>(&'a self, profile_seq: &'a R) -> std::io::Result<Self::Profile<'a>>
+    fn build_profile<'a, R>(&'a self, profile_seq: &'a R) -> Result<Self::Profile<'a>, ErrorWithContext>
     where
-        R: SequenceReadable + Display, {
+        R: SequenceReadable + HeaderReadable, {
         LocalProfiles::new_with_w256(
             profile_seq.sequence_bytes(),
             self.weight_matrix.borrow(),
             self.gap_open,
             self.gap_extend,
         )
-        .map_err(|e| {
-            std::io::Error::other(format!(
-                "The following sequence failed to be preprocessed:\n\n{profile_seq}\n\nThis was caused by:\n{e}"
-            ))
-        })
+        .with_context(format!(
+            "The sequence with the following header failed to be preprocessed: {}",
+            profile_seq.header()
+        ))
     }
 
     #[inline]
-    fn align_one(&self, profile: &Self::Profile<'_>, regular_seq: &[u8]) -> std::io::Result<Option<Alignment<Self::Score>>> {
+    fn align_one(
+        &self, profile: &Self::Profile<'_>, regular_seq: SeqSrc<&[u8]>,
+    ) -> std::io::Result<Option<Alignment<Self::Score>>> {
         // TODO: Offer starting integer option?
-        match profile.smith_waterman_alignment_from_i8(regular_seq) {
+        match profile.sw_align_from_i8(regular_seq) {
             MaybeAligned::Some(alignment) => Ok(Some(alignment)),
             MaybeAligned::Overflowed => Err(std::io::Error::other("The score exceeded the capacity of i32!")),
             MaybeAligned::Unmapped => Ok(None),

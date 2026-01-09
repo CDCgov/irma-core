@@ -3,7 +3,11 @@ use std::{
     io::{BufRead, ErrorKind, Read},
 };
 use zoe::{
-    data::{CheckSequence, fasta::FastaSeq, records::SequenceReadable},
+    data::{
+        CheckSequence,
+        fasta::FastaSeq,
+        records::{HeaderReadable, SequenceReadable},
+    },
     define_whichever,
     prelude::{FastQ, FastQReader, FastaReader, QualityScores},
 };
@@ -135,6 +139,13 @@ impl Display for FastX {
 
             f.write_char('\n')
         }
+    }
+}
+
+impl HeaderReadable for FastX {
+    #[inline]
+    fn header(&self) -> &str {
+        &self.header
     }
 }
 

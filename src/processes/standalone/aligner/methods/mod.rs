@@ -1,12 +1,15 @@
 //! Traits and structs for the different methods of pairwise alignment used by
 //! aligner
 
-use std::fmt::Display;
 use zoe::{
     alignment::Alignment,
-    data::{fasta::FastaSeq, records::SequenceReadable},
+    data::{
+        err::{ErrorWithContext, ResultWithErrorContext},
+        fasta::FastaSeq,
+        records::{HeaderReadable, SequenceReadable},
+    },
     math::AnyInt,
-    prelude::NucleotidesView,
+    prelude::{NucleotidesView, SeqSrc},
 };
 
 #[cfg(not(feature = "dev_no_rayon"))]
@@ -32,35 +35,50 @@ pub trait AlignmentMethod: Sync + Send {
     /// The type of the output alignment
     type Score: AnyInt;
 
-    /// Builds a profile from a sequence
-    fn build_profile<'a, R>(&'a self, profile_seq: &'a R) -> std::io::Result<Self::Profile<'a>>
+    /// Builds a profile from a sequence.
+    ///
+    /// ## Errors
+    ///
+    /// The possible errors are determined by the specific [`AlignmentMethod`],
+    /// such as those in [`ProfileError`]. Context including the sequence header
+    /// is added.
+    ///
+    /// [`ProfileError`]: zoe::alignment::ProfileError
+    fn build_profile<'a, R>(&'a self, profile_seq: &'a R) -> Result<Self::Profile<'a>, ErrorWithContext>
     where
-        R: SequenceReadable + Display;
+        R: SequenceReadable + HeaderReadable;
 
     /// Aligns a preprocessed sequence against a regular sequence.
     ///
-    /// The alignment returned assumes that the profile corresponds to the
-    /// query. If it corresponds to the reference, then the alignment needs to
-    /// be inverted.
-    ///
     /// If the alignment is unmapped, [`None`] should be returned.
-    fn align_one(&self, profile: &Self::Profile<'_>, regular_seq: &[u8]) -> std::io::Result<Option<Alignment<Self::Score>>>;
+    ///
+    /// ## Errors
+    ///
+    /// The possible errors are determined by the specific [`AlignmentMethod`],
+    /// such as overflowing the capacity of an `i32`. It is the responsibility
+    /// of the caller to add context.
+    fn align_one(&self, profile: &Self::Profile<'_>, seq: SeqSrc<&[u8]>) -> std::io::Result<Option<Alignment<Self::Score>>>;
 
     /// Aligns a preprocessed sequence against a regular sequence and the
     /// reverse complement of that sequence (if passed).
     ///
-    /// The alignment returned assumes that the profile corresponds to the
-    /// query. If it corresponds to the reference, then the alignment needs to
-    /// be inverted.
-    ///
     /// If the alignment is unmapped, [`None`] is returned.
+    ///
+    /// ## Errors
+    ///
+    /// Errors from [`AlignmentMethod::align_one`] are propagated. Context is
+    /// only included if the reverse complement alignment failed (specifying
+    /// solely that fact). The caller must handle adding context for the
+    /// sequence headers.
     fn align(
-        &self, profile: &Self::Profile<'_>, regular_seq: &[u8], rc_regular_seq: Option<&Vec<u8>>,
+        &self, profile: &Self::Profile<'_>, seq: SeqSrc<&[u8]>, rc_seq: Option<&Vec<u8>>,
     ) -> std::io::Result<Option<(Alignment<Self::Score>, Strand)>> {
-        let forward_alignment = self.align_one(profile, regular_seq)?;
+        let forward_alignment = self.align_one(profile, seq)?;
 
-        let revcomp_alignment = match rc_regular_seq {
-            Some(rc_regular_seq) => self.align_one(profile, rc_regular_seq)?,
+        let revcomp_alignment = match rc_seq {
+            Some(rc_seq) => self
+                .align_one(profile, seq.map(|_| rc_seq.as_slice()))
+                .with_context("Failed to perform the reverse complement alignment")?,
             None => {
                 if let Some(forward_alignment) = forward_alignment {
                     return Ok(Some((forward_alignment, Strand::Forward)));

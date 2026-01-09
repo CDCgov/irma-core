@@ -176,6 +176,7 @@ fn parse_preprocess_args(args: PreprocessArgs) -> std::io::Result<ParsedPreproce
 
 /// Trims all sequences, applies quality filtering, and deflates the sequences.
 /// Returns the deflated sequences and the log file metadata.
+#[allow(clippy::result_large_err)]
 fn trim_and_deflate(
     options: &ParsedPreprocessOptions, io_args: &mut ParsedPreprocessIoArgs,
 ) -> std::io::Result<(DeflatedSequences, FastQMetadata)> {

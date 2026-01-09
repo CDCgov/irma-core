@@ -44,17 +44,16 @@ enum Commands {
 
 fn main() {
     let args = Cli::parse();
-    let module = module_path!();
 
     match args.command {
-        Commands::Preprocess(cmd_args) => preprocess_process(cmd_args).unwrap_or_die(&format!("{module}::Preprocess")),
-        Commands::MergeSAM(cmd_args) => merge_sam_pairs_process(cmd_args),
-        Commands::Xflate(cmd_args) => xflate_process(cmd_args).unwrap_or_die(&format!("{module}::Xflate")),
-        Commands::Trimmer(cmd_args) => trimmer_process(cmd_args).unwrap_or_die(&format!("{module}::Trimmer")),
-        Commands::Sampler(cmd_args) => sampler_process(cmd_args).unwrap_or_die(&format!("{module}::Sampler")),
-        Commands::NumProcs(cmd_args) => num_procs_process(cmd_args).unwrap_or_die(&format!("{module}::NumProcs")),
-        Commands::Xleave(cmd_args) => xleave_process(cmd_args).unwrap_or_die(&format!("{module}::XLeave")),
-        Commands::Aligner(cmd_args) => aligner_process(cmd_args).unwrap_or_die(&format!("{module}::Aligner")),
+        Commands::Preprocess(cmd_args) => preprocess_process(cmd_args).unwrap_or_die("subcommand 'preprocess'"),
+        Commands::MergeSAM(cmd_args) => merge_sam_pairs_process(cmd_args).unwrap_or_die("subcommand 'merge-sam'"),
+        Commands::Xflate(cmd_args) => xflate_process(cmd_args).unwrap_or_die("subcommand 'xflate'"),
+        Commands::Trimmer(cmd_args) => trimmer_process(cmd_args).unwrap_or_die("subcommand 'trimmer'"),
+        Commands::Sampler(cmd_args) => sampler_process(cmd_args).unwrap_or_die("subcommand 'sampler'"),
+        Commands::NumProcs(cmd_args) => num_procs_process(cmd_args).unwrap_or_die("subcommand 'num-procs'"),
+        Commands::Xleave(cmd_args) => xleave_process(cmd_args).unwrap_or_die("subcommand 'xleave'"),
+        Commands::Aligner(cmd_args) => aligner_process(cmd_args).unwrap_or_die("subcommand 'aligner'"),
         _ => {
             eprintln!("IRMA-CORE: unrecognized command {:?}", args.command);
             std::process::exit(1)

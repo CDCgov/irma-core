@@ -11,9 +11,9 @@ use crate::{
 use clap::{Args, builder::RangedI64ValueParser};
 use std::{borrow::Borrow, io::Read, path::PathBuf};
 use zoe::{
-    data::{fasta::FastaSeq, matrices::WeightMatrix},
+    data::{err::ResultWithErrorContext, fasta::FastaSeq, matrices::WeightMatrix},
     math::AnyInt,
-    prelude::NucleotidesView,
+    prelude::{NucleotidesView, SeqSrc},
 };
 
 #[cfg(not(feature = "dev_no_rayon"))]
@@ -189,7 +189,12 @@ where
         let profile = method.build_profile(&query)?;
 
         for (reference, rc_reference) in &references {
-            let mut alignment = method.align(&profile, &reference.sequence, rc_reference.as_ref())?;
+            let mut alignment = method
+                .align(&profile, SeqSrc::Reference(&reference.sequence), rc_reference.as_ref())
+                .with_context(format!(
+                    "Failed to align the sequences with the following headers:\nQuery: {}\nReference: {}",
+                    query.header, reference.name
+                ))?;
             if let Some((alignment, Strand::Reverse)) = alignment.as_mut() {
                 // We have the reverse complement of the reference, but we want
                 // the alignment to correspond to the reverse complement of the
@@ -226,12 +231,12 @@ where
         });
 
         for (reference, ref_profile) in &ref_profiles {
-            // Invert the alignment, since we built the profile from the
-            // reference
             let alignment = method
-                .align(ref_profile, &query.sequence, rc_query.as_ref())?
-                .map(|(alignment, strand)| (alignment.invert(), strand));
-
+                .align(ref_profile, SeqSrc::Query(&query.sequence), rc_query.as_ref())
+                .with_context(format!(
+                    "Failed to align the sequences with the following headers:\nQuery: {}\nReference: {}",
+                    query.header, reference.name
+                ))?;
             writer.write_alignment(alignment, &query, reference, &config)?;
         }
 
@@ -253,14 +258,19 @@ where
     // rev_comp is true
     let references = method.maybe_zip_with_revcomp(&references, config.rev_comp);
 
-    align_all(query_reader, writer, |writer, query| -> std::io::Result<()> {
+    align_all(query_reader, writer, |writer, query| {
         let query = query?;
         let profile = method.build_profile(&query)?;
 
         let (best_reference, mut best_alignment) = references
             .iter()
             .map(|(reference, rc_reference)| {
-                let alignment = method.align(&profile, &reference.sequence, rc_reference.as_ref())?;
+                let alignment = method
+                    .align(&profile, SeqSrc::Reference(&reference.sequence), rc_reference.as_ref())
+                    .with_context(format!(
+                        "Failed to align the sequences with the following headers:\nQuery: {}\nReference: {}",
+                        query.header, reference.name
+                    ))?;
                 std::io::Result::Ok((reference, alignment))
             })
             .max_by_key(|res| match res {
@@ -270,7 +280,7 @@ where
                 // Map errors to maximum value, so they are guaranteed to propagate
                 Err(_) => A::Score::MAX,
             })
-            .ok_or(std::io::Error::other("No references were specified!"))??;
+            .expect("The references field should be non-empty")?;
 
         if let Some((best_alignment, Strand::Reverse)) = best_alignment.as_mut() {
             // We have the reverse complement of the reference, but we want
@@ -296,7 +306,7 @@ where
     // Build profiles first, which requires `SharedProfile`
     let ref_profiles = method.zip_with_profiles(&references)?;
 
-    align_all(query_reader, writer, |writer, query| -> std::io::Result<()> {
+    align_all(query_reader, writer, |writer, query| {
         let query = query?;
 
         // Compute the reverse complement of the query, if rev_comp is true
@@ -309,7 +319,12 @@ where
         let (best_reference, best_alignment) = ref_profiles
             .iter()
             .map(|(reference, ref_profile)| {
-                let alignment = method.align(ref_profile, &query.sequence, rc_query.as_ref())?;
+                let alignment = method
+                    .align(ref_profile, SeqSrc::Query(&query.sequence), rc_query.as_ref())
+                    .with_context(format!(
+                        "Failed to align the sequences with the following headers:\nQuery: {}\nReference: {}",
+                        query.header, reference.name
+                    ))?;
                 std::io::Result::Ok((reference, alignment))
             })
             .max_by_key(|res| match res {
@@ -319,10 +334,7 @@ where
                 // Map errors to maximum value, so they are guaranteed to propagate
                 Err(_) => A::Score::MAX,
             })
-            .ok_or(std::io::Error::other("No references were specified!"))??;
-
-        // Invert the alignment, since we built profile from reference
-        let best_alignment = best_alignment.map(|(alignment, strand)| (alignment.invert(), strand));
+            .expect("The references field should be non-empty")?;
 
         writer.write_alignment(best_alignment, &query, best_reference, &config)
     })

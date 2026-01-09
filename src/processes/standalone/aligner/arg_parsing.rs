@@ -9,6 +9,7 @@ use clap::{ValueEnum, builder::PossibleValue, error::ErrorKind};
 use zoe::{
     data::{
         AA_ALL_AMBIG_PROFILE_MAP_WITH_STOP, WeightMatrix,
+        err::ResultWithErrorContext,
         fasta::FastaSeq,
         matrices::{BLOSUM_62, aa_mat_from_name},
     },
@@ -21,6 +22,10 @@ pub struct ParsedAlignerArgs {
     /// The streamed query sequences
     pub query_reader:  FastXReader<ReadFileZipPipe>,
     /// The slurped reference sequences
+    ///
+    /// ## Validity
+    ///
+    /// This field must be non-empty.
     pub references:    Vec<FastaSeq>,
     /// The output path for the alignments
     pub output:        Option<PathBuf>,
@@ -92,7 +97,17 @@ pub fn parse_aligner_args(args: AlignerArgs) -> std::io::Result<ParsedAlignerArg
     }
 
     let query_reader = FastXReader::<ReadFileZipPipe>::from_filename(args.query_file)?;
-    let references = FastaReader::<ReadFileZip>::from_filename(args.ref_file)?.collect::<Result<_, _>>()?;
+    let references = FastaReader::<ReadFileZip>::from_filename(&args.ref_file)?
+        .collect::<Result<Vec<_>, _>>()
+        .with_file_context("Invalid record in file", &args.ref_file)?;
+
+    // Validity: references field is required to be non-empty
+    if references.is_empty() {
+        return Err(std::io::Error::other(format!(
+            "Empty reference file: {}",
+            args.ref_file.display()
+        )));
+    }
 
     Ok(ParsedAlignerArgs {
         query_reader,

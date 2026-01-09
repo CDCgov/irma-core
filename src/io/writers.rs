@@ -1,11 +1,11 @@
-use crate::io::{FromFilename, MapFailedWriteExt, is_gz};
+use crate::io::{FromFilename, is_gz};
 use flate2::{Compression, write::GzEncoder};
 use std::{
     fs::File,
     io::{BufWriter, Stdout, Write, stdout},
     path::Path,
 };
-use zoe::define_whichever;
+use zoe::{data::err::ResultWithErrorContext, define_whichever};
 
 define_whichever! {
     /// An enum for the different acceptable output types. A [`BufWriter`] is used for all variants.
@@ -120,7 +120,7 @@ impl FromFilename for WriteFileZipStdout {
     fn from_filename<P>(path: P) -> std::io::Result<Self>
     where
         P: AsRef<Path>, {
-        let file = File::create(&path).map_failed_write(&path)?;
+        let file = File::create(&path).with_file_context("Cannot open file for writing", &path)?;
         let bufwriter = BufWriter::new(file);
 
         let writer = if is_gz(path) {

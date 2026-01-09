@@ -11,6 +11,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 
 - Adds `verbose` flag to `sampler` for printing total number of reads in
   original input and number of downsampled records to `stderr`
+- Adds more detailed error messages with more context, including file paths for many IO errors
 
 ## [0.8.1] - 2025-12-02
 

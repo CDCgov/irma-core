@@ -11,10 +11,10 @@ use rand_xoshiro::Xoshiro256StarStar;
 use std::{
     fs::File,
     io::{BufRead, BufReader, Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 use zoe::{
-    data::records::HeaderReadable,
+    data::{err::ResultWithErrorContext, records::HeaderReadable},
     iter_utils::{
         ProcessResultsExt,
         sampling::{DownsampleBernoulli, SkipSampler, downsample_reservoir},
@@ -130,6 +130,7 @@ pub fn sampler_process(args: SamplerArgs) -> Result<(), std::io::Error> {
         let percent = 100.0 * total_downsampled as f32 / total_original as f32;
         eprintln!("Downsampled {total_original} {single_paired} to {total_downsampled} ({percent:.02} %).");
     }
+
     Ok(())
 }
 
@@ -306,6 +307,10 @@ where
     Ok((total_original, total_downsampled))
 }
 
+/// ## Errors
+///
+/// Any IO errors when reading the file are propagated. The path is included as
+/// context for all errors.
 fn get_paired_seq_count<R: Read>(
     fastq_path1: Option<PathBuf>, fastq_path2: Option<PathBuf>, reader1: &FastXReader<R>,
 ) -> std::io::Result<Option<usize>> {
@@ -350,6 +355,7 @@ fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, 
         args.output_file1.as_ref(),
         args.output_file2.as_ref(),
     )?;
+
     let readers =
         RecordReaders::<FastXReader<ReadFileZipPipe>>::from_filenames(&args.input_file1, args.input_file2.as_ref())?;
     let writer = RecordWriters::from_optional_filenames(args.output_file1, args.output_file2)?;
@@ -361,6 +367,7 @@ fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, 
     } else {
         None
     };
+
     let filepath2 = if let Some(path) = args.input_file2
         && path.is_file()
         && !is_gz(&path)
@@ -384,13 +391,32 @@ fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, 
     } else {
         unreachable!("This can't be reached because clap requires a value for either count or percent")
     };
+
     Ok((io_args, rng, target, args.verbose))
 }
 
-fn get_seq_count<R: Read>(fastq: &PathBuf, reader: &FastXReader<R>) -> std::io::Result<usize> {
-    let input = File::open(fastq)?;
+/// Given a [`FastXReader`] over a file, retrieves the number of sequences in
+/// that file via a line count.
+///
+/// ## Validity
+///
+/// If the file does not conform to FASTQ or FASTA specifications, the sequence
+/// count may be inaccurate. The passed `path` should be the same as the path
+/// used to define `reader`.
+///
+/// ## Errors
+///
+/// Any IO errors when reading the file are propagated. The path is included as
+/// context for all errors.
+fn get_seq_count<R: Read>(path: impl AsRef<Path>, reader: &FastXReader<R>) -> std::io::Result<usize> {
+    let input = File::open(&path).with_file_context("Cannot read file", &path)?;
     let buffered = BufReader::new(input);
-    let line_count = buffered.lines().count();
+
+    let line_count = buffered
+        .lines()
+        .process_results(|iter| iter.count())
+        .with_file_context("Failed to read line in file", path)?;
+
     match reader {
         FastXReader::Fasta(_) => Ok(line_count / 2),
         FastXReader::Fastq(_) => Ok(line_count / 4),

@@ -1,7 +1,4 @@
-use std::{
-    error::Error,
-    path::{Path, PathBuf},
-};
+use std::path::Path;
 
 mod fastx;
 mod readers;
@@ -86,84 +83,5 @@ where
             Some(path) => Self::from_filename(path),
             None => Ok(Self::default()),
         }
-    }
-}
-
-/// A wrapper around [`std::io::Error`] used to indicate whether an error
-/// occurred with the first file or second file specified.
-#[non_exhaustive]
-#[derive(Debug)]
-pub enum ReaderFromFileError {
-    File1 { path: PathBuf, source: std::io::Error },
-    File2 { path: PathBuf, source: std::io::Error },
-}
-
-impl ReaderFromFileError {
-    #[inline]
-    fn file1(path: impl AsRef<Path>, source: std::io::Error) -> Self {
-        Self::File1 {
-            path: path.as_ref().to_path_buf(),
-            source,
-        }
-    }
-
-    #[inline]
-    fn file2(path: impl AsRef<Path>, source: std::io::Error) -> Self {
-        Self::File2 {
-            path: path.as_ref().to_path_buf(),
-            source,
-        }
-    }
-}
-
-impl std::fmt::Display for ReaderFromFileError {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            ReaderFromFileError::File1 { path, source } => {
-                write!(
-                    f,
-                    "Failed to read the data in first file {path:#?} due to the error:\n{source}"
-                )
-            }
-            ReaderFromFileError::File2 { path, source } => {
-                write!(
-                    f,
-                    "Failed to read the data in second file {path:#?} due to the error:\n{source}"
-                )
-            }
-        }
-    }
-}
-
-impl Error for ReaderFromFileError {
-    #[inline]
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        match self {
-            ReaderFromFileError::File1 { source, .. } => Some(source),
-            ReaderFromFileError::File2 { source, .. } => Some(source),
-        }
-    }
-}
-
-impl From<ReaderFromFileError> for std::io::Error {
-    #[inline]
-    fn from(error: ReaderFromFileError) -> Self {
-        std::io::Error::other(error)
-    }
-}
-
-pub trait MapFailedWriteExt<T> {
-    fn map_failed_write<P: AsRef<Path>>(self, path: P) -> std::io::Result<T>;
-}
-
-impl<T> MapFailedWriteExt<T> for std::io::Result<T> {
-    fn map_failed_write<P: AsRef<Path>>(self, path: P) -> std::io::Result<T> {
-        self.map_err(|e| {
-            std::io::Error::other(format!(
-                "Failed to open {path} for writing due to the error:\n{e}",
-                path = path.as_ref().display()
-            ))
-        })
     }
 }

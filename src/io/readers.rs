@@ -1,4 +1,4 @@
-use crate::io::{FastXReader, FromFilename, ReaderFromFileError, is_gz};
+use crate::io::{FastXReader, FromFilename, is_gz};
 use flate2::read::MultiGzDecoder;
 use std::{
     fs::File,
@@ -7,6 +7,7 @@ use std::{
     thread::{self, JoinHandle},
 };
 use zoe::{
+    data::err::ResultWithErrorContext,
     define_whichever,
     prelude::{FastQReader, FastaReader},
 };
@@ -15,8 +16,8 @@ use zoe::{
 /// that may have multiple members, spawning a separate thread for the unzipping
 /// process.
 ///
-/// A separate thread for unzipping to minimize IO overhead, and uses an
-/// anonymous pipe to communicate the unzipped data.
+/// This uses a separate thread for unzipping to minimize IO overhead, and it
+/// uses an anonymous pipe to communicate the unzipped data.
 ///
 /// ## Limitations
 ///
@@ -34,10 +35,17 @@ impl GzipReaderPiped {
     ///
     /// `readable` should contain
     /// [gzip](https://www.rfc-editor.org/rfc/rfc1952#page-5) encoded data.
+    ///
+    /// ## Errors
+    ///
+    /// Any IO errors occurring when forming the pipe are propagated with
+    /// context. Errors occurring during decoding appear when reading from the
+    /// [`GzipReaderPiped`].
     pub fn from_readable<R>(readable: R) -> std::io::Result<Self>
     where
         R: Read + Send + 'static, {
-        let (reader, mut writer) = std::io::pipe()?;
+        let (reader, mut writer) =
+            std::io::pipe().with_context("Failed to intiailize the pipe for decoding the gzip data")?;
 
         let mut decoder = MultiGzDecoder::new(readable);
 
@@ -59,12 +67,20 @@ impl GzipReaderPiped {
     ///
     /// The file should contain
     /// [gzip](https://www.rfc-editor.org/rfc/rfc1952#page-5) encoded data.
+    ///
+    /// ## Errors
+    ///
+    /// Any IO errors occurring when opening the file or forming the pipe are
+    /// propagated. The errors are wrapped with context containing the path.
     #[inline]
-    pub fn from_filename<P>(filename: P) -> std::io::Result<Self>
+    #[allow(dead_code)]
+    pub fn from_filename<P>(path: P) -> std::io::Result<Self>
     where
         P: AsRef<Path>, {
-        let file = File::open(filename)?;
-        Self::from_readable(file)
+        File::open(&path)
+            .and_then(Self::from_readable)
+            .with_file_context("Cannot read gzip file", &path)
+            .map_err(Into::into)
     }
 }
 
@@ -80,6 +96,7 @@ impl Read for GzipReaderPiped {
         {
             thread.join().unwrap()?;
         }
+
         Ok(bytes_read)
     }
 }
@@ -153,11 +170,19 @@ define_whichever! {
 
 impl FromFilename for ReadFileStdin {
     /// Creates a new [`ReadFileStdin::File`].
+    ///
+    /// ## Errors
+    ///
+    /// Any IO errors occurring when opening the file are propagated. The errors
+    /// are wrapped with context containing the path.
     #[inline]
     fn from_filename<P>(path: P) -> std::io::Result<Self>
     where
         P: AsRef<Path>, {
-        File::open(path).map(Self::File)
+        File::open(&path)
+            .map(Self::File)
+            .with_file_context("Cannot read file", &path)
+            .map_err(Into::into)
     }
 }
 
@@ -174,11 +199,17 @@ impl FromFilename for ReadFileZip {
     ///
     /// [`ReadFileZip::File`] is returned unless the file ends with extension
     /// `gz`, in which case [`ReadFileZip::Zipped`] is returned.
+    ///
+    /// ## Errors
+    ///
+    /// Any IO errors occurring when opening the file are propagated. The errors
+    /// are wrapped with context containing the path.
     #[inline]
     fn from_filename<P>(path: P) -> std::io::Result<Self>
     where
         P: AsRef<Path>, {
-        let file = File::open(&path)?;
+        let file = File::open(&path).with_file_context("Cannot read file", &path)?;
+
         if is_gz(path) {
             Ok(Self::Zipped(MultiGzDecoder::new(file)))
         } else {
@@ -192,14 +223,25 @@ impl FromFilename for ReadFileZipPipe {
     ///
     /// [`ReadFileZipPipe::File`] is returned unless the file ends with
     /// extension `gz`, in which case [`ReadFileZipPipe::Zipped`] is returned.
+    ///
+    /// ## Errors
+    ///
+    /// Any IO errors occurring when opening the file or forming the pipe (for a
+    /// zipped file) are propagated. The errors are wrapped with context
+    /// containing the path.
     #[inline]
     fn from_filename<P>(path: P) -> std::io::Result<Self>
     where
         P: AsRef<Path>, {
+        let file = File::open(&path).with_file_context("Cannot read file", &path)?;
+
         if is_gz(&path) {
-            Ok(ReadFileZipPipe::Zipped(GzipReaderPiped::from_filename(path)?))
+            Ok(ReadFileZipPipe::Zipped(
+                GzipReaderPiped::from_readable(file)
+                    .with_file_context("The file was inferred to be gzip, but could not be read", &path)?,
+            ))
         } else {
-            Ok(ReadFileZipPipe::File(File::open(path)?))
+            Ok(ReadFileZipPipe::File(file))
         }
     }
 }
@@ -223,9 +265,9 @@ where
     /// It may be necessary to specify the generic on [`RecordReaders`] before
     /// calling this function.
     pub fn from_filenames(path1: impl AsRef<Path>, path2: Option<impl AsRef<Path>>) -> std::io::Result<Self> {
-        let reader1 = R::from_filename(&path1).map_err(|e| ReaderFromFileError::file1(path1, e))?;
+        let reader1 = R::from_filename(&path1).with_file_context("Cannot load arg file 1", path1)?;
         let reader2 = match path2 {
-            Some(path2) => Some(R::from_filename(&path2).map_err(|e| ReaderFromFileError::file2(path2, e))?),
+            Some(path2) => Some(R::from_filename(&path2).with_file_context("Cannot load arg file 2", path2)?),
             None => None,
         };
         Ok(RecordReaders { reader1, reader2 })
@@ -260,10 +302,21 @@ impl<R> FromFilename for FastXReader<R>
 where
     R: Read + FromFilename,
 {
+    /// Creates a new [`FastXReader`] from a filename, interpreting the file
+    /// contents as type `R`.
+    ///
+    /// ## Errors
+    ///
+    /// Any IO errors occurring when opening the file as type `R` are propagated
+    /// without additional context. It is the responsibility of [`FromFilename`]
+    /// (as implemented on `R`) to add the path as context.
+    ///
+    /// If determining the record format fails, then context including the path
+    /// is added.
     #[inline]
     fn from_filename<P>(path: P) -> std::io::Result<Self>
     where
         P: AsRef<Path>, {
-        FastXReader::from_readable(R::from_filename(path)?)
+        Ok(FastXReader::from_readable(R::from_filename(&path)?).with_file_context("Cannot read file", path)?)
     }
 }
