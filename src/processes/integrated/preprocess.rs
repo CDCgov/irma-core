@@ -139,7 +139,8 @@ fn parse_preprocess_args(args: PreprocessArgs) -> std::io::Result<ParsedPreproce
         clipping_args,
     } = args;
 
-    let RecordReaders { reader1, reader2 } = RecordReaders::from_filenames(fastq_input_file1, fastq_input_file2)?;
+    let readers = RecordReaders::from_filenames(fastq_input_file1, fastq_input_file2)?;
+    let RecordReaders { reader1, reader2 } = readers;
 
     let log_writer = match log_file {
         Some(ref file_path) => Some(BufWriter::new(File::create(file_path)?)),

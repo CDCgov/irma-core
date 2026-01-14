@@ -264,10 +264,16 @@ where
     ///
     /// It may be necessary to specify the generic on [`RecordReaders`] before
     /// calling this function.
+    ///
+    /// ## Errors
+    ///
+    /// Any IO errors occuring when opening the files are propagated. It is the
+    /// responsibility of [`FromFilename`] (as implemented on `R`) to add the
+    /// path as context.
     pub fn from_filenames(path1: impl AsRef<Path>, path2: Option<impl AsRef<Path>>) -> std::io::Result<Self> {
-        let reader1 = R::from_filename(&path1).with_file_context("Cannot load arg file 1", path1)?;
+        let reader1 = R::from_filename(&path1)?;
         let reader2 = match path2 {
-            Some(path2) => Some(R::from_filename(&path2).with_file_context("Cannot load arg file 2", path2)?),
+            Some(path2) => Some(R::from_filename(&path2)?),
             None => None,
         };
         Ok(RecordReaders { reader1, reader2 })
@@ -278,6 +284,14 @@ impl<R> FromFilename for FastQReader<R>
 where
     R: Read + FromFilename,
 {
+    /// Creates a new [`FastQReader`] from a filename, interpreting the file
+    /// contents as type `R`.
+    ///
+    /// ## Errors
+    ///
+    /// Any IO errors occurring when opening the file as type `R` are propagated
+    /// without additional context. It is the responsibility of [`FromFilename`]
+    /// (as implemented on `R`) to add the path as context.
     #[inline]
     fn from_filename<P>(path: P) -> std::io::Result<Self>
     where
@@ -290,6 +304,14 @@ impl<R> FromFilename for FastaReader<R>
 where
     R: Read + FromFilename,
 {
+    /// Creates a new [`FastaReader`] from a filename, interpreting the file
+    /// contents as type `R`.
+    ///
+    /// ## Errors
+    ///
+    /// Any IO errors occurring when opening the file as type `R` are propagated
+    /// without additional context. It is the responsibility of [`FromFilename`]
+    /// (as implemented on `R`) to add the path as context.
     #[inline]
     fn from_filename<P>(path: P) -> std::io::Result<Self>
     where
