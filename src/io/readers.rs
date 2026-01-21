@@ -77,10 +77,9 @@ impl GzipReaderPiped {
     pub fn from_filename<P>(path: P) -> std::io::Result<Self>
     where
         P: AsRef<Path>, {
-        File::open(&path)
+        Ok(File::open(&path)
             .and_then(Self::from_readable)
-            .with_file_context("Cannot read gzip file", &path)
-            .map_err(Into::into)
+            .with_file_context("Cannot read gzip file", &path)?)
     }
 }
 
@@ -179,10 +178,9 @@ impl FromFilename for ReadFileStdin {
     fn from_filename<P>(path: P) -> std::io::Result<Self>
     where
         P: AsRef<Path>, {
-        File::open(&path)
+        Ok(File::open(&path)
             .map(Self::File)
-            .with_file_context("Cannot read file", &path)
-            .map_err(Into::into)
+            .with_file_context("Cannot read file", &path)?)
     }
 }
 

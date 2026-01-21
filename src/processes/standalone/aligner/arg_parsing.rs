@@ -1,11 +1,10 @@
-use std::{fmt::Display, path::PathBuf};
-
 use crate::{
-    aligner::AlignerArgs,
+    aligner::{AlignerArgs, QueryReader},
     args::abort_clap,
-    io::{FastXReader, FromFilename, ReadFileZip, ReadFileZipPipe},
+    io::{FastXReader, FromFilename, IterWithErrorContext, ReadFileZip, ReadFileZipPipe},
 };
 use clap::{ValueEnum, builder::PossibleValue, error::ErrorKind};
+use std::{fmt::Display, path::PathBuf};
 use zoe::{
     data::{
         AA_ALL_AMBIG_PROFILE_MAP_WITH_STOP, WeightMatrix,
@@ -20,7 +19,7 @@ use zoe::{
 /// The parsed and validated command line arguments for `aligner`
 pub struct ParsedAlignerArgs {
     /// The streamed query sequences
-    pub query_reader:  FastXReader<ReadFileZipPipe>,
+    pub query_reader:  QueryReader,
     /// The slurped reference sequences
     ///
     /// ## Validity
@@ -67,7 +66,13 @@ pub struct AlignerConfig {
 /// ## Errors
 ///
 /// Any IO errors from opening the queries, references, and output file are
-/// propagated.
+/// propagated, with context containing the file path. If there is an invalid
+/// record in the reference file, an error with the file path as context is
+/// returned.
+///
+/// Any invalid records in the query file do not immediately produce errors
+/// (since the reader is lazy), but any errors later produced will contain the
+/// file path as context.
 ///
 /// [`Aa`]: Alphabet::Aa
 pub fn parse_aligner_args(args: AlignerArgs) -> std::io::Result<ParsedAlignerArgs> {
@@ -96,7 +101,9 @@ pub fn parse_aligner_args(args: AlignerArgs) -> std::io::Result<ParsedAlignerArg
         )
     }
 
-    let query_reader = FastXReader::<ReadFileZipPipe>::from_filename(args.query_file)?;
+    let query_reader = FastXReader::<ReadFileZipPipe>::from_filename(&args.query_file)?
+        .iter_with_file_context("Invalid record in file", args.query_file);
+
     let references = FastaReader::<ReadFileZip>::from_filename(&args.ref_file)?
         .collect::<Result<Vec<_>, _>>()
         .with_file_context("Invalid record in file", &args.ref_file)?;

@@ -6,12 +6,16 @@ use crate::{
         methods::{AlignmentMethod, StripedSmithWatermanLocal, StripedSmithWatermanShared},
         writers::{AdditionalBounds, AlignmentWriter, write_header},
     },
-    io::{FastX, FastXReader, FromFilename, WriteFileZipStdout},
+    io::{FastX, FastXReader, FromFilename, IterWithContext, ReadFileZipPipe, WriteFileZipStdout},
 };
 use clap::{Args, builder::RangedI64ValueParser};
-use std::{borrow::Borrow, io::Read, path::PathBuf};
+use std::{borrow::Borrow, path::PathBuf};
 use zoe::{
-    data::{err::ResultWithErrorContext, fasta::FastaSeq, matrices::WeightMatrix},
+    data::{
+        err::{ErrorWithContext, ResultWithErrorContext},
+        fasta::FastaSeq,
+        matrices::WeightMatrix,
+    },
     math::AnyInt,
     prelude::{NucleotidesView, SeqSrc},
 };
@@ -24,6 +28,8 @@ use std::io::Write;
 mod arg_parsing;
 mod methods;
 mod writers;
+
+type QueryReader = IterWithContext<FastXReader<ReadFileZipPipe>>;
 
 /// The command line arguments for `aligner`
 #[derive(Args, Debug)]
@@ -129,12 +135,11 @@ pub fn aligner_process(args: AlignerArgs) -> std::io::Result<()> {
 }
 
 /// Dispatches the aligner based on the alphabet and weight matrix
-fn dispatch_alphabet<R, W>(
-    query_reader: FastXReader<R>, references: Vec<FastaSeq>, writer: &mut W, weight_matrix: AnyMatrix<'static, i8>,
+fn dispatch_alphabet<W>(
+    query_reader: QueryReader, references: Vec<FastaSeq>, writer: &mut W, weight_matrix: AnyMatrix<'static, i8>,
     config: AlignerConfig,
 ) -> std::io::Result<()>
 where
-    R: Read + Send,
     W: AlignmentWriter + AdditionalBounds, {
     match weight_matrix {
         AnyMatrix::Dna(weight_matrix) => dispatch_runner(query_reader, references, writer, weight_matrix, config),
@@ -144,11 +149,10 @@ where
 }
 
 /// Dispatches the aligner based on profile_from and best_match
-fn dispatch_runner<R, W, M, const S: usize>(
-    query_reader: FastXReader<R>, references: Vec<FastaSeq>, writer: &mut W, weight_matrix: M, config: AlignerConfig,
+fn dispatch_runner<W, M, const S: usize>(
+    query_reader: QueryReader, references: Vec<FastaSeq>, writer: &mut W, weight_matrix: M, config: AlignerConfig,
 ) -> std::io::Result<()>
 where
-    R: Read + Send,
     W: AlignmentWriter + AdditionalBounds,
     M: Borrow<WeightMatrix<'static, i8, S>> + Sync + Send + 'static, {
     match (config.profile_from_ref, config.best_match) {
@@ -173,12 +177,11 @@ where
 
 /// Performs all alignments using the provided `method`, with profiles built
 /// from the queries.
-fn align_all_profile_from_query<A, R, W>(
-    method: A, query_reader: FastXReader<R>, references: Vec<FastaSeq>, writer: &mut W, config: AlignerConfig,
+fn align_all_profile_from_query<A, W>(
+    method: A, query_reader: QueryReader, references: Vec<FastaSeq>, writer: &mut W, config: AlignerConfig,
 ) -> std::io::Result<()>
 where
     A: AlignmentMethod,
-    R: Read + Send,
     W: AlignmentWriter + AdditionalBounds, {
     // Compute all the reverse complements of the references ahead of time, if
     // rev_comp is true
@@ -210,12 +213,11 @@ where
 
 /// Performs all alignments using the provided `method`, with profiles built
 /// from the references.
-fn align_all_profile_from_ref<A, R, W>(
-    method: A, query_reader: FastXReader<R>, references: Vec<FastaSeq>, writer: &mut W, config: AlignerConfig,
+fn align_all_profile_from_ref<A, W>(
+    method: A, query_reader: QueryReader, references: Vec<FastaSeq>, writer: &mut W, config: AlignerConfig,
 ) -> std::io::Result<()>
 where
     A: for<'a> AlignmentMethod<Profile<'a>: Sync>,
-    R: Read + Send,
     W: AlignmentWriter + AdditionalBounds, {
     // Build profiles first, which requires SharedProfile
     let ref_profiles = method.zip_with_profiles(&references)?;
@@ -247,12 +249,11 @@ where
 /// Performs all alignments between the streamed queries and the slurped
 /// references using the provided alignment method, but only keeping one
 /// alignment with the best score for each query.
-fn align_best_match_profile_from_query<A, R, W>(
-    method: A, query_reader: FastXReader<R>, references: Vec<FastaSeq>, writer: &mut W, config: AlignerConfig,
+fn align_best_match_profile_from_query<A, W>(
+    method: A, query_reader: QueryReader, references: Vec<FastaSeq>, writer: &mut W, config: AlignerConfig,
 ) -> std::io::Result<()>
 where
     A: AlignmentMethod,
-    R: Read + Send,
     W: AlignmentWriter + AdditionalBounds, {
     // Compute all the reverse complements of the references ahead of time, if
     // rev_comp is true
@@ -296,12 +297,11 @@ where
 /// Performs all alignments between the streamed queries and the slurped
 /// references using the provided alignment method, but only keeping one
 /// alignment with the best score for each query.
-fn align_best_match_profile_from_ref<A, R, W>(
-    method: A, query_reader: FastXReader<R>, references: Vec<FastaSeq>, writer: &mut W, config: AlignerConfig,
+fn align_best_match_profile_from_ref<A, W>(
+    method: A, query_reader: QueryReader, references: Vec<FastaSeq>, writer: &mut W, config: AlignerConfig,
 ) -> std::io::Result<()>
 where
     A: for<'a> AlignmentMethod<Profile<'a>: Sync>,
-    R: Read + Send,
     W: AlignmentWriter + AdditionalBounds, {
     // Build profiles first, which requires `SharedProfile`
     let ref_profiles = method.zip_with_profiles(&references)?;
@@ -344,11 +344,10 @@ where
 /// iterator (`par_bridge`) or a serial iterator depending on the `one-thread`
 /// feature.
 #[inline]
-fn align_all<R, W, F>(query_reader: FastXReader<R>, writer: &mut W, f: F) -> std::io::Result<()>
+fn align_all<W, F>(query_reader: QueryReader, writer: &mut W, f: F) -> std::io::Result<()>
 where
-    R: Read + Send,
     W: AlignmentWriter + AdditionalBounds,
-    F: Fn(&mut W, std::io::Result<FastX>) -> std::io::Result<()> + Sync + Send, {
+    F: Fn(&mut W, Result<FastX, ErrorWithContext>) -> std::io::Result<()> + Sync + Send, {
     #[cfg(not(feature = "dev_no_rayon"))]
     query_reader.par_bridge().try_for_each_with(writer.clone(), f)?;
 
