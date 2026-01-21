@@ -6,16 +6,12 @@ use crate::{
         methods::{AlignmentMethod, StripedSmithWatermanLocal, StripedSmithWatermanShared},
         writers::{AdditionalBounds, AlignmentWriter, write_header},
     },
-    io::{FastX, FastXReader, FromFilename, IterWithContext, ReadFileZipPipe, WriteFileZipStdout},
+    io::{FastX, FastXReader, FromOptionalFilename, IterWithContext, ReadFileZipPipe, WriteFileZipStdout},
 };
 use clap::{Args, builder::RangedI64ValueParser};
 use std::{borrow::Borrow, path::PathBuf};
 use zoe::{
-    data::{
-        err::{ErrorWithContext, ResultWithErrorContext},
-        fasta::FastaSeq,
-        matrices::WeightMatrix,
-    },
+    data::{err::ResultWithErrorContext, fasta::FastaSeq, matrices::WeightMatrix},
     math::AnyInt,
     prelude::{NucleotidesView, SeqSrc},
 };
@@ -259,7 +255,7 @@ where
     // rev_comp is true
     let references = method.maybe_zip_with_revcomp(&references, config.rev_comp);
 
-    align_all(query_reader, writer, |writer, query| {
+    align_all(query_reader, writer, |writer, query| -> std::io::Result<()> {
         let query = query?;
         let profile = method.build_profile(&query)?;
 
@@ -306,7 +302,7 @@ where
     // Build profiles first, which requires `SharedProfile`
     let ref_profiles = method.zip_with_profiles(&references)?;
 
-    align_all(query_reader, writer, |writer, query| {
+    align_all(query_reader, writer, |writer, query| -> std::io::Result<()> {
         let query = query?;
 
         // Compute the reverse complement of the query, if rev_comp is true
@@ -347,7 +343,7 @@ where
 fn align_all<W, F>(query_reader: QueryReader, writer: &mut W, f: F) -> std::io::Result<()>
 where
     W: AlignmentWriter + AdditionalBounds,
-    F: Fn(&mut W, Result<FastX, ErrorWithContext>) -> std::io::Result<()> + Sync + Send, {
+    F: Fn(&mut W, std::io::Result<FastX>) -> std::io::Result<()> + Sync + Send, {
     #[cfg(not(feature = "dev_no_rayon"))]
     query_reader.par_bridge().try_for_each_with(writer.clone(), f)?;
 

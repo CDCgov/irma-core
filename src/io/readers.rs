@@ -1,4 +1,7 @@
-use crate::io::{FastXReader, FromFilename, is_gz};
+use crate::io::{
+    FastXReader, FromFilename, FromFilenameType, FromOptionalFilename, IterFromFilename, IterFromOptionalFilename,
+    IterWithContext, IterWithErrorContext, is_gz,
+};
 use flate2::read::MultiGzDecoder;
 use std::{
     fs::File,
@@ -168,19 +171,13 @@ define_whichever! {
 }
 
 impl FromFilename for ReadFileStdin {
-    /// Creates a new [`ReadFileStdin::File`].
-    ///
-    /// ## Errors
-    ///
-    /// Any IO errors occurring when opening the file are propagated. The errors
-    /// are wrapped with context containing the path.
+    const TYPE: FromFilenameType = FromFilenameType::Reader;
+
     #[inline]
-    fn from_filename<P>(path: P) -> std::io::Result<Self>
+    fn from_filename_no_context<P>(path: P) -> std::io::Result<Self>
     where
         P: AsRef<Path>, {
-        Ok(File::open(&path)
-            .map(Self::File)
-            .with_file_context("Cannot read file", &path)?)
+        Ok(Self::File(File::open(&path)?))
     }
 }
 
@@ -193,20 +190,17 @@ impl Default for ReadFileStdin {
 }
 
 impl FromFilename for ReadFileZip {
+    const TYPE: FromFilenameType = FromFilenameType::Reader;
+
     /// Creates a new [`ReadFileZip`] from the file.
     ///
     /// [`ReadFileZip::File`] is returned unless the file ends with extension
     /// `gz`, in which case [`ReadFileZip::Zipped`] is returned.
-    ///
-    /// ## Errors
-    ///
-    /// Any IO errors occurring when opening the file are propagated. The errors
-    /// are wrapped with context containing the path.
     #[inline]
-    fn from_filename<P>(path: P) -> std::io::Result<Self>
+    fn from_filename_no_context<P>(path: P) -> std::io::Result<Self>
     where
         P: AsRef<Path>, {
-        let file = File::open(&path).with_file_context("Cannot read file", &path)?;
+        let file = File::open(&path)?;
 
         if is_gz(path) {
             Ok(Self::Zipped(MultiGzDecoder::new(file)))
@@ -217,6 +211,8 @@ impl FromFilename for ReadFileZip {
 }
 
 impl FromFilename for ReadFileZipPipe {
+    const TYPE: FromFilenameType = FromFilenameType::Reader;
+
     /// Creates a new [`ReadFileZipPipe`] from the file.
     ///
     /// [`ReadFileZipPipe::File`] is returned unless the file ends with
@@ -225,19 +221,15 @@ impl FromFilename for ReadFileZipPipe {
     /// ## Errors
     ///
     /// Any IO errors occurring when opening the file or forming the pipe (for a
-    /// zipped file) are propagated. The errors are wrapped with context
-    /// containing the path.
+    /// zipped file) are propagated.
     #[inline]
-    fn from_filename<P>(path: P) -> std::io::Result<Self>
+    fn from_filename_no_context<P>(path: P) -> std::io::Result<Self>
     where
         P: AsRef<Path>, {
-        let file = File::open(&path).with_file_context("Cannot read file", &path)?;
+        let file = File::open(&path)?;
 
         if is_gz(&path) {
-            Ok(ReadFileZipPipe::Zipped(
-                GzipReaderPiped::from_readable(file)
-                    .with_file_context("The file was inferred to be gzip, but could not be read", &path)?,
-            ))
+            Ok(ReadFileZipPipe::Zipped(GzipReaderPiped::from_readable(file)?))
         } else {
             Ok(ReadFileZipPipe::File(file))
         }
@@ -256,7 +248,7 @@ pub struct RecordReaders<R> {
 
 impl<R> RecordReaders<R>
 where
-    R: FromFilename,
+    R: IterFromFilename,
 {
     /// Returns [`RecordReaders`] from a path and an optional second path.
     ///
@@ -268,7 +260,9 @@ where
     /// Any IO errors occuring when opening the files are propagated. It is the
     /// responsibility of [`FromFilename`] (as implemented on `R`) to add the
     /// path as context.
-    pub fn from_filenames(path1: impl AsRef<Path>, path2: Option<impl AsRef<Path>>) -> std::io::Result<Self> {
+    pub fn from_filenames(
+        path1: impl AsRef<Path>, path2: Option<impl AsRef<Path>>,
+    ) -> std::io::Result<RecordReaders<IterWithContext<R>>> {
         let reader1 = R::from_filename(&path1)?;
         let reader2 = match path2 {
             Some(path2) => Some(R::from_filename(&path2)?),
@@ -278,65 +272,95 @@ where
     }
 }
 
-impl<R> FromFilename for FastQReader<R>
+impl<R> IterFromFilename for FastQReader<R>
 where
     R: Read + FromFilename,
 {
-    /// Creates a new [`FastQReader`] from a filename, interpreting the file
-    /// contents as type `R`.
-    ///
-    /// ## Errors
-    ///
-    /// Any IO errors occurring when opening the file as type `R` are propagated
-    /// without additional context. It is the responsibility of [`FromFilename`]
-    /// (as implemented on `R`) to add the path as context.
-    #[inline]
-    fn from_filename<P>(path: P) -> std::io::Result<Self>
+    fn get_record_name(&self) -> &'static str {
+        "FASTQ"
+    }
+
+    fn from_filename_no_context<P>(path: P) -> std::io::Result<Self>
     where
         P: AsRef<Path>, {
-        FastQReader::from_readable(R::from_filename(path)?)
+        FastQReader::from_readable(R::from_filename_no_context(path)?)
     }
 }
 
-impl<R> FromFilename for FastaReader<R>
+impl<R> IterFromOptionalFilename for FastQReader<R>
 where
-    R: Read + FromFilename,
+    R: Read + FromOptionalFilename,
 {
-    /// Creates a new [`FastaReader`] from a filename, interpreting the file
-    /// contents as type `R`.
-    ///
-    /// ## Errors
-    ///
-    /// Any IO errors occurring when opening the file as type `R` are propagated
-    /// without additional context. It is the responsibility of [`FromFilename`]
-    /// (as implemented on `R`) to add the path as context.
-    #[inline]
-    fn from_filename<P>(path: P) -> std::io::Result<Self>
-    where
-        P: AsRef<Path>, {
-        FastaReader::from_readable(R::from_filename(path)?)
+    fn on_none_no_context() -> std::io::Result<Self> {
+        FastQReader::from_readable(R::on_none())
+    }
+
+    fn on_none() -> std::io::Result<IterWithContext<Self>> {
+        Ok(FastQReader::from_readable(R::on_none())
+            .with_context(format!("Failed to read from {}", R::DEFAULT_NAME))?
+            .iter_with_context(format!("Invalid FASTQ record in {}", R::DEFAULT_NAME)))
     }
 }
 
-impl<R> FromFilename for FastXReader<R>
+impl<R> IterFromFilename for FastaReader<R>
 where
     R: Read + FromFilename,
 {
-    /// Creates a new [`FastXReader`] from a filename, interpreting the file
-    /// contents as type `R`.
-    ///
-    /// ## Errors
-    ///
-    /// Any IO errors occurring when opening the file as type `R` are propagated
-    /// without additional context. It is the responsibility of [`FromFilename`]
-    /// (as implemented on `R`) to add the path as context.
-    ///
-    /// If determining the record format fails, then context including the path
-    /// is added.
-    #[inline]
-    fn from_filename<P>(path: P) -> std::io::Result<Self>
+    fn get_record_name(&self) -> &'static str {
+        "FASTA"
+    }
+
+    fn from_filename_no_context<P>(path: P) -> std::io::Result<Self>
     where
         P: AsRef<Path>, {
-        Ok(FastXReader::from_readable(R::from_filename(&path)?).with_file_context("Cannot read file", path)?)
+        FastaReader::from_readable(R::from_filename_no_context(path)?)
+    }
+}
+
+impl<R> IterFromOptionalFilename for FastaReader<R>
+where
+    R: Read + FromOptionalFilename,
+{
+    fn on_none_no_context() -> std::io::Result<Self> {
+        FastaReader::from_readable(R::on_none())
+    }
+
+    fn on_none() -> std::io::Result<IterWithContext<Self>> {
+        Ok(FastaReader::from_readable(R::on_none())
+            .with_context(format!("Failed to read from {}", R::DEFAULT_NAME))?
+            .iter_with_context(format!("Invalid FASTA record in {}", R::DEFAULT_NAME)))
+    }
+}
+
+impl<R> IterFromFilename for FastXReader<R>
+where
+    R: Read + FromFilename,
+{
+    fn get_record_name(&self) -> &'static str {
+        match self {
+            FastXReader::Fastq(reader) => reader.get_record_name(),
+            FastXReader::Fasta(reader) => reader.get_record_name(),
+        }
+    }
+
+    fn from_filename_no_context<P>(path: P) -> std::io::Result<Self>
+    where
+        P: AsRef<Path>, {
+        FastXReader::from_readable(R::from_filename_no_context(path)?)
+    }
+}
+
+impl<R> IterFromOptionalFilename for FastXReader<R>
+where
+    R: Read + FromOptionalFilename,
+{
+    fn on_none_no_context() -> std::io::Result<Self> {
+        FastXReader::from_readable(R::on_none())
+    }
+
+    fn on_none() -> std::io::Result<IterWithContext<Self>> {
+        Ok(FastXReader::from_readable(R::on_none())
+            .with_context(format!("Failed to read from {}", R::DEFAULT_NAME))?
+            .iter_with_context(format!("Invalid record in {}", R::DEFAULT_NAME)))
     }
 }

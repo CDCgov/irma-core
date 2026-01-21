@@ -1,6 +1,9 @@
 use crate::{
     args::clipping::{ClippingArgs, ParsedClippingArgs, parse_clipping_args},
-    io::{ReadFileZipPipe, RecordReaders, RecordWriters, WriteFileZipStdout, WriteRecord, check_distinct_files},
+    io::{
+        IterWithContext, ReadFileZipPipe, RecordReaders, RecordWriters, WriteFileZipStdout, WriteRecord,
+        check_distinct_files,
+    },
     utils::{
         paired_reads::{DeinterleavedPairedReadsExt, ZipPairedReadsExt, ZipReadsError},
         trimming::trim_read,
@@ -8,7 +11,7 @@ use crate::{
 };
 use clap::Args;
 use std::{io::Write, num::NonZeroUsize, path::PathBuf};
-use zoe::prelude::*;
+use zoe::{data::err::ResultWithErrorContext, prelude::*};
 
 #[derive(Args, Debug)]
 pub struct TrimmerArgs {
@@ -168,8 +171,8 @@ struct ParsedTrimmerArgs {
 
 /// Parsed IO arguments for single or paired reads
 struct ParsedPairedIoArgs {
-    reader1: FastQReader<ReadFileZipPipe>,
-    reader2: Option<FastQReader<ReadFileZipPipe>>,
+    reader1: IterWithContext<FastQReader<ReadFileZipPipe>>,
+    reader2: Option<IterWithContext<FastQReader<ReadFileZipPipe>>>,
     writer:  RecordWriters<WriteFileZipStdout>,
 }
 
@@ -217,12 +220,8 @@ fn parse_trimmer_args(args: TrimmerArgs) -> std::io::Result<ParsedTrimmerArgs> {
     let min_length = min_length.get();
 
     let primer_file = clipping_args.primer_trim.clone();
-    let clipping_args = parse_clipping_args(clipping_args).map_err(|e| {
-        std::io::Error::other(format!(
-            "Failed to process the primers at path {path:#?} due to the error:\n{e}",
-            path = primer_file.unwrap()
-        ))
-    })?;
+    let clipping_args =
+        parse_clipping_args(clipping_args).with_file_context("Failed to process primers in file", primer_file.unwrap())?;
 
     let parsed = ParsedTrimmerArgs {
         io_args:       ParsedPairedIoArgs {

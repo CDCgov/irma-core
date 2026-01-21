@@ -1,4 +1,4 @@
-use crate::io::{FromFilename, is_gz};
+use crate::io::{FromFilename, FromFilenameType, FromOptionalFilename, is_gz};
 use flate2::{Compression, write::GzEncoder};
 use std::{
     fs::File,
@@ -123,7 +123,7 @@ impl<W: Write> RecordWriters<W> {
         path1: Option<impl AsRef<Path>>, path2: Option<impl AsRef<Path>>,
     ) -> std::io::Result<Self>
     where
-        W: FromFilename + Default, {
+        W: FromFilename + FromOptionalFilename, {
         let writer1 = W::from_optional_filename(path1)?;
         let writer2 = path2.map(W::from_filename).transpose()?;
         Ok(Self::new(writer1, writer2))
@@ -131,6 +131,8 @@ impl<W: Write> RecordWriters<W> {
 }
 
 impl FromFilename for WriteFileZipStdout {
+    const TYPE: FromFilenameType = FromFilenameType::Writer;
+
     /// Creates a new [`WriteFileZipStdout`] from a path.
     ///
     /// [`WriteFileZipStdout::File`] is returned unless the file ends with
@@ -139,12 +141,11 @@ impl FromFilename for WriteFileZipStdout {
     ///
     /// ## Errors
     ///
-    /// Any IO errors occurring when creating the file are propagated. The
-    /// errors are wrapped with context containing the path.
-    fn from_filename<P>(path: P) -> std::io::Result<Self>
+    /// Any IO errors occurring when creating the file are propagated.
+    fn from_filename_no_context<P>(path: P) -> std::io::Result<Self>
     where
         P: AsRef<Path>, {
-        let file = File::create(&path).with_file_context("Cannot open file for writing", &path)?;
+        let file = File::create(&path)?;
         let bufwriter = BufWriter::new(file);
 
         let writer = if is_gz(path) {
@@ -157,10 +158,10 @@ impl FromFilename for WriteFileZipStdout {
     }
 }
 
-impl Default for WriteFileZipStdout {
-    /// Defaults to [`WriteFileZipStdout::Stdout`].
-    #[inline]
-    fn default() -> Self {
+impl FromOptionalFilename for WriteFileZipStdout {
+    const DEFAULT_NAME: &str = "STDOUT";
+
+    fn on_none() -> Self {
         Self::Stdout(BufWriter::new(stdout()))
     }
 }

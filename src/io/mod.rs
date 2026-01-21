@@ -1,5 +1,8 @@
-use std::{fmt::Display, path::Path};
-use zoe::data::err::{ErrorWithContext, ResultWithErrorContext, WithErrorContext};
+use std::{fmt::Display, io::Read, path::Path};
+use zoe::{
+    data::err::{ResultWithErrorContext, WithErrorContext},
+    prelude::{FastQReader, FastaReader},
+};
 
 mod fastx;
 mod readers;
@@ -32,10 +35,10 @@ where
     I: Iterator<Item = Result<V, E>>,
     E: WithErrorContext,
 {
-    type Item = Result<V, ErrorWithContext>;
+    type Item = std::io::Result<V>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.iter.next().map(|val| val.with_context(&self.description))
+        self.iter.next().map(|val| Ok(val.with_context(&self.description)?))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -117,6 +120,24 @@ where
     }
 }
 
+pub enum DispatchFastX<R>
+where
+    R: Read, {
+    Fastq(IterWithContext<FastQReader<R>>),
+    Fasta(IterWithContext<FastaReader<R>>),
+}
+
+impl<R: Read> IterWithContext<FastXReader<R>> {
+    pub fn dispatch(self) -> DispatchFastX<R> {
+        let IterWithContext { iter, description } = self;
+
+        match iter {
+            FastXReader::Fastq(iter) => DispatchFastX::Fastq(iter.iter_with_context(description)),
+            FastXReader::Fasta(iter) => DispatchFastX::Fasta(iter.iter_with_context(description)),
+        }
+    }
+}
+
 /// Checks that all the provided paths are distinct from each other.
 ///
 /// ## Errors
@@ -166,29 +187,119 @@ pub(crate) fn is_gz<P: AsRef<Path>>(path: P) -> bool {
     path.as_ref().extension().is_some_and(|ext| ext == "gz")
 }
 
-/// A trait unifying readers/writers that can be created from filenames.
-///
-/// This allows for composibility, such as an implementation of [`FromFilename`]
-/// on `FastQReader<ReadFileZip>`.
+pub enum FromFilenameType {
+    Reader,
+    Writer,
+}
+
+/// A trait unifying file-like structs or enums that can be created from a
+/// filename. This is designed for types implementing [`Read`] or [`Write`].
 pub(crate) trait FromFilename
 where
     Self: Sized, {
-    /// Creates the reader/writer from the path.
-    fn from_filename<P>(path: P) -> std::io::Result<Self>
+    const TYPE: FromFilenameType;
+
+    /// Creates the reader/writer from the path, without adding any context to
+    /// error messages.
+    fn from_filename_no_context<P>(path: P) -> std::io::Result<Self>
     where
         P: AsRef<Path>;
+
+    /// Creates the reader/writer from the path.
+    ///
+    /// ## Errors
+    ///
+    /// Context including the path is added to the error.
+    fn from_filename<P>(path: P) -> std::io::Result<Self>
+    where
+        P: AsRef<Path>, {
+        let msg = match Self::TYPE {
+            FromFilenameType::Reader => "Failed to open file",
+            FromFilenameType::Writer => "Failed to create file",
+        };
+
+        Ok(Self::from_filename_no_context(&path).with_file_context(msg, path)?)
+    }
+}
+
+pub(crate) trait FromOptionalFilename: FromFilename {
+    const DEFAULT_NAME: &str;
+
+    fn on_none() -> Self;
+
+    /// Creates the reader/writer from an optional path, using [`default`] if it
+    /// is not provided, without adding any context to error messages.
+    ///
+    /// [`default`]: Default::default
+    fn from_optional_filename_no_context<P>(path: Option<P>) -> std::io::Result<Self>
+    where
+        P: AsRef<Path>, {
+        match path {
+            Some(path) => Self::from_filename_no_context(path),
+            None => Ok(Self::on_none()),
+        }
+    }
 
     /// Creates the reader/writer from an optional path, using [`default`] if it
     /// is not provided.
     ///
+    /// ## Errors
+    ///
+    /// Context including the path is added to the error.
+    ///
     /// [`default`]: Default::default
     fn from_optional_filename<P>(path: Option<P>) -> std::io::Result<Self>
     where
-        Self: Default,
         P: AsRef<Path>, {
         match path {
             Some(path) => Self::from_filename(path),
-            None => Ok(Self::default()),
+            None => Ok(Self::on_none()),
+        }
+    }
+}
+
+pub(crate) trait IterFromFilename: IterWithErrorContext
+where
+    Self: Sized, {
+    fn get_record_name(&self) -> &'static str;
+
+    fn from_filename_no_context<P>(path: P) -> std::io::Result<Self>
+    where
+        P: AsRef<Path>;
+
+    fn from_filename<P>(path: P) -> std::io::Result<IterWithContext<Self>>
+    where
+        P: AsRef<Path>, {
+        let record_reader = Self::from_filename_no_context(&path).with_file_context("Failed to open file", &path)?;
+
+        let record_name = record_reader.get_record_name();
+
+        Ok(record_reader.iter_with_file_context(format!("Invalid {record_name} record while reading file"), path))
+    }
+}
+
+pub(crate) trait IterFromOptionalFilename: IterFromFilename
+where
+    Self: Sized, {
+    fn on_none_no_context() -> std::io::Result<Self>;
+
+    fn on_none() -> std::io::Result<IterWithContext<Self>>;
+
+    fn from_optional_filename_no_context<P>(path: Option<P>) -> std::io::Result<Self>
+    where
+        P: AsRef<Path>, {
+        match path {
+            Some(path) => Self::from_filename_no_context(path),
+            None => Self::on_none_no_context(),
+        }
+    }
+
+    fn from_optional_filename<P>(path: Option<P>) -> std::io::Result<IterWithContext<Self>>
+    where
+        P: AsRef<Path>, {
+        match path {
+            Some(path) => Self::from_filename(path),
+            None => Self::on_none(),
         }
     }
 }
