@@ -5,12 +5,14 @@ use zoe::{
 };
 
 mod fastx;
+mod open_options;
 mod readers;
 mod write_records;
 mod writers;
 
 pub use fastx::*;
-pub(crate) use readers::*;
+pub use open_options::*;
+pub use readers::*;
 pub use write_records::*;
 pub use writers::*;
 
@@ -120,6 +122,12 @@ where
     }
 }
 
+/// A dispatch-ready version [`FastXReader`] where each variant is wrapped with
+/// context.
+///
+/// This is a transposed version of `IterWithContext<FastXReader<...>>`, where
+/// each variant contains the [`IterWithContext`] so that the value can be
+/// matched on.
 pub enum DispatchFastX<R>
 where
     R: Read, {
@@ -128,6 +136,8 @@ where
 }
 
 impl<R: Read> IterWithContext<FastXReader<R>> {
+    /// Moves the context inside each variant so that the reader type can be
+    /// matched on.
     pub fn dispatch(self) -> DispatchFastX<R> {
         let IterWithContext { iter, description } = self;
 
@@ -148,31 +158,51 @@ pub(crate) fn check_distinct_files(
     input1: impl AsRef<Path>, input2: Option<impl AsRef<Path>>, output1: Option<impl AsRef<Path>>,
     output2: Option<impl AsRef<Path>>,
 ) -> std::io::Result<()> {
-    let input1 = Some(input1.as_ref());
+    fn identical_path_input_output(path: &Path) -> std::io::Error {
+        std::io::Error::other(format!(
+            "An identical path was found for an input file and output file: {}",
+            path.display()
+        ))
+    }
+
+    let input1 = input1.as_ref();
     let input2 = input2.as_ref().map(AsRef::as_ref);
     let output1 = output1.as_ref().map(AsRef::as_ref);
     let output2 = output2.as_ref().map(AsRef::as_ref);
 
-    if input1 == input2 {
-        Err(std::io::Error::other("The two input files are the same"))
-    } else if input1 == output1 {
-        Err(std::io::Error::other(
-            "The first input file is the same as the first output file",
-        ))
-    } else if input1 == output2 {
-        Err(std::io::Error::other(
-            "The first input file is the same as the second output file",
-        ))
-    } else if input2 == output1 && input2.is_some() {
-        Err(std::io::Error::other(
-            "The second input file is the same as the first output file",
-        ))
-    } else if input2 == output2 && input2.is_some() {
-        Err(std::io::Error::other(
-            "The second input file is the same as the second output file",
-        ))
-    } else if output1 == output2 && output1.is_some() {
-        Err(std::io::Error::other("The two output files are the same"))
+    if let Some(input2) = input2
+        && input1 == input2
+    {
+        Err(std::io::Error::other(format!(
+            "An identical path was found for the two input files: {}",
+            input1.display()
+        )))
+    } else if let Some(output1) = output1
+        && input1 == output1
+    {
+        Err(identical_path_input_output(input1))
+    } else if let Some(output2) = output2
+        && input1 == output2
+    {
+        Err(identical_path_input_output(input1))
+    } else if let Some(input2) = input2
+        && let Some(output1) = output1
+        && input2 == output1
+    {
+        Err(identical_path_input_output(input1))
+    } else if let Some(input2) = input2
+        && let Some(output2) = output2
+        && input2 == output2
+    {
+        Err(identical_path_input_output(input1))
+    } else if let Some(output1) = output1
+        && let Some(output2) = output2
+        && output1 == output2
+    {
+        Err(std::io::Error::other(format!(
+            "An identical path was found for the two output files: {}",
+            output1.display(),
+        )))
     } else {
         Ok(())
     }
@@ -185,121 +215,4 @@ pub(crate) fn check_distinct_files(
 #[inline]
 pub(crate) fn is_gz<P: AsRef<Path>>(path: P) -> bool {
     path.as_ref().extension().is_some_and(|ext| ext == "gz")
-}
-
-pub enum FromFilenameType {
-    Reader,
-    Writer,
-}
-
-/// A trait unifying file-like structs or enums that can be created from a
-/// filename. This is designed for types implementing [`Read`] or [`Write`].
-pub(crate) trait FromFilename
-where
-    Self: Sized, {
-    const TYPE: FromFilenameType;
-
-    /// Creates the reader/writer from the path, without adding any context to
-    /// error messages.
-    fn from_filename_no_context<P>(path: P) -> std::io::Result<Self>
-    where
-        P: AsRef<Path>;
-
-    /// Creates the reader/writer from the path.
-    ///
-    /// ## Errors
-    ///
-    /// Context including the path is added to the error.
-    fn from_filename<P>(path: P) -> std::io::Result<Self>
-    where
-        P: AsRef<Path>, {
-        let msg = match Self::TYPE {
-            FromFilenameType::Reader => "Failed to open file",
-            FromFilenameType::Writer => "Failed to create file",
-        };
-
-        Ok(Self::from_filename_no_context(&path).with_file_context(msg, path)?)
-    }
-}
-
-pub(crate) trait FromOptionalFilename: FromFilename {
-    const DEFAULT_NAME: &str;
-
-    fn on_none() -> Self;
-
-    /// Creates the reader/writer from an optional path, using [`default`] if it
-    /// is not provided, without adding any context to error messages.
-    ///
-    /// [`default`]: Default::default
-    fn from_optional_filename_no_context<P>(path: Option<P>) -> std::io::Result<Self>
-    where
-        P: AsRef<Path>, {
-        match path {
-            Some(path) => Self::from_filename_no_context(path),
-            None => Ok(Self::on_none()),
-        }
-    }
-
-    /// Creates the reader/writer from an optional path, using [`default`] if it
-    /// is not provided.
-    ///
-    /// ## Errors
-    ///
-    /// Context including the path is added to the error.
-    ///
-    /// [`default`]: Default::default
-    fn from_optional_filename<P>(path: Option<P>) -> std::io::Result<Self>
-    where
-        P: AsRef<Path>, {
-        match path {
-            Some(path) => Self::from_filename(path),
-            None => Ok(Self::on_none()),
-        }
-    }
-}
-
-pub(crate) trait IterFromFilename: IterWithErrorContext
-where
-    Self: Sized, {
-    fn get_record_name(&self) -> &'static str;
-
-    fn from_filename_no_context<P>(path: P) -> std::io::Result<Self>
-    where
-        P: AsRef<Path>;
-
-    fn from_filename<P>(path: P) -> std::io::Result<IterWithContext<Self>>
-    where
-        P: AsRef<Path>, {
-        let record_reader = Self::from_filename_no_context(&path).with_file_context("Failed to open file", &path)?;
-
-        let record_name = record_reader.get_record_name();
-
-        Ok(record_reader.iter_with_file_context(format!("Invalid {record_name} record while reading file"), path))
-    }
-}
-
-pub(crate) trait IterFromOptionalFilename: IterFromFilename
-where
-    Self: Sized, {
-    fn on_none_no_context() -> std::io::Result<Self>;
-
-    fn on_none() -> std::io::Result<IterWithContext<Self>>;
-
-    fn from_optional_filename_no_context<P>(path: Option<P>) -> std::io::Result<Self>
-    where
-        P: AsRef<Path>, {
-        match path {
-            Some(path) => Self::from_filename_no_context(path),
-            None => Self::on_none_no_context(),
-        }
-    }
-
-    fn from_optional_filename<P>(path: Option<P>) -> std::io::Result<IterWithContext<Self>>
-    where
-        P: AsRef<Path>, {
-        match path {
-            Some(path) => Self::from_filename(path),
-            None => Self::on_none(),
-        }
-    }
 }

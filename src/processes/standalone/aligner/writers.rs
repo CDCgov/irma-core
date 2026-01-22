@@ -94,7 +94,7 @@ impl<T> AdditionalBounds for T {}
 /// `aligner`.
 ///
 /// This is specifically designed to share logic between a multi-threaded
-/// [`AlignmentWriterThreaded`] and a single-threaded [`WriteFileZipStdout`].
+/// `AlignmentWriterThreaded` and a single-threaded `WriteFileZipStdout`.
 pub trait AlignmentWriter: Sized {
     /// Given an unmapped alignment in a [`SamDataView`], write the alignment.
     fn write_unmapped<'a>(&mut self, record: SamDataView<'a>) -> std::io::Result<()>;

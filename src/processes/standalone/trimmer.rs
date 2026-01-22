@@ -1,8 +1,8 @@
 use crate::{
     args::clipping::{ClippingArgs, ParsedClippingArgs, parse_clipping_args},
     io::{
-        IterWithContext, ReadFileZipPipe, RecordReaders, RecordWriters, WriteFileZipStdout, WriteRecord,
-        check_distinct_files,
+        InputOptions, IterWithContext, OutputOptions, ReadFileZipPipe, RecordReaders, RecordWriters, WriteFileZipStdout,
+        WriteRecord, check_distinct_files,
     },
     utils::{
         paired_reads::{DeinterleavedPairedReadsExt, ZipPairedReadsExt, ZipReadsError},
@@ -11,7 +11,7 @@ use crate::{
 };
 use clap::Args;
 use std::{io::Write, num::NonZeroUsize, path::PathBuf};
-use zoe::{data::err::ResultWithErrorContext, prelude::*};
+use zoe::prelude::*;
 
 #[derive(Args, Debug)]
 pub struct TrimmerArgs {
@@ -212,16 +212,20 @@ fn parse_trimmer_args(args: TrimmerArgs) -> std::io::Result<ParsedTrimmerArgs> {
         fastq_output_file.as_ref(),
         fastq_output_file2.as_ref(),
     )?;
-    let readers = RecordReaders::from_filenames(fastq_input_file, fastq_input_file2)?;
-    let writer = RecordWriters::from_optional_filenames(fastq_output_file, fastq_output_file2)?;
+
+    let readers = InputOptions::new_from_paths(&fastq_input_file, fastq_input_file2.as_ref())
+        .use_file_or_zip_threaded()
+        .parse_fastq()
+        .open()?;
+
+    let writer = OutputOptions::new_from_opt_paths(fastq_output_file.as_ref(), fastq_output_file2.as_ref())
+        .use_file_zip_or_stdout()
+        .open()?;
 
     let RecordReaders { reader1, reader2 } = readers;
-
     let min_length = min_length.get();
 
-    let primer_file = clipping_args.primer_trim.clone();
-    let clipping_args =
-        parse_clipping_args(clipping_args).with_file_context("Failed to process primers in file", primer_file.unwrap())?;
+    let clipping_args = parse_clipping_args(clipping_args)?;
 
     let parsed = ParsedTrimmerArgs {
         io_args:       ParsedPairedIoArgs {

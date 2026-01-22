@@ -1,7 +1,7 @@
 use crate::{
     io::{
-        DispatchFastX, FastXReader, ReadFileZipPipe, RecordReaders, RecordWriters, WriteFileZipStdout, WriteRecord,
-        WriteRecords, check_distinct_files,
+        DispatchFastX, InputOptions, OutputOptions, RecordWriters, WriteFileZipStdout, WriteRecord, WriteRecords,
+        check_distinct_files,
     },
     utils::paired_reads::{DeinterleavedPairedReadsExt, ZipPairedReadsExt},
 };
@@ -35,9 +35,14 @@ pub fn xleave_process(args: XLeaveArgs) -> Result<(), std::io::Error> {
         args.output_file2.as_ref(),
     )?;
 
-    let readers =
-        RecordReaders::<FastXReader<ReadFileZipPipe>>::from_filenames(&args.input_file1, args.input_file2.as_ref())?;
-    let writer = RecordWriters::<WriteFileZipStdout>::from_optional_filenames(args.output_file1, args.output_file2)?;
+    let readers = InputOptions::new_from_paths(&args.input_file1, args.input_file2.as_ref())
+        .use_file_or_zip_threaded()
+        .parse_fastx()
+        .open()?;
+
+    let writer = OutputOptions::new_from_opt_paths(args.output_file1.as_ref(), args.output_file2.as_ref())
+        .use_file_zip_or_stdout()
+        .open()?;
 
     match (readers.reader1.dispatch(), readers.reader2.map(|x| x.dispatch())) {
         (DispatchFastX::Fastq(reader), None) => match writer {

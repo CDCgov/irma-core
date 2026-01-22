@@ -1,7 +1,4 @@
-use crate::io::{
-    FastXReader, FromFilename, FromFilenameType, FromOptionalFilename, IterFromFilename, IterFromOptionalFilename,
-    IterWithContext, IterWithErrorContext, is_gz,
-};
+use crate::io::is_gz;
 use flate2::read::MultiGzDecoder;
 use std::{
     fs::File,
@@ -9,11 +6,7 @@ use std::{
     path::Path,
     thread::{self, JoinHandle},
 };
-use zoe::{
-    data::err::ResultWithErrorContext,
-    define_whichever,
-    prelude::{FastQReader, FastaReader},
-};
+use zoe::{data::err::ResultWithErrorContext, define_whichever};
 
 /// A reader for a [gzip file](https://www.rfc-editor.org/rfc/rfc1952#page-5)
 /// that may have multiple members, spawning a separate thread for the unzipping
@@ -66,23 +59,21 @@ impl GzipReaderPiped {
         })
     }
 
-    /// Creates a new [`GzipReaderPiped`] over a file.
+    /// Opens a new [`GzipReaderPiped`] from a path.
     ///
-    /// The file should contain
+    /// The path should contain
     /// [gzip](https://www.rfc-editor.org/rfc/rfc1952#page-5) encoded data.
     ///
     /// ## Errors
     ///
     /// Any IO errors occurring when opening the file or forming the pipe are
-    /// propagated. The errors are wrapped with context containing the path.
+    /// propagated.
     #[inline]
     #[allow(dead_code)]
-    pub fn from_filename<P>(path: P) -> std::io::Result<Self>
+    pub fn open<P>(path: P) -> std::io::Result<Self>
     where
         P: AsRef<Path>, {
-        Ok(File::open(&path)
-            .and_then(Self::from_readable)
-            .with_file_context("Cannot read gzip file", &path)?)
+        File::open(&path).and_then(Self::from_readable)
     }
 }
 
@@ -106,12 +97,6 @@ impl Read for GzipReaderPiped {
 define_whichever! {
     // TODO: Implement reading from stdin for select processes
     /// An enum for the input types [`File`] and [`Stdin`].
-    ///
-    /// To construct this, either use [`from_filename`] or
-    /// [`from_optional_filename`].
-    ///
-    /// [`from_filename`]: FromFilename::from_filename
-    /// [`from_optional_filename`]: FromFilename::from_optional_filename
     pub(crate) enum ReadFileStdin {
         /// A regular uncompressed file.
         File(File),
@@ -120,6 +105,22 @@ define_whichever! {
     }
 
     impl Read for ReadFileStdin {}
+}
+
+impl ReadFileStdin {
+    /// Opens a [`ReadFileStdin`] from an optional path. If a path is not
+    /// provided, [`ReadFileStdin::Stdin`] is used.
+    ///
+    /// ## Errors
+    ///
+    /// If a path is provided, any IO errors when opening the file are
+    /// propagated. If no path is provided, this method is infallible.
+    pub fn open(path: Option<impl AsRef<Path>>) -> std::io::Result<Self> {
+        match path {
+            Some(path) => File::open(&path).map(Self::File),
+            None => Ok(ReadFileStdin::Stdin(stdin())),
+        }
+    }
 }
 
 define_whichever! {
@@ -143,6 +144,25 @@ define_whichever! {
     }
 
     impl Read for ReadFileZip {}
+}
+
+impl ReadFileZip {
+    /// Opens a [`ReadFileZip`] from a path.
+    ///
+    /// The file is determined to be zipped if it ends in `.gz`.
+    ///
+    /// ## Errors
+    ///
+    /// Any IO errors when opening the file are propagated.
+    pub fn open(path: impl AsRef<Path>) -> std::io::Result<Self> {
+        let file = File::open(&path)?;
+
+        if is_gz(path) {
+            Ok(Self::Zipped(MultiGzDecoder::new(file)))
+        } else {
+            Ok(Self::File(file))
+        }
+    }
 }
 
 define_whichever! {
@@ -170,62 +190,15 @@ define_whichever! {
     impl Read for ReadFileZipPipe {}
 }
 
-impl FromFilename for ReadFileStdin {
-    const TYPE: FromFilenameType = FromFilenameType::Reader;
-
-    #[inline]
-    fn from_filename_no_context<P>(path: P) -> std::io::Result<Self>
-    where
-        P: AsRef<Path>, {
-        Ok(Self::File(File::open(&path)?))
-    }
-}
-
-impl Default for ReadFileStdin {
-    /// Defaults to [`ReadFileStdin::Stdin`].
-    #[inline]
-    fn default() -> Self {
-        Self::Stdin(stdin())
-    }
-}
-
-impl FromFilename for ReadFileZip {
-    const TYPE: FromFilenameType = FromFilenameType::Reader;
-
-    /// Creates a new [`ReadFileZip`] from the file.
+impl ReadFileZipPipe {
+    /// Opens a [`ReadFileZipPipe`] from a path.
     ///
-    /// [`ReadFileZip::File`] is returned unless the file ends with extension
-    /// `gz`, in which case [`ReadFileZip::Zipped`] is returned.
-    #[inline]
-    fn from_filename_no_context<P>(path: P) -> std::io::Result<Self>
-    where
-        P: AsRef<Path>, {
-        let file = File::open(&path)?;
-
-        if is_gz(path) {
-            Ok(Self::Zipped(MultiGzDecoder::new(file)))
-        } else {
-            Ok(Self::File(file))
-        }
-    }
-}
-
-impl FromFilename for ReadFileZipPipe {
-    const TYPE: FromFilenameType = FromFilenameType::Reader;
-
-    /// Creates a new [`ReadFileZipPipe`] from the file.
-    ///
-    /// [`ReadFileZipPipe::File`] is returned unless the file ends with
-    /// extension `gz`, in which case [`ReadFileZipPipe::Zipped`] is returned.
+    /// The file is determined to be zipped if it ends in `.gz`.
     ///
     /// ## Errors
     ///
-    /// Any IO errors occurring when opening the file or forming the pipe (for a
-    /// zipped file) are propagated.
-    #[inline]
-    fn from_filename_no_context<P>(path: P) -> std::io::Result<Self>
-    where
-        P: AsRef<Path>, {
+    /// Any IO errors when opening the file or forming the pipe are propagated.
+    pub fn open(path: impl AsRef<Path>) -> std::io::Result<Self> {
         let file = File::open(&path)?;
 
         if is_gz(&path) {
@@ -244,123 +217,4 @@ pub struct RecordReaders<R> {
     pub reader1: R,
     /// The optional reader for the second input file (for paired reads).
     pub reader2: Option<R>,
-}
-
-impl<R> RecordReaders<R>
-where
-    R: IterFromFilename,
-{
-    /// Returns [`RecordReaders`] from a path and an optional second path.
-    ///
-    /// It may be necessary to specify the generic on [`RecordReaders`] before
-    /// calling this function.
-    ///
-    /// ## Errors
-    ///
-    /// Any IO errors occuring when opening the files are propagated. It is the
-    /// responsibility of [`FromFilename`] (as implemented on `R`) to add the
-    /// path as context.
-    pub fn from_filenames(
-        path1: impl AsRef<Path>, path2: Option<impl AsRef<Path>>,
-    ) -> std::io::Result<RecordReaders<IterWithContext<R>>> {
-        let reader1 = R::from_filename(&path1)?;
-        let reader2 = match path2 {
-            Some(path2) => Some(R::from_filename(&path2)?),
-            None => None,
-        };
-        Ok(RecordReaders { reader1, reader2 })
-    }
-}
-
-impl<R> IterFromFilename for FastQReader<R>
-where
-    R: Read + FromFilename,
-{
-    fn get_record_name(&self) -> &'static str {
-        "FASTQ"
-    }
-
-    fn from_filename_no_context<P>(path: P) -> std::io::Result<Self>
-    where
-        P: AsRef<Path>, {
-        FastQReader::from_readable(R::from_filename_no_context(path)?)
-    }
-}
-
-impl<R> IterFromOptionalFilename for FastQReader<R>
-where
-    R: Read + FromOptionalFilename,
-{
-    fn on_none_no_context() -> std::io::Result<Self> {
-        FastQReader::from_readable(R::on_none())
-    }
-
-    fn on_none() -> std::io::Result<IterWithContext<Self>> {
-        Ok(FastQReader::from_readable(R::on_none())
-            .with_context(format!("Failed to read from {}", R::DEFAULT_NAME))?
-            .iter_with_context(format!("Invalid FASTQ record in {}", R::DEFAULT_NAME)))
-    }
-}
-
-impl<R> IterFromFilename for FastaReader<R>
-where
-    R: Read + FromFilename,
-{
-    fn get_record_name(&self) -> &'static str {
-        "FASTA"
-    }
-
-    fn from_filename_no_context<P>(path: P) -> std::io::Result<Self>
-    where
-        P: AsRef<Path>, {
-        FastaReader::from_readable(R::from_filename_no_context(path)?)
-    }
-}
-
-impl<R> IterFromOptionalFilename for FastaReader<R>
-where
-    R: Read + FromOptionalFilename,
-{
-    fn on_none_no_context() -> std::io::Result<Self> {
-        FastaReader::from_readable(R::on_none())
-    }
-
-    fn on_none() -> std::io::Result<IterWithContext<Self>> {
-        Ok(FastaReader::from_readable(R::on_none())
-            .with_context(format!("Failed to read from {}", R::DEFAULT_NAME))?
-            .iter_with_context(format!("Invalid FASTA record in {}", R::DEFAULT_NAME)))
-    }
-}
-
-impl<R> IterFromFilename for FastXReader<R>
-where
-    R: Read + FromFilename,
-{
-    fn get_record_name(&self) -> &'static str {
-        match self {
-            FastXReader::Fastq(reader) => reader.get_record_name(),
-            FastXReader::Fasta(reader) => reader.get_record_name(),
-        }
-    }
-
-    fn from_filename_no_context<P>(path: P) -> std::io::Result<Self>
-    where
-        P: AsRef<Path>, {
-        FastXReader::from_readable(R::from_filename_no_context(path)?)
-    }
-}
-
-impl<R> IterFromOptionalFilename for FastXReader<R>
-where
-    R: Read + FromOptionalFilename,
-{
-    fn on_none_no_context() -> std::io::Result<Self> {
-        FastXReader::from_readable(R::on_none())
-    }
-
-    fn on_none() -> std::io::Result<IterWithContext<Self>> {
-        Ok(FastXReader::from_readable(R::on_none())
-            .with_context(format!("Failed to read from {}", R::DEFAULT_NAME))?
-            .iter_with_context(format!("Invalid record in {}", R::DEFAULT_NAME)))
-    }
 }

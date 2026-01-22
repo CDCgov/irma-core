@@ -4,10 +4,12 @@
 
 use clap::Args;
 use std::collections::HashMap;
-use std::io::{BufWriter, Write};
+use std::io::Write;
 use std::path::PathBuf;
-use zoe::data::{err::WithErrorContext, fasta::FastaReader, sam::*};
+use zoe::data::err::ResultWithErrorContext;
+use zoe::data::sam::*;
 
+use crate::io::{InputOptions, OutputOptions};
 use crate::utils::paired_reads::get_molecular_id_side;
 
 #[derive(Args, Debug)]
@@ -31,48 +33,45 @@ pub struct MergeSAMArgs {
 }
 
 pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error> {
-    let reference = FastaReader::from_filename(&args.fasta_reference)?
-        .filter_map(|f| f.ok())
-        .next()
-        .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!("No valid fasta data in file: {file}", file = &args.fasta_reference.display()),
-            )
-        })?;
+    let mut ref_reader = InputOptions::new_from_path(&args.fasta_reference)
+        .use_file()
+        .parse_fasta()
+        .open()?;
+
+    let reference = ref_reader.next().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("No valid fasta data in file: {file}", file = &args.fasta_reference.display()),
+        )
+    })??;
 
     const ONE_MB: usize = 2usize.pow(20);
     let merged_sam_file = args.output_prefix.with_extension("sam");
-    let mut sam_writer = BufWriter::with_capacity(
-        ONE_MB,
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(&merged_sam_file)
-            .map_err(|e| e.with_file_context("Cannot open merged SAM file", &merged_sam_file))?,
-    );
+
+    let mut sam_writer = OutputOptions::new_from_path(&merged_sam_file)
+        .with_capacity(ONE_MB)
+        .use_file()
+        .open()?;
 
     let mut sam_data: Vec<SamData> = Vec::new();
     let mut pairs: HashMap<String, IndexPair> = HashMap::new();
     let mut index = 0;
 
-    let sam_records = SAMReader::from_filename(&args.sam_file)?;
+    let sam_records = InputOptions::new_from_path(&args.sam_file).use_file().parse_sam().open()?;
 
     for sam_row in sam_records {
-        let row = match sam_row {
-            Ok(SamRow::Data(d)) => {
+        let row = match sam_row? {
+            SamRow::Data(d) => {
                 if d.rname != reference.name {
                     continue;
                 }
                 d
             }
-            Ok(SamRow::Header(h)) => {
+            SamRow::Header(h) => {
                 writeln!(sam_writer, "{h}")
-                    .map_err(|e| e.with_file_context("Failed to write header to merged SAM file", &merged_sam_file))?;
+                    .with_file_context("Failed to write header to merged SAM file", &merged_sam_file)?;
                 continue;
             }
-            Err(e) => Err(e.with_file_context("parsing SAM row failed", &args.sam_file))?,
         };
 
         // bowtie is order based
@@ -108,12 +107,11 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
                 );
                 paired_merging_stats += stats;
 
-                writeln!(sam_writer, "{s}")
-                    .map_err(|e| e.with_file_context("Failed to write to merged SAM file", &merged_sam_file))?;
+                writeln!(sam_writer, "{s}").with_file_context("Failed to write to merged SAM file", &merged_sam_file)?;
             }
             (Some(index), None) | (None, Some(index)) => {
                 writeln!(sam_writer, "{}", sam_data[index])
-                    .map_err(|e| e.with_file_context("Failed to write to merged SAM file", &merged_sam_file))?;
+                    .with_file_context("Failed to write to merged SAM file", &merged_sam_file)?;
             }
             _ => continue,
         }
@@ -121,14 +119,8 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
 
     if args.store_stats {
         let paired_stats_file = args.output_prefix.with_extension("stats");
-        let mut w = BufWriter::new(
-            std::fs::OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .open(&paired_stats_file)
-                .map_err(|e| e.with_file_context("Cannot open stats file", &paired_stats_file))?,
-        );
+
+        let mut w = OutputOptions::new_from_path(&paired_stats_file).use_file().open()?;
 
         let PairedMergeStats {
             observations,
@@ -149,7 +141,7 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
              {name}\tinsErr\t{insert_errors}",
             name = reference.name
         )
-        .map_err(|e| e.with_file_context("Failed to write paired stats file", &paired_stats_file))?;
+        .with_file_context("Failed to write paired stats file", &paired_stats_file)?;
     }
 
     Ok(())

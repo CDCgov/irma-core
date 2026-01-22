@@ -1,7 +1,8 @@
 use crate::{
     io::{
-        DispatchFastX, FastXReader, IterWithContext, ReadFileZipPipe, RecordReaders, RecordWriters, SequenceWriter,
-        WriteFileZipStdout, WriteRecord, WriteRecordCompatibleItem, WriteRecords, check_distinct_files, is_gz,
+        DispatchFastX, FastXReader, InputOptions, IterWithContext, OutputOptions, ReadFileZipPipe, RecordReaders,
+        RecordWriters, SequenceWriter, WriteFileZipStdout, WriteRecord, WriteRecordCompatibleItem, WriteRecords,
+        check_distinct_files, is_gz,
     },
     utils::paired_reads::{DeinterleavedPairedReads, DeinterleavedPairedReadsExt, ZipPairedReadsExt},
 };
@@ -9,7 +10,6 @@ use clap::Args;
 use rand::SeedableRng;
 use rand_xoshiro::Xoshiro256StarStar;
 use std::{
-    fs::File,
     io::{BufRead, BufReader, Read, Write},
     path::PathBuf,
 };
@@ -351,9 +351,14 @@ fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, 
         args.output_file2.as_ref(),
     )?;
 
-    let readers =
-        RecordReaders::<FastXReader<ReadFileZipPipe>>::from_filenames(&args.input_file1, args.input_file2.as_ref())?;
-    let writer = RecordWriters::from_optional_filenames(args.output_file1, args.output_file2)?;
+    let readers = InputOptions::new_from_paths(&args.input_file1, args.input_file2.as_ref())
+        .use_file_or_zip_threaded()
+        .parse_fastx()
+        .open()?;
+
+    let writer = OutputOptions::new_from_opt_paths(args.output_file1.as_ref(), args.output_file2.as_ref())
+        .use_file_zip_or_stdout()
+        .open()?;
 
     let RecordReaders { reader1, reader2 } = readers;
 
@@ -389,7 +394,7 @@ fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, 
 }
 
 fn get_seq_count<R: Read>(fastq: &PathBuf, reader: &FastXReader<R>) -> std::io::Result<usize> {
-    let input = File::open(fastq)?;
+    let input = InputOptions::new_from_path(fastq).use_file().open()?;
     let buffered = BufReader::new(input);
     let line_count = buffered.lines().count();
     match reader {

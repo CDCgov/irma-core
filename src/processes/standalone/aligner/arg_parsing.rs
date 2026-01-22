@@ -1,7 +1,7 @@
 use crate::{
     aligner::{AlignerArgs, QueryReader},
     args::abort_clap,
-    io::{FastXReader, IterFromFilename, ReadFileZip, ReadFileZipPipe},
+    io::InputOptions,
 };
 use clap::{ValueEnum, builder::PossibleValue, error::ErrorKind};
 use std::{fmt::Display, path::PathBuf};
@@ -12,7 +12,6 @@ use zoe::{
         matrices::{BLOSUM_62, aa_mat_from_name},
     },
     math::AnyInt,
-    prelude::FastaReader,
 };
 
 /// The parsed and validated command line arguments for `aligner`
@@ -25,8 +24,6 @@ pub struct ParsedAlignerArgs {
     ///
     /// This field must be non-empty.
     pub references:    Vec<FastaSeq>,
-    /// The output path for the alignments
-    pub output:        Option<PathBuf>,
     /// The weight matrix to use for the alignment
     pub weight_matrix: AnyMatrix<'static, i8>,
     /// Whether to write the SAM header
@@ -49,6 +46,9 @@ pub struct AlignerConfig {
     pub exclude_unmapped: bool,
     /// Whether to perform best match alignment
     pub best_match:       bool,
+    /// The output path for the alignments (included in the config so that error
+    /// context can be added)
+    pub output:           Option<PathBuf>,
     /// Whether to set the Rayon number of threads to one
     #[cfg(not(feature = "dev_no_rayon"))]
     pub single_thread:    bool,
@@ -100,9 +100,16 @@ pub fn parse_aligner_args(args: AlignerArgs) -> std::io::Result<ParsedAlignerArg
         )
     }
 
-    let query_reader = FastXReader::<ReadFileZipPipe>::from_filename(&args.query_file)?;
+    let query_reader = InputOptions::new_from_path(&args.query_file)
+        .use_file_or_zip_threaded()
+        .parse_fastx()
+        .open()?;
 
-    let references = FastaReader::<ReadFileZip>::from_filename(&args.ref_file)?.collect::<Result<Vec<_>, _>>()?;
+    let references = InputOptions::new_from_path(&args.ref_file)
+        .use_file_or_zip()
+        .parse_fasta()
+        .open()?
+        .collect::<Result<Vec<_>, _>>()?;
 
     // Validity: references field is required to be non-empty
     if references.is_empty() {
@@ -115,7 +122,6 @@ pub fn parse_aligner_args(args: AlignerArgs) -> std::io::Result<ParsedAlignerArg
     Ok(ParsedAlignerArgs {
         query_reader,
         references,
-        output: args.output,
         weight_matrix,
         header: args.header,
         config: AlignerConfig {
@@ -125,6 +131,7 @@ pub fn parse_aligner_args(args: AlignerArgs) -> std::io::Result<ParsedAlignerArg
             profile_from_ref: args.profile_from_ref,
             exclude_unmapped: args.exclude_unmapped,
             best_match: args.best_match,
+            output: args.output,
             #[cfg(not(feature = "dev_no_rayon"))]
             single_thread: args.single_thread,
         },

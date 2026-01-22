@@ -4,7 +4,7 @@
 
 use crate::{
     args::clipping::{ClippingArgs, ParsedClippingArgs, parse_clipping_args},
-    io::{IterWithContext, ReadFileZipPipe, RecordReaders},
+    io::{InputOptions, IterWithContext, OutputOptions, ReadFileZipPipe, RecordReaders},
     qc::{fastq::ReadTransforms, fastq_metadata::*},
     utils::{
         get_hasher,
@@ -139,20 +139,23 @@ fn parse_preprocess_args(args: PreprocessArgs) -> std::io::Result<ParsedPreproce
         clipping_args,
     } = args;
 
-    let readers = RecordReaders::from_filenames(fastq_input_file1, fastq_input_file2)?;
+    let readers = InputOptions::new_from_paths(&fastq_input_file1, fastq_input_file2.as_ref())
+        .use_file_or_zip_threaded()
+        .parse_fastq()
+        .open()?;
+
     let RecordReaders { reader1, reader2 } = readers;
 
     let log_writer = match log_file {
-        Some(ref file_path) => Some(BufWriter::new(File::create(file_path)?)),
+        Some(ref file_path) => Some(OutputOptions::new_from_path(file_path).use_file().open()?),
         None => None,
     };
 
-    let table_writer = BufWriter::new(File::create(table_file)?);
+    let table_writer = OutputOptions::new_from_path(&table_file).use_file().open()?;
 
     let min_length = min_length.get();
 
-    let clipping_args = parse_clipping_args(clipping_args)
-        .map_err(|e| std::io::Error::other(format!("Failed to process the primers due to error:\n{e}")))?;
+    let clipping_args = parse_clipping_args(clipping_args)?;
 
     let parsed = ParsedPreprocessArgs {
         io_args: ParsedPreprocessIoArgs {

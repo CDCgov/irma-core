@@ -1,11 +1,11 @@
-use crate::io::{FromFilename, FromFilenameType, FromOptionalFilename, is_gz};
+use crate::io::is_gz;
 use flate2::{Compression, write::GzEncoder};
 use std::{
     fs::File,
     io::{BufWriter, Stdout, Write, stdout},
     path::Path,
 };
-use zoe::{data::err::ResultWithErrorContext, define_whichever};
+use zoe::define_whichever;
 
 define_whichever! {
     /// An enum for the different acceptable output types. A [`BufWriter`] is
@@ -21,6 +21,53 @@ define_whichever! {
     }
 
     impl Write for WriteFileZipStdout {}
+}
+
+impl WriteFileZipStdout {
+    /// Creates a new [`WriteFileZipStdout`] from an optional filename. If a
+    /// path is not provided, [`WriteFileZipStdout::Stdout`] is used.
+    ///
+    /// ## Errors
+    ///
+    /// If a path is provided, any IO errors when creating the file are
+    /// propagated. If no path is provided, this method is infallible.
+    pub fn create(path: Option<impl AsRef<Path>>) -> std::io::Result<Self> {
+        match path {
+            Some(path) => {
+                let file = File::create(&path)?;
+                let bufwriter = BufWriter::new(file);
+
+                let writer = if is_gz(path) {
+                    Self::Zipped(GzEncoder::new(bufwriter, Compression::default()))
+                } else {
+                    Self::File(bufwriter)
+                };
+
+                Ok(writer)
+            }
+            None => Ok(WriteFileZipStdout::Stdout(BufWriter::new(stdout()))),
+        }
+    }
+
+    /// Similar to [`WriteFileZipStdout::create`], but uses a specified
+    /// `capacity` for the underlying [`BufWriter`].
+    pub fn with_capacity(capacity: usize, path: Option<impl AsRef<Path>>) -> std::io::Result<Self> {
+        match path {
+            Some(path) => {
+                let file = File::create(&path)?;
+                let bufwriter = BufWriter::with_capacity(capacity, file);
+
+                let writer = if is_gz(path) {
+                    Self::Zipped(GzEncoder::new(bufwriter, Compression::default()))
+                } else {
+                    Self::File(bufwriter)
+                };
+
+                Ok(writer)
+            }
+            None => Ok(WriteFileZipStdout::Stdout(BufWriter::with_capacity(capacity, stdout()))),
+        }
+    }
 }
 
 /// A struct containing two writers for paired reads: one for left reads and one
@@ -71,7 +118,7 @@ pub enum RecordWriters<W> {
     PairedEnd(PairedWriters<W>),
 }
 
-impl<W: Write> RecordWriters<W> {
+impl<W> RecordWriters<W> {
     /// Creates a new [`RecordWriters`] object to represent either a single
     /// writer (single reads) or two writers (paired reads).
     ///
@@ -82,86 +129,5 @@ impl<W: Write> RecordWriters<W> {
             Some(writer2) => Self::PairedEnd(PairedWriters::new(writer1, writer2)),
             None => Self::SingleEnd(writer1),
         }
-    }
-
-    /// Creates a new [`RecordWriters`] object to represent either a single
-    /// writer (single reads) or two writer (paired reads).
-    ///
-    /// ## Errors
-    ///
-    /// Any error occurring when creating the files is wrapped in context
-    /// indicating whether it was the first or second file, and then propagated.
-    /// It is the responsibility of [`FromFilename`] (as implemented on `W`) to
-    /// add the path as context.
-    #[allow(dead_code)]
-    pub fn from_filenames(path1: impl AsRef<Path>, path2: Option<impl AsRef<Path>>) -> std::io::Result<Self>
-    where
-        W: FromFilename, {
-        let writer1 = W::from_filename(path1).with_context("Cannot create first output file")?;
-        let writer2 = path2
-            .map(W::from_filename)
-            .transpose()
-            .with_context("Cannot create second output file")?;
-        Ok(Self::new(writer1, writer2))
-    }
-
-    /// Creates a new [`RecordWriters`] object, where the first path is optional
-    /// and defaults to [`Default::default`] if not provided (often [`stdout`]).
-    ///
-    /// If the second path is not included, then the [`RecordWriters`] only
-    /// holds a single writer, as with [`from_filenames`].
-    ///
-    /// [`from_filenames`]: RecordWriters::from_filenames
-    ///
-    /// ## Errors
-    ///
-    /// Any error occurring when creating the files is propagated. It is the
-    /// responsibility of [`FromFilename`] (as implemented on `W`) to add the
-    /// path as context.
-    #[inline]
-    pub fn from_optional_filenames(
-        path1: Option<impl AsRef<Path>>, path2: Option<impl AsRef<Path>>,
-    ) -> std::io::Result<Self>
-    where
-        W: FromFilename + FromOptionalFilename, {
-        let writer1 = W::from_optional_filename(path1)?;
-        let writer2 = path2.map(W::from_filename).transpose()?;
-        Ok(Self::new(writer1, writer2))
-    }
-}
-
-impl FromFilename for WriteFileZipStdout {
-    const TYPE: FromFilenameType = FromFilenameType::Writer;
-
-    /// Creates a new [`WriteFileZipStdout`] from a path.
-    ///
-    /// [`WriteFileZipStdout::File`] is returned unless the file ends with
-    /// extension `gz`, in which case [`WriteFileZipStdout::Zipped`] is
-    /// returned.
-    ///
-    /// ## Errors
-    ///
-    /// Any IO errors occurring when creating the file are propagated.
-    fn from_filename_no_context<P>(path: P) -> std::io::Result<Self>
-    where
-        P: AsRef<Path>, {
-        let file = File::create(&path)?;
-        let bufwriter = BufWriter::new(file);
-
-        let writer = if is_gz(path) {
-            Self::Zipped(GzEncoder::new(bufwriter, Compression::default()))
-        } else {
-            Self::File(bufwriter)
-        };
-
-        Ok(writer)
-    }
-}
-
-impl FromOptionalFilename for WriteFileZipStdout {
-    const DEFAULT_NAME: &str = "STDOUT";
-
-    fn on_none() -> Self {
-        Self::Stdout(BufWriter::new(stdout()))
     }
 }

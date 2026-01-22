@@ -6,7 +6,7 @@ use crate::{
         methods::{AlignmentMethod, StripedSmithWatermanLocal, StripedSmithWatermanShared},
         writers::{AdditionalBounds, AlignmentWriter, write_header},
     },
-    io::{FastX, FastXReader, FromOptionalFilename, IterWithContext, ReadFileZipPipe, WriteFileZipStdout},
+    io::{FastX, FastXReader, IterWithContext, OutputOptions, ReadFileZipPipe},
 };
 use clap::{Args, builder::RangedI64ValueParser};
 use std::{borrow::Borrow, path::PathBuf};
@@ -25,6 +25,7 @@ mod arg_parsing;
 mod methods;
 mod writers;
 
+/// A type alias for the query reader used by `aligner`.
 type QueryReader = IterWithContext<FastXReader<ReadFileZipPipe>>;
 
 /// The command line arguments for `aligner`
@@ -104,7 +105,6 @@ pub fn aligner_process(args: AlignerArgs) -> std::io::Result<()> {
     let ParsedAlignerArgs {
         query_reader,
         references,
-        output,
         weight_matrix,
         header,
         config,
@@ -115,25 +115,42 @@ pub fn aligner_process(args: AlignerArgs) -> std::io::Result<()> {
         rayon::ThreadPoolBuilder::new().num_threads(1).build_global().unwrap();
     }
 
-    let mut writer = WriteFileZipStdout::from_optional_filename(output)?;
+    let mut writer = OutputOptions::new_from_opt_path(config.output.as_ref())
+        .use_file_zip_or_stdout()
+        .open()?;
+
     if header {
-        write_header(&mut writer, &references)?;
+        let res = write_header(&mut writer, &references);
+
+        if let Some(output) = &config.output {
+            res.with_file_context("Failed to write SAM output to file", output)?;
+        } else {
+            res.with_context("Failed to write SAM output")?;
+        }
     }
 
     #[cfg(not(feature = "dev_no_rayon"))]
     let mut writer = AlignmentWriterThreaded::from_writer(writer);
 
-    dispatch_alphabet(query_reader, references, &mut writer, weight_matrix, config)?;
+    dispatch_alphabet(query_reader, references, &mut writer, weight_matrix, &config)?;
 
     // Must be called to either flush the bufwriter, or properly terminate the
     // thread
-    writer.flush()
+    let res = writer.flush();
+
+    if let Some(output) = config.output {
+        res.with_file_context("Failed to write SAM output to file", output)?;
+    } else {
+        res.with_context("Failed to write SAM output")?;
+    }
+
+    Ok(())
 }
 
 /// Dispatches the aligner based on the alphabet and weight matrix
 fn dispatch_alphabet<W>(
     query_reader: QueryReader, references: Vec<FastaSeq>, writer: &mut W, weight_matrix: AnyMatrix<'static, i8>,
-    config: AlignerConfig,
+    config: &AlignerConfig,
 ) -> std::io::Result<()>
 where
     W: AlignmentWriter + AdditionalBounds, {
@@ -146,7 +163,7 @@ where
 
 /// Dispatches the aligner based on profile_from and best_match
 fn dispatch_runner<W, M, const S: usize>(
-    query_reader: QueryReader, references: Vec<FastaSeq>, writer: &mut W, weight_matrix: M, config: AlignerConfig,
+    query_reader: QueryReader, references: Vec<FastaSeq>, writer: &mut W, weight_matrix: M, config: &AlignerConfig,
 ) -> std::io::Result<()>
 where
     W: AlignmentWriter + AdditionalBounds,
@@ -174,7 +191,7 @@ where
 /// Performs all alignments using the provided `method`, with profiles built
 /// from the queries.
 fn align_all_profile_from_query<A, W>(
-    method: A, query_reader: QueryReader, references: Vec<FastaSeq>, writer: &mut W, config: AlignerConfig,
+    method: A, query_reader: QueryReader, references: Vec<FastaSeq>, writer: &mut W, config: &AlignerConfig,
 ) -> std::io::Result<()>
 where
     A: AlignmentMethod,
@@ -191,7 +208,7 @@ where
             let mut alignment = method
                 .align(&profile, SeqSrc::Reference(&reference.sequence), rc_reference.as_ref())
                 .with_context(format!(
-                    "Failed to align the sequences with the following headers:\nQuery: {}\nReference: {}",
+                    "Failed to align the sequences with the following headers:\n    | Query: {}\n    | Reference: {}",
                     query.header, reference.name
                 ))?;
             if let Some((alignment, Strand::Reverse)) = alignment.as_mut() {
@@ -200,7 +217,14 @@ where
                 // query
                 alignment.make_reverse();
             }
-            writer.write_alignment(alignment, &query, reference, &config)?;
+
+            let res = writer.write_alignment(alignment, &query, reference, config);
+
+            if let Some(output) = &config.output {
+                res.with_file_context("Failed to write SAM output to file", output)?;
+            } else {
+                res.with_context("Failed to write SAM output")?;
+            }
         }
 
         Ok(())
@@ -210,7 +234,7 @@ where
 /// Performs all alignments using the provided `method`, with profiles built
 /// from the references.
 fn align_all_profile_from_ref<A, W>(
-    method: A, query_reader: QueryReader, references: Vec<FastaSeq>, writer: &mut W, config: AlignerConfig,
+    method: A, query_reader: QueryReader, references: Vec<FastaSeq>, writer: &mut W, config: &AlignerConfig,
 ) -> std::io::Result<()>
 where
     A: for<'a> AlignmentMethod<Profile<'a>: Sync>,
@@ -232,10 +256,17 @@ where
             let alignment = method
                 .align(ref_profile, SeqSrc::Query(&query.sequence), rc_query.as_ref())
                 .with_context(format!(
-                    "Failed to align the sequences with the following headers:\nQuery: {}\nReference: {}",
+                    "Failed to align the sequences with the following headers:\n    | Query: {}\n    | Reference: {}",
                     query.header, reference.name
                 ))?;
-            writer.write_alignment(alignment, &query, reference, &config)?;
+
+            let res = writer.write_alignment(alignment, &query, reference, config);
+
+            if let Some(output) = &config.output {
+                res.with_file_context("Failed to write SAM output to file", output)?;
+            } else {
+                res.with_context("Failed to write SAM output")?;
+            }
         }
 
         Ok(())
@@ -246,7 +277,7 @@ where
 /// references using the provided alignment method, but only keeping one
 /// alignment with the best score for each query.
 fn align_best_match_profile_from_query<A, W>(
-    method: A, query_reader: QueryReader, references: Vec<FastaSeq>, writer: &mut W, config: AlignerConfig,
+    method: A, query_reader: QueryReader, references: Vec<FastaSeq>, writer: &mut W, config: &AlignerConfig,
 ) -> std::io::Result<()>
 where
     A: AlignmentMethod,
@@ -265,7 +296,7 @@ where
                 let alignment = method
                     .align(&profile, SeqSrc::Reference(&reference.sequence), rc_reference.as_ref())
                     .with_context(format!(
-                        "Failed to align the sequences with the following headers:\nQuery: {}\nReference: {}",
+                        "Failed to align the sequences with the following headers:\n    | Query: {}\n    | Reference: {}",
                         query.header, reference.name
                     ))?;
                 std::io::Result::Ok((reference, alignment))
@@ -286,7 +317,13 @@ where
             best_alignment.make_reverse();
         }
 
-        writer.write_alignment(best_alignment, &query, best_reference, &config)
+        let res = writer.write_alignment(best_alignment, &query, best_reference, config);
+
+        if let Some(output) = &config.output {
+            Ok(res.with_file_context("Failed to write SAM output to file", output)?)
+        } else {
+            Ok(res.with_context("Failed to write SAM output")?)
+        }
     })
 }
 
@@ -294,7 +331,7 @@ where
 /// references using the provided alignment method, but only keeping one
 /// alignment with the best score for each query.
 fn align_best_match_profile_from_ref<A, W>(
-    method: A, query_reader: QueryReader, references: Vec<FastaSeq>, writer: &mut W, config: AlignerConfig,
+    method: A, query_reader: QueryReader, references: Vec<FastaSeq>, writer: &mut W, config: &AlignerConfig,
 ) -> std::io::Result<()>
 where
     A: for<'a> AlignmentMethod<Profile<'a>: Sync>,
@@ -318,7 +355,7 @@ where
                 let alignment = method
                     .align(ref_profile, SeqSrc::Query(&query.sequence), rc_query.as_ref())
                     .with_context(format!(
-                        "Failed to align the sequences with the following headers:\nQuery: {}\nReference: {}",
+                        "Failed to align the sequences with the following headers:\n    | Query: {}\n    | Reference: {}",
                         query.header, reference.name
                     ))?;
                 std::io::Result::Ok((reference, alignment))
@@ -332,7 +369,13 @@ where
             })
             .expect("The references field should be non-empty")?;
 
-        writer.write_alignment(best_alignment, &query, best_reference, &config)
+        let res = writer.write_alignment(best_alignment, &query, best_reference, config);
+
+        if let Some(output) = &config.output {
+            Ok(res.with_file_context("Failed to write SAM output to file", output)?)
+        } else {
+            Ok(res.with_context("Failed to write SAM output")?)
+        }
     })
 }
 

@@ -3,6 +3,7 @@ use clap::{Args, ValueEnum, builder::PossibleValue};
 use foldhash::fast::SeedableRandomState;
 use std::{fmt::Debug, num::NonZeroUsize, path::PathBuf};
 use zoe::{
+    data::err::ResultWithErrorContext,
     kmer::encoders::three_bit::ThreeBitKmerSet,
     prelude::{CheckNucleotides, FastaReader, IsValidDNA, Nucleotides},
 };
@@ -263,7 +264,8 @@ pub struct ParsedClippingArgs {
 ///
 /// ## Errors
 ///
-/// Any errors while processing the primers are propagated.
+/// Any errors while processing the primers are propagated. The path is added as
+/// context.
 pub fn parse_clipping_args(args: ClippingArgs) -> std::io::Result<ParsedClippingArgs> {
     let ClippingArgs {
         preserve_bases,
@@ -295,12 +297,15 @@ pub fn parse_clipping_args(args: ClippingArgs) -> std::io::Result<ParsedClipping
     let barcodes = barcode_trim.map(|barcode| get_forward_reverse_sequence(barcode, preserve_bases));
 
     let primer_kmers = if let Some(primer_path) = &primer_trim {
-        Some(prepare_primer_kmers(
-            primer_path,
-            // This is unreachable through clap due to being required
-            p_kmer_length.expect("A kmer length must be provided for primer trimming"),
-            p_fuzzy,
-        )?)
+        Some(
+            prepare_primer_kmers(
+                primer_path,
+                // This is unreachable through clap due to being required
+                p_kmer_length.expect("A kmer length must be provided for primer trimming"),
+                p_fuzzy,
+            )
+            .with_file_context("Failed to read the primer file", primer_path)?,
+        )
     } else {
         None
     };

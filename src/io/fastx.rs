@@ -5,6 +5,7 @@ use std::{
 use zoe::{
     data::{
         CheckSequence,
+        err::WithErrorContext,
         fasta::FastaSeq,
         records::{HeaderReadable, SequenceReadable},
     },
@@ -64,9 +65,14 @@ impl<R: std::io::Read> FastXReader<R> {
         match start {
             Some(b'>') => Ok(FastXReader::Fasta(FastaReader::from_bufreader(buffer)?)),
             Some(b'@') => Ok(FastXReader::Fastq(FastQReader::from_bufreader(buffer)?)),
-            _ => Err(std::io::Error::new(
+            Some(other) => Err(std::io::Error::new(
                 ErrorKind::InvalidData,
-                "Unable to determine whether the file is FASTA or FASTQ!",
+                format!("File started with invalid character: {}", *other as char),
+            )
+            .with_context("Unable to determine whether the file is FASTA or FASTQ!"))?,
+            None => Err(std::io::Error::new(
+                ErrorKind::InvalidData,
+                "No FASTQ or FASTA data was found!",
             )),
         }
     }
