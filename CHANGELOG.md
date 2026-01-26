@@ -13,6 +13,10 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
   original input and number of downsampled records to `stderr`
 - Adds more detailed error messages with more context, including file paths for many IO errors
 
+### Fixes
+
+- Fixes a bug where leading whitespace in a record file can cause the program to stall (in `sampler` and `aligner`)
+
 ## [0.8.1] - 2025-12-02
 
 ### Fixes

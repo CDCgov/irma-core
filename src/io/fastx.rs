@@ -60,6 +60,8 @@ impl<R: std::io::Read> FastXReader<R> {
             if start.is_some() {
                 break start;
             }
+            let length = start_buffer.len();
+            buffer.consume(length);
         };
 
         match start {
