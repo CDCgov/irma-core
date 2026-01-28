@@ -39,14 +39,9 @@ pub struct SamplerArgs {
     /// argument is omitted, output is interleaved
     pub output_file2: Option<PathBuf>,
 
-    #[arg(short = 't', long, group = "target")]
-    /// Target number of reads to be subsampled
-    pub subsample_target: Option<usize>,
-
-    #[arg(short = 'p', long, group = "target", value_parser = validate_percent,)]
-    /// Target percentage of reads to be sampled. Must be a positive integer in
-    /// [0, 100]
-    pub percent_target: Option<usize>,
+    // this is for requiring either percent or subsample target, but not both
+    #[command(flatten)]
+    target: Target,
 
     #[arg(short = 's', long)]
     /// For reproducibility, provide an optional seed for the random number
@@ -56,6 +51,21 @@ pub struct SamplerArgs {
     #[arg(short = 'v', long)]
     /// Prints the original number of records and subsampled amount to stderr
     pub verbose: bool,
+}
+
+#[derive(Args, Debug)]
+#[group(required = true, multiple = false)]
+struct Target {
+    #[arg(short = 't', long)]
+    /// Target number of reads to be subsampled. Either a `subsample_target` or
+    /// `percent_target` must be specified
+    pub subsample_target: Option<usize>,
+
+    #[arg(short = 'p', long, value_parser = validate_percent,)]
+    /// Target percentage of reads to be sampled. Must be a positive integer in
+    /// [0, 100]. Either a `subsample_target` or `percent_target` must be
+    /// specified
+    pub percent_target: Option<usize>,
 }
 
 /// Parses a percent (as a `usize`) from the command line
@@ -367,9 +377,9 @@ fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, 
         reader2,
         writer,
     };
-    let target = if let Some(count) = args.subsample_target {
+    let target = if let Some(count) = args.target.subsample_target {
         SamplingTarget::Count(count)
-    } else if let Some(percent) = args.percent_target {
+    } else if let Some(percent) = args.target.percent_target {
         SamplingTarget::Percent(percent)
     } else {
         unreachable!("This can't be reached because clap requires a value for either count or percent")
