@@ -4,7 +4,7 @@
 
 use crate::{
     args::clipping::{ClippingArgs, ParsedClippingArgs, parse_clipping_args},
-    io::{InputOptions, IterWithContext, OutputOptions, ReadFileZipPipe, RecordReaders},
+    io::{InputOptions, IterWithContext, OutputOptions, ReadFileZipPipe, RecordReaders, WriterWithContext},
     qc::{fastq::ReadTransforms, fastq_metadata::*},
     utils::{
         get_hasher,
@@ -103,10 +103,10 @@ pub fn preprocess_process(args: PreprocessArgs) -> Result<(), std::io::Error> {
 }
 
 struct ParsedPreprocessIoArgs {
-    table_writer: BufWriter<File>,
+    table_writer: BufWriter<WriterWithContext<File>>,
     reader1:      IterWithContext<FastQReader<ReadFileZipPipe>>,
     reader2:      Option<IterWithContext<FastQReader<ReadFileZipPipe>>>,
-    log_writer:   Option<BufWriter<File>>,
+    log_writer:   Option<BufWriter<WriterWithContext<File>>>,
     log_file:     Option<PathBuf>,
 }
 
@@ -253,7 +253,7 @@ fn trim_and_deflate(
 /// Writes the table file to `table_writer` and the XFL file to STDOUT. The
 /// number of read patterns is returned.
 fn output_deflated_sequences(
-    metadata_by_sequence: DeflatedSequences, mut table_writer: BufWriter<File>,
+    metadata_by_sequence: DeflatedSequences, mut table_writer: impl Write,
 ) -> Result<usize, std::io::Error> {
     let mut stdout_writer = BufWriter::new(std::io::stdout());
 
@@ -282,7 +282,7 @@ fn output_deflated_sequences(
 
 /// Writes the log file.
 fn write_log(
-    mut log_writer: BufWriter<File>, metadata: &FastQMetadata, paired_reads: bool, read_pattern_count_passing: usize,
+    mut log_writer: impl Write, metadata: &FastQMetadata, paired_reads: bool, read_pattern_count_passing: usize,
     options: &ParsedPreprocessOptions, log_file: PathBuf,
 ) -> Result<(), std::io::Error> {
     let FastQMetadata {

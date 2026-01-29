@@ -1,4 +1,7 @@
-use crate::io::{OptionalPaths, OutputContext, PairedErrors, RecordWriters, WriteFileZipStdout, open_options::PairedStruct};
+use crate::io::{
+    OptionalPaths, OutputContext, PairedErrors, RecordWriters, WriteFileZipStdout, WriterWithContext,
+    open_options::PairedStruct,
+};
 use std::{fs::File, io::BufWriter, path::Path};
 
 /// A builder pattern for creating output files in IRMA-core.
@@ -89,16 +92,8 @@ impl<'a> OutputOptions<'a, &'a Path> {
     }
 
     /// Interprets the path using [`File`] for writing.
-    #[allow(dead_code)]
-    pub fn use_file(self) -> OutputOptions<'a, BufWriter<File>> {
-        let output = self.output.and_then(|path| {
-            if let Some(capacity) = self.capacity {
-                File::create(path).map(|file| BufWriter::with_capacity(capacity, file))
-            } else {
-                File::create(path).map(BufWriter::new)
-            }
-            .map_err(PairedErrors::Err1)
-        });
+    pub fn use_file(self) -> OutputOptions<'a, File> {
+        let output = self.output.and_then(|path| File::create(path).map_err(PairedErrors::Err1));
 
         OutputOptions {
             context: self.context,
@@ -184,18 +179,10 @@ impl<'a> OutputOptions<'a, RecordWriters<&'a Path>> {
 
     /// Interprets the path(s) using [`File`] for writing.
     #[allow(dead_code)]
-    pub fn use_file(self) -> OutputOptions<'a, RecordWriters<BufWriter<File>>> {
+    pub fn use_file(self) -> OutputOptions<'a, RecordWriters<File>> {
         OutputOptions {
             context:  self.context,
-            output:   self.output.and_then(|writers| {
-                writers.try_map(|path| {
-                    if let Some(capacity) = self.capacity {
-                        File::create(path).map(|file| BufWriter::with_capacity(capacity, file))
-                    } else {
-                        File::create(path).map(BufWriter::new)
-                    }
-                })
-            }),
+            output:   self.output.and_then(|writers| writers.try_map(File::create)),
             capacity: self.capacity,
         }
     }
@@ -252,16 +239,26 @@ impl<'a> OutputOptions<'a, OptionalPaths<'a>> {
     }
 }
 
-impl<'a> OutputOptions<'a, BufWriter<File>> {
+impl<'a> OutputOptions<'a, File> {
     /// Opens the [`File`] for writing, wrapping it in a [`BufWriter`].
     ///
     /// ## Errors
     ///
     /// IO errors when opening the file are propagated. Context is added that
     /// includes the path.
-    pub fn open(self) -> std::io::Result<BufWriter<File>> {
-        match self.output {
-            Ok(writer) => Ok(writer),
+    pub fn open(self) -> std::io::Result<BufWriter<WriterWithContext<File>>> {
+        let output = self.output.map(|file| {
+            let output = OutputContext::add_writer_context(file, self.context.output1);
+
+            if let Some(capacity) = self.capacity {
+                BufWriter::with_capacity(capacity, output)
+            } else {
+                BufWriter::new(output)
+            }
+        });
+
+        match output {
+            Ok(output) => Ok(output),
             Err(e) => Err(self.context.add_context(e).into()),
         }
     }
@@ -282,7 +279,7 @@ impl<'a> OutputOptions<'a, WriteFileZipStdout> {
     }
 }
 
-impl<'a> OutputOptions<'a, RecordWriters<BufWriter<File>>> {
+impl<'a> OutputOptions<'a, RecordWriters<File>> {
     /// Opens the potentially paired [`File`]s for writing, wrapping each in a
     /// [`BufWriter`].
     ///
@@ -292,8 +289,18 @@ impl<'a> OutputOptions<'a, RecordWriters<BufWriter<File>>> {
     /// includes the path.
     #[allow(dead_code)]
     pub fn open(self) -> std::io::Result<RecordWriters<BufWriter<File>>> {
-        match self.output {
-            Ok(writer) => Ok(writer),
+        let output = self.output.map(|writers| {
+            writers.map(|file| {
+                if let Some(capacity) = self.capacity {
+                    BufWriter::with_capacity(capacity, file)
+                } else {
+                    BufWriter::new(file)
+                }
+            })
+        });
+
+        match output {
+            Ok(output) => Ok(output),
             Err(e) => Err(self.context.add_context(e).into()),
         }
     }

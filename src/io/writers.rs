@@ -1,4 +1,4 @@
-use crate::io::is_gz;
+use crate::io::{WriterWithContext, WriterWithErrorContext, is_gz};
 use flate2::{Compression, write::GzEncoder};
 use std::{
     fs::File,
@@ -9,15 +9,16 @@ use zoe::define_whichever;
 
 define_whichever! {
     /// An enum for the different acceptable output types. A [`BufWriter`] is
-    /// used for all variants.
+    /// used for all variants, and all variants are wrapped in
+    /// [`WriterWithContext`] to context to write errors.
     #[derive(Debug)]
     pub(crate) enum  WriteFileZipStdout {
         /// A writer for a regular uncompressed file.
-        File(BufWriter<File>),
+        File(WriterWithContext<BufWriter<File>>),
         /// A writer for a gzip compressed file.
-        Zipped(GzEncoder<BufWriter<File>>),
+        Zipped(WriterWithContext<GzEncoder<BufWriter<File>>>),
         /// A writer for uncompressed data to stdout.
-        Stdout(BufWriter<Stdout>),
+        Stdout(WriterWithContext<BufWriter<Stdout>>),
     }
 
     impl Write for WriteFileZipStdout {}
@@ -37,15 +38,20 @@ impl WriteFileZipStdout {
                 let file = File::create(&path)?;
                 let bufwriter = BufWriter::new(file);
 
-                let writer = if is_gz(path) {
-                    Self::Zipped(GzEncoder::new(bufwriter, Compression::default()))
+                let writer = if is_gz(&path) {
+                    Self::Zipped(
+                        GzEncoder::new(bufwriter, Compression::default())
+                            .writer_with_file_context("Failed to write to zipped file", path),
+                    )
                 } else {
-                    Self::File(bufwriter)
+                    Self::File(bufwriter.writer_with_file_context("Failed to write to file", path))
                 };
 
                 Ok(writer)
             }
-            None => Ok(WriteFileZipStdout::Stdout(BufWriter::new(stdout()))),
+            None => Ok(WriteFileZipStdout::Stdout(
+                BufWriter::new(stdout()).writer_with_context("Failed to write to stdout"),
+            )),
         }
     }
 
@@ -57,15 +63,20 @@ impl WriteFileZipStdout {
                 let file = File::create(&path)?;
                 let bufwriter = BufWriter::with_capacity(capacity, file);
 
-                let writer = if is_gz(path) {
-                    Self::Zipped(GzEncoder::new(bufwriter, Compression::default()))
+                let writer = if is_gz(&path) {
+                    Self::Zipped(
+                        GzEncoder::new(bufwriter, Compression::default())
+                            .writer_with_file_context("Failed to write to zipped file", path),
+                    )
                 } else {
-                    Self::File(bufwriter)
+                    Self::File(bufwriter.writer_with_file_context("Failed to write to file", path))
                 };
 
                 Ok(writer)
             }
-            None => Ok(WriteFileZipStdout::Stdout(BufWriter::with_capacity(capacity, stdout()))),
+            None => Ok(WriteFileZipStdout::Stdout(
+                BufWriter::with_capacity(capacity, stdout()).writer_with_context("Failed to write to stdout"),
+            )),
         }
     }
 }

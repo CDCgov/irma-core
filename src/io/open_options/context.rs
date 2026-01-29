@@ -1,5 +1,5 @@
-use crate::io::{IterWithContext, IterWithErrorContext};
-use std::{error::Error, fmt::Display, path::Path};
+use crate::io::{IterWithContext, IterWithErrorContext, WriterWithContext, WriterWithErrorContext};
+use std::{error::Error, fmt::Display, io::Write, path::Path};
 use zoe::data::err::{ErrorWithContext, WithErrorContext};
 
 /// An enum to represent the possible reader types for [`InputOptions`], for the
@@ -203,11 +203,11 @@ impl InputContext<'_> {
 /// [`OutputOptions`]: crate::io::open_options::OutputOptions
 pub struct OutputContext<'a> {
     /// The [`OutputType`] used by the first output.
-    output1: OutputType<'a>,
+    pub output1: OutputType<'a>,
     /// The [`OutputType`] used by the second output. If there is no second
     /// output, this defaults to [`OutputType::Stdout`], but it will not
     /// influence the error context displayed.
-    output2: OutputType<'a>,
+    pub output2: OutputType<'a>,
 }
 
 impl<'a> OutputContext<'a> {
@@ -239,6 +239,17 @@ impl OutputContext<'_> {
         match output {
             OutputType::File(path) => e.with_file_context("Failed to open file for writing", path),
             OutputType::Stdout => e.with_context("Failed to write to stdout"),
+        }
+    }
+
+    /// Given one of the `output` fields for an [`OutputContext`], add the
+    /// context to a provided writer.
+    pub fn add_writer_context<W>(writer: W, output: OutputType) -> WriterWithContext<W>
+    where
+        W: Write, {
+        match output {
+            OutputType::File(path) => writer.writer_with_file_context("Failed to write to file", path),
+            OutputType::Stdout => writer.writer_with_context("Failed to write to stdout"),
         }
     }
 }

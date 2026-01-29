@@ -1,4 +1,8 @@
-use std::{fmt::Display, io::Read, path::Path};
+use std::{
+    fmt::Display,
+    io::{Read, Write},
+    path::Path,
+};
 use zoe::{
     data::err::{ResultWithErrorContext, WithErrorContext},
     prelude::{FastQReader, FastaReader},
@@ -98,7 +102,7 @@ pub trait IterWithErrorContext: Sized {
     /// [`ErrorWithContext`]: zoe::data::err::ErrorWithContext
     fn iter_with_context(self, description: impl Into<String>) -> IterWithContext<Self>;
 
-    /// Convenience function for adding file context to an yielded errors.
+    /// Convenience function for adding file context to any yielded errors.
     ///
     /// The context will be formatted as `msg: file`. The `msg` field may be
     /// anything implementing [`Display`].
@@ -231,4 +235,74 @@ pub(crate) fn check_distinct_files(
 #[inline]
 pub(crate) fn is_gz<P: AsRef<Path>>(path: P) -> bool {
     path.as_ref().extension().is_some_and(|ext| ext == "gz")
+}
+
+/// A wrapper around a writer of type `W` such that error context is added to
+/// any failed writes.
+#[derive(Debug)]
+pub struct WriterWithContext<W> {
+    /// The inner writer.
+    writer:      W,
+    /// The context to add to any failed writes.
+    description: String,
+}
+
+impl<W> Write for WriterWithContext<W>
+where
+    W: Write,
+{
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        Ok(self.writer.write(buf).with_context(&self.description)?)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(self.writer.flush().with_context(&self.description)?)
+    }
+
+    fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
+        Ok(self.writer.write_vectored(bufs).with_context(&self.description)?)
+    }
+
+    fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
+        Ok(self.writer.write_all(buf).with_context(&self.description)?)
+    }
+
+    fn write_fmt(&mut self, args: std::fmt::Arguments<'_>) -> std::io::Result<()> {
+        Ok(self.writer.write_fmt(args).with_context(&self.description)?)
+    }
+}
+
+/// An extension trait for [`Write`] allowing additional context to be added to
+/// each failed write (via [`WriterWithContext`]).
+pub trait WriterWithErrorContext: Sized {
+    /// Wraps any errors that get produced during writing in an
+    /// [`ErrorWithContext`] with the given description.
+    ///
+    /// The `description` field may be anything implementing `Into<String>`.
+    /// Passing an owned `String` avoids an extra allocation.
+    ///
+    /// [`ErrorWithContext`]: zoe::data::err::ErrorWithContext
+    fn writer_with_context(self, description: impl Into<String>) -> WriterWithContext<Self>;
+
+    /// Convenience function for adding file context to any produced errors.
+    ///
+    /// The context will be formatted as `msg: file`. The `msg` field may be
+    /// anything implementing [`Display`].
+    fn writer_with_file_context(self, msg: impl Display, file: impl AsRef<Path>) -> WriterWithContext<Self>;
+}
+
+impl<W> WriterWithErrorContext for W
+where
+    W: Write,
+{
+    fn writer_with_context(self, description: impl Into<String>) -> WriterWithContext<Self> {
+        WriterWithContext {
+            writer:      self,
+            description: description.into(),
+        }
+    }
+
+    fn writer_with_file_context(self, msg: impl Display, file: impl AsRef<Path>) -> WriterWithContext<Self> {
+        Self::writer_with_context(self, format!("{msg}: '{path}'", path = file.as_ref().display()))
+    }
 }
