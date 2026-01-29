@@ -2,7 +2,7 @@
 
 use crate::{
     aligner::{AlignerConfig, Strand},
-    io::{FastX, WriteFileZipStdout},
+    io::FastX,
 };
 use std::io::Write;
 use zoe::{
@@ -11,6 +11,24 @@ use zoe::{
     math::AnyInt,
     prelude::{DataOwned, NucleotidesView, QualityScores, QualityScoresView},
 };
+
+#[cfg(feature = "dev_no_rayon")]
+use crate::io::WriteFileZipStdout;
+
+#[cfg(not(feature = "dev_no_rayon"))]
+use std::{error::Error, fmt::Display};
+#[cfg(not(feature = "dev_no_rayon"))]
+use zoe::data::err::{ErrorWithContext, GetCode};
+
+/// The type of error yielded by a failed write. This depends on whether
+/// `dev-no-rayon` is set.
+#[cfg(not(feature = "dev_no_rayon"))]
+pub type WriterError = ThreadedWriteError;
+
+/// The type of error yielded by a failed write. This depends on whether
+/// `dev-no-rayon` is set.
+#[cfg(feature = "dev_no_rayon")]
+pub type WriterError = std::io::Error;
 
 /// A clonable writer supporting writing from multiple threads via an [`mpsc`]
 /// channel.
@@ -39,6 +57,66 @@ impl Clone for AlignmentWriterThreaded {
     }
 }
 
+/// An error that could arise when forming and writing an alignment in the
+/// multithreaded case.
+#[derive(Debug)]
+#[cfg(not(feature = "dev_no_rayon"))]
+pub enum ThreadedWriteError {
+    /// An IO error, which is used to hold any concrete error whose cause is
+    /// known.
+    IoError(std::io::Error),
+    /// An error due to the writer thread being unavailable for receiving
+    /// messages. This signals that an error occurred, but the cause of the
+    /// error is unknown.
+    ReceiverDeallocated,
+}
+
+#[cfg(not(feature = "dev_no_rayon"))]
+impl From<std::io::Error> for ThreadedWriteError {
+    fn from(value: std::io::Error) -> Self {
+        Self::IoError(value)
+    }
+}
+
+#[cfg(not(feature = "dev_no_rayon"))]
+impl From<ErrorWithContext> for ThreadedWriteError {
+    fn from(value: ErrorWithContext) -> Self {
+        Self::IoError(value.into())
+    }
+}
+
+#[cfg(not(feature = "dev_no_rayon"))]
+impl Display for ThreadedWriteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ThreadedWriteError::IoError(e) => write!(f, "{e}"),
+            ThreadedWriteError::ReceiverDeallocated => {
+                write!(f, "The receiver associated with the sender has been deallocated")
+            }
+        }
+    }
+}
+
+#[cfg(not(feature = "dev_no_rayon"))]
+impl Error for ThreadedWriteError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            ThreadedWriteError::IoError(e) => Some(e),
+            ThreadedWriteError::ReceiverDeallocated => None,
+        }
+    }
+}
+
+#[cfg(not(feature = "dev_no_rayon"))]
+impl GetCode for ThreadedWriteError {
+    fn get_code(&self) -> i32 {
+        match self {
+            ThreadedWriteError::IoError(e) => e.get_code(),
+            ThreadedWriteError::ReceiverDeallocated => 1,
+        }
+    }
+}
+
 #[cfg(not(feature = "dev_no_rayon"))]
 impl AlignmentWriterThreaded {
     /// Constructs a [`AlignmentWriterThreaded`] from a regular writer by moving
@@ -62,6 +140,28 @@ impl AlignmentWriterThreaded {
         }
     }
 
+    /// Writes a string to the [`AlignmentWriterThreaded`], properly handling
+    /// errors if they occur.
+    ///
+    /// ## Errors
+    ///
+    /// If the cause of the failed write can be determined (e.g., by joining the
+    /// thread), then that error is propagated as
+    /// [`ThreadedWriteError::IoError`]. Otherwise,
+    /// [`ThreadedWriteError::ReceiverDeallocated`] is returned.
+    #[inline]
+    pub fn write(&mut self, string: String) -> Result<(), ThreadedWriteError> {
+        self.sender.send(string).map_err(|_| {
+            if let Some(thread) = std::mem::take(&mut self.writer_thread)
+                && let Err(e) = thread.join().unwrap()
+            {
+                ThreadedWriteError::IoError(e)
+            } else {
+                ThreadedWriteError::ReceiverDeallocated
+            }
+        })
+    }
+
     /// Finalizes the writing by closing the thread and propagating any errors.
     ///
     /// This **must** be called on at least the originally created writer in
@@ -77,19 +177,6 @@ impl AlignmentWriterThreaded {
     }
 }
 
-/// A trait alias containing any relevant bounds needed for an
-/// [`AlignmentWriter`], depending on the `dev_no_rayon` feature.
-#[cfg(not(feature = "dev_no_rayon"))]
-pub trait AdditionalBounds: Clone + Send {}
-
-#[cfg(not(feature = "dev_no_rayon"))]
-impl<T: Clone + Send> AdditionalBounds for T {}
-
-#[cfg(feature = "dev_no_rayon")]
-pub trait AdditionalBounds {}
-#[cfg(feature = "dev_no_rayon")]
-impl<T> AdditionalBounds for T {}
-
 /// Encapsulates the necessary logic in order for a writer to work with
 /// `aligner`.
 ///
@@ -97,11 +184,11 @@ impl<T> AdditionalBounds for T {}
 /// `AlignmentWriterThreaded` and a single-threaded `WriteFileZipStdout`.
 pub trait AlignmentWriter: Sized {
     /// Given an unmapped alignment in a [`SamDataView`], write the alignment.
-    fn write_unmapped<'a>(&mut self, record: SamDataView<'a>) -> std::io::Result<()>;
+    fn write_unmapped<'a>(&mut self, record: SamDataView<'a>) -> Result<(), WriterError>;
 
     /// Given an alignment in a [`SamDataView`] along with an alignment score,
     /// write the alignment.
-    fn write_record<'a, T: AnyInt>(&mut self, record: SamDataView<'a>, score: T) -> std::io::Result<()>;
+    fn write_record<'a, T: AnyInt>(&mut self, record: SamDataView<'a>, score: T) -> Result<(), WriterError>;
 
     /// Writes an alignment in SAM format.
     ///
@@ -118,7 +205,7 @@ pub trait AlignmentWriter: Sized {
     /// first whitespace. A trailing linebreak is not included.
     fn write_alignment<T: AnyInt>(
         &mut self, alignment: Option<(Alignment<T>, Strand)>, query: &FastX, reference: &FastaSeq, config: &AlignerConfig,
-    ) -> std::io::Result<()> {
+    ) -> Result<(), WriterError> {
         let qname = process_header(&query.header);
 
         match alignment {
@@ -173,35 +260,31 @@ pub trait AlignmentWriter: Sized {
     }
 }
 
+#[cfg(feature = "dev_no_rayon")]
 impl AlignmentWriter for WriteFileZipStdout {
     #[inline]
     fn write_unmapped<'a>(&mut self, record: SamDataView<'a>) -> std::io::Result<()> {
-        writeln!(self, "{record}")
+        writeln!(self, "{record}")?;
+        Ok(())
     }
 
     #[inline]
     fn write_record<'a, T: AnyInt>(&mut self, record: SamDataView<'a>, score: T) -> std::io::Result<()> {
-        writeln!(self, "{record}\tAS:i:{score}")
+        writeln!(self, "{record}\tAS:i:{score}")?;
+        Ok(())
     }
 }
 
 #[cfg(not(feature = "dev_no_rayon"))]
 impl AlignmentWriter for AlignmentWriterThreaded {
     #[inline]
-    fn write_unmapped<'a>(&mut self, record: SamDataView<'a>) -> std::io::Result<()> {
-        self.sender
-            .send(format!("{record}"))
-            .expect("The receiver associated with `sender` has been deallocated");
-        Ok(())
+    fn write_unmapped<'a>(&mut self, record: SamDataView<'a>) -> Result<(), ThreadedWriteError> {
+        self.write(format!("{record}"))
     }
 
     #[inline]
-    fn write_record<'a, T: AnyInt>(&mut self, record: SamDataView<'a>, score: T) -> std::io::Result<()> {
-        self.sender
-            .send(format!("{record}\tAS:i:{score}"))
-            .expect("The receiver associated with `sender` has been deallocated");
-
-        Ok(())
+    fn write_record<'a, T: AnyInt>(&mut self, record: SamDataView<'a>, score: T) -> Result<(), ThreadedWriteError> {
+        self.write(format!("{record}\tAS:i:{score}"))
     }
 }
 

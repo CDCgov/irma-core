@@ -1,10 +1,8 @@
-#[cfg(not(feature = "dev_no_rayon"))]
-use crate::aligner::writers::AlignmentWriterThreaded;
 use crate::{
     aligner::{
         arg_parsing::{AlignerConfig, Alphabet, AnyMatrix, ParsedAlignerArgs, parse_aligner_args},
         methods::{AlignmentMethod, StripedSmithWatermanLocal, StripedSmithWatermanShared},
-        writers::{AdditionalBounds, AlignmentWriter, write_header},
+        writers::{AlignmentWriter, write_header},
     },
     io::{FastX, FastXReader, IterWithContext, OutputOptions, ReadFileZipPipe},
 };
@@ -17,7 +15,10 @@ use zoe::{
 };
 
 #[cfg(not(feature = "dev_no_rayon"))]
+use crate::aligner::writers::{AlignmentWriterThreaded, ThreadedWriteError};
+#[cfg(not(feature = "dev_no_rayon"))]
 use rayon::iter::{ParallelBridge, ParallelIterator};
+
 #[cfg(feature = "dev_no_rayon")]
 use std::io::Write;
 
@@ -27,6 +28,16 @@ mod writers;
 
 /// A type alias for the query reader used by `aligner`.
 type QueryReader = IterWithContext<FastXReader<ReadFileZipPipe>>;
+
+/// A type alias for the writer being used for the SAM file, which depends on
+/// whether `dev_no_rayon` is set.
+#[cfg(not(feature = "dev_no_rayon"))]
+type SamWriter = AlignmentWriterThreaded;
+
+/// A type alias for the writer being used for the SAM file, which depends on
+/// whether `dev_no_rayon` is set.
+#[cfg(feature = "dev_no_rayon")]
+type SamWriter = crate::io::WriteFileZipStdout;
 
 /// The command line arguments for `aligner`
 #[derive(Args, Debug)]
@@ -130,30 +141,33 @@ pub fn aligner_process(args: AlignerArgs) -> std::io::Result<()> {
     }
 
     #[cfg(not(feature = "dev_no_rayon"))]
-    let mut writer = AlignmentWriterThreaded::from_writer(writer);
+    let writer = AlignmentWriterThreaded::from_writer(writer);
 
-    dispatch_alphabet(query_reader, references, &mut writer, weight_matrix, &config)?;
-
-    // Must be called to either flush the bufwriter, or properly terminate the
-    // thread
-    let res = writer.flush();
-
-    if let Some(output) = config.output {
-        res.with_file_context("Failed to write SAM output to file", output)?;
-    } else {
-        res.with_context("Failed to write SAM output")?;
-    }
-
-    Ok(())
+    // Validity: No context is added to the result
+    dispatch_alphabet(query_reader, references, writer, weight_matrix, &config)
 }
 
-/// Dispatches the aligner based on the alphabet and weight matrix
-fn dispatch_alphabet<W>(
-    query_reader: QueryReader, references: Vec<FastaSeq>, writer: &mut W, weight_matrix: AnyMatrix<'static, i8>,
+/// Dispatches the aligner based on the alphabet and weight matrix.
+///
+/// ## Errors
+///
+/// Errors while reading the queries, building the profiles, performing the
+/// alignment, and writing the alignment are propagated. See the documentation
+/// for the particular [`AlignmentMethod`] for more details. Context containing
+/// the header(s) is added for failed profile building or alignment.
+///
+/// ## Validity
+///
+/// This function returns an error intended to be displayed at the top-level. No
+/// callers should add additional context other than calling a method in
+/// [`OrFail`].
+///
+/// [`OrFail`]: zoe::data::err::OrFail
+fn dispatch_alphabet(
+    query_reader: QueryReader, references: Vec<FastaSeq>, writer: SamWriter, weight_matrix: AnyMatrix<'static, i8>,
     config: &AlignerConfig,
-) -> std::io::Result<()>
-where
-    W: AlignmentWriter + AdditionalBounds, {
+) -> std::io::Result<()> {
+    // Validity: No context is added to the results
     match weight_matrix {
         AnyMatrix::Dna(weight_matrix) => dispatch_runner(query_reader, references, writer, weight_matrix, config),
         AnyMatrix::AaNamed(weight_matrix) => dispatch_runner(query_reader, references, writer, weight_matrix, config),
@@ -161,28 +175,48 @@ where
     }
 }
 
-/// Dispatches the aligner based on profile_from and best_match
-fn dispatch_runner<W, M, const S: usize>(
-    query_reader: QueryReader, references: Vec<FastaSeq>, writer: &mut W, weight_matrix: M, config: &AlignerConfig,
+/// Dispatches the aligner based on whether the profile is built from the query
+/// or reference, and whether all alignments or just the best match alignment
+/// are being reported.
+///
+/// ## Errors
+///
+/// Errors while reading the queries, building the profiles, performing the
+/// alignment, and writing the alignment are propagated. See the documentation
+/// for the particular [`AlignmentMethod`] for more details. Context containing
+/// the header(s) is added for failed profile building or alignment.
+///
+/// ## Validity
+///
+/// This function returns an error intended to be displayed at the top-level. No
+/// callers should add additional context other than calling a method in
+/// [`OrFail`].
+///
+/// [`OrFail`]: zoe::data::err::OrFail
+fn dispatch_runner<M, const S: usize>(
+    query_reader: QueryReader, references: Vec<FastaSeq>, writer: SamWriter, weight_matrix: M, config: &AlignerConfig,
 ) -> std::io::Result<()>
 where
-    W: AlignmentWriter + AdditionalBounds,
     M: Borrow<WeightMatrix<'static, i8, S>> + Sync + Send + 'static, {
     match (config.profile_from_ref, config.best_match) {
         (false, false) => {
             let method = StripedSmithWatermanLocal::<M, S>::new(weight_matrix, config.gap_open, config.gap_extend);
+            // Validity: No context is added to this result
             align_all_profile_from_query(method, query_reader, references, writer, config)
         }
         (true, false) => {
             let method = StripedSmithWatermanShared::<M, S>::new(weight_matrix, config.gap_open, config.gap_extend);
+            // Validity: No context is added to this result
             align_all_profile_from_ref(method, query_reader, references, writer, config)
         }
         (false, true) => {
             let method = StripedSmithWatermanLocal::<M, S>::new(weight_matrix, config.gap_open, config.gap_extend);
+            // Validity: No context is added to this result
             align_best_match_profile_from_query(method, query_reader, references, writer, config)
         }
         (true, true) => {
             let method = StripedSmithWatermanShared::<M, S>::new(weight_matrix, config.gap_open, config.gap_extend);
+            // Validity: No context is added to this result
             align_best_match_profile_from_ref(method, query_reader, references, writer, config)
         }
     }
@@ -190,21 +224,37 @@ where
 
 /// Performs all alignments using the provided `method`, with profiles built
 /// from the queries.
-fn align_all_profile_from_query<A, W>(
-    method: A, query_reader: QueryReader, references: Vec<FastaSeq>, writer: &mut W, config: &AlignerConfig,
+///
+/// ## Errors
+///
+/// Errors while reading the queries, building the profiles, performing the
+/// alignment, and writing the alignment are propagated. See the documentation
+/// for the particular [`AlignmentMethod`] for more details. Context containing
+/// the header(s) is added for failed profile building or alignment.
+///
+/// ## Validity
+///
+/// This function returns an error intended to be displayed at the top-level. No
+/// callers should add additional context other than calling a method in
+/// [`OrFail`].
+///
+/// [`OrFail`]: zoe::data::err::OrFail
+fn align_all_profile_from_query<A>(
+    method: A, query_reader: QueryReader, references: Vec<FastaSeq>, writer: SamWriter, config: &AlignerConfig,
 ) -> std::io::Result<()>
 where
-    A: AlignmentMethod,
-    W: AlignmentWriter + AdditionalBounds, {
+    A: AlignmentMethod, {
     // Compute all the reverse complements of the references ahead of time, if
     // rev_comp is true
     let references = method.maybe_zip_with_revcomp(&references, config.rev_comp);
 
-    align_all(query_reader, writer, |writer, query| -> std::io::Result<()> {
+    align_all(query_reader, writer, |writer, query| {
         let query = query?;
         let profile = method.build_profile(&query)?;
 
         for (reference, rc_reference) in &references {
+            // Validity: This error message formatting requires that no callers
+            // add additional context
             let mut alignment = method
                 .align(&profile, SeqSrc::Reference(&reference.sequence), rc_reference.as_ref())
                 .with_context(format!(
@@ -218,13 +268,7 @@ where
                 alignment.make_reverse();
             }
 
-            let res = writer.write_alignment(alignment, &query, reference, config);
-
-            if let Some(output) = &config.output {
-                res.with_file_context("Failed to write SAM output to file", output)?;
-            } else {
-                res.with_context("Failed to write SAM output")?;
-            }
+            writer.write_alignment(alignment, &query, reference, config)?;
         }
 
         Ok(())
@@ -233,16 +277,30 @@ where
 
 /// Performs all alignments using the provided `method`, with profiles built
 /// from the references.
-fn align_all_profile_from_ref<A, W>(
-    method: A, query_reader: QueryReader, references: Vec<FastaSeq>, writer: &mut W, config: &AlignerConfig,
+///
+/// ## Errors
+///
+/// Errors while reading the queries, building the profiles, performing the
+/// alignment, and writing the alignment are propagated. See the documentation
+/// for the particular [`AlignmentMethod`] for more details. Context containing
+/// the header(s) is added for failed profile building or alignment.
+///
+/// ## Validity
+///
+/// This function returns an error intended to be displayed at the top-level. No
+/// callers should add additional context other than calling a method in
+/// [`OrFail`].
+///
+/// [`OrFail`]: zoe::data::err::OrFail
+fn align_all_profile_from_ref<A>(
+    method: A, query_reader: QueryReader, references: Vec<FastaSeq>, writer: SamWriter, config: &AlignerConfig,
 ) -> std::io::Result<()>
 where
-    A: for<'a> AlignmentMethod<Profile<'a>: Sync>,
-    W: AlignmentWriter + AdditionalBounds, {
+    A: for<'a> AlignmentMethod<Profile<'a>: Sync>, {
     // Build profiles first, which requires SharedProfile
     let ref_profiles = method.zip_with_profiles(&references)?;
 
-    align_all(query_reader, writer, |writer, query| -> std::io::Result<()> {
+    align_all(query_reader, writer, |writer, query| {
         let query = query?;
 
         // Compute the reverse complement of the query, if rev_comp is true
@@ -253,6 +311,8 @@ where
         });
 
         for (reference, ref_profile) in &ref_profiles {
+            // Validity: This error message formatting requires that no callers
+            // add additional context
             let alignment = method
                 .align(ref_profile, SeqSrc::Query(&query.sequence), rc_query.as_ref())
                 .with_context(format!(
@@ -260,13 +320,7 @@ where
                     query.header, reference.name
                 ))?;
 
-            let res = writer.write_alignment(alignment, &query, reference, config);
-
-            if let Some(output) = &config.output {
-                res.with_file_context("Failed to write SAM output to file", output)?;
-            } else {
-                res.with_context("Failed to write SAM output")?;
-            }
+            writer.write_alignment(alignment, &query, reference, config)?;
         }
 
         Ok(())
@@ -276,23 +330,39 @@ where
 /// Performs all alignments between the streamed queries and the slurped
 /// references using the provided alignment method, but only keeping one
 /// alignment with the best score for each query.
-fn align_best_match_profile_from_query<A, W>(
-    method: A, query_reader: QueryReader, references: Vec<FastaSeq>, writer: &mut W, config: &AlignerConfig,
+///
+/// ## Errors
+///
+/// Errors while reading the queries, building the profiles, performing the
+/// alignment, and writing the alignment are propagated. See the documentation
+/// for the particular [`AlignmentMethod`] for more details. Context containing
+/// the header(s) is added for failed profile building or alignment.
+///
+/// ## Validity
+///
+/// This function returns an error intended to be displayed at the top-level. No
+/// callers should add additional context other than calling a method in
+/// [`OrFail`].
+///
+/// [`OrFail`]: zoe::data::err::OrFail
+fn align_best_match_profile_from_query<A>(
+    method: A, query_reader: QueryReader, references: Vec<FastaSeq>, writer: SamWriter, config: &AlignerConfig,
 ) -> std::io::Result<()>
 where
-    A: AlignmentMethod,
-    W: AlignmentWriter + AdditionalBounds, {
+    A: AlignmentMethod, {
     // Compute all the reverse complements of the references ahead of time, if
     // rev_comp is true
     let references = method.maybe_zip_with_revcomp(&references, config.rev_comp);
 
-    align_all(query_reader, writer, |writer, query| -> std::io::Result<()> {
+    align_all(query_reader, writer, |writer, query| {
         let query = query?;
         let profile = method.build_profile(&query)?;
 
         let (best_reference, mut best_alignment) = references
             .iter()
             .map(|(reference, rc_reference)| {
+                // Validity: This error message formatting requires that no
+                // callers add additional context
                 let alignment = method
                     .align(&profile, SeqSrc::Reference(&reference.sequence), rc_reference.as_ref())
                     .with_context(format!(
@@ -317,29 +387,37 @@ where
             best_alignment.make_reverse();
         }
 
-        let res = writer.write_alignment(best_alignment, &query, best_reference, config);
-
-        if let Some(output) = &config.output {
-            Ok(res.with_file_context("Failed to write SAM output to file", output)?)
-        } else {
-            Ok(res.with_context("Failed to write SAM output")?)
-        }
+        writer.write_alignment(best_alignment, &query, best_reference, config)
     })
 }
 
 /// Performs all alignments between the streamed queries and the slurped
 /// references using the provided alignment method, but only keeping one
 /// alignment with the best score for each query.
-fn align_best_match_profile_from_ref<A, W>(
-    method: A, query_reader: QueryReader, references: Vec<FastaSeq>, writer: &mut W, config: &AlignerConfig,
+///
+/// ## Errors
+///
+/// Errors while reading the queries, building the profiles, performing the
+/// alignment, and writing the alignment are propagated. See the documentation
+/// for the particular [`AlignmentMethod`] for more details. Context containing
+/// the header(s) is added for failed profile building or alignment.
+///
+/// ## Validity
+///
+/// This function returns an error intended to be displayed at the top-level. No
+/// callers should add additional context other than calling a method in
+/// [`OrFail`].
+///
+/// [`OrFail`]: zoe::data::err::OrFail
+fn align_best_match_profile_from_ref<A>(
+    method: A, query_reader: QueryReader, references: Vec<FastaSeq>, writer: SamWriter, config: &AlignerConfig,
 ) -> std::io::Result<()>
 where
-    A: for<'a> AlignmentMethod<Profile<'a>: Sync>,
-    W: AlignmentWriter + AdditionalBounds, {
+    A: for<'a> AlignmentMethod<Profile<'a>: Sync>, {
     // Build profiles first, which requires `SharedProfile`
     let ref_profiles = method.zip_with_profiles(&references)?;
 
-    align_all(query_reader, writer, |writer, query| -> std::io::Result<()> {
+    align_all(query_reader, writer, |writer, query| {
         let query = query?;
 
         // Compute the reverse complement of the query, if rev_comp is true
@@ -352,6 +430,8 @@ where
         let (best_reference, best_alignment) = ref_profiles
             .iter()
             .map(|(reference, ref_profile)| {
+                // Validity: This error message formatting requires that no
+                // callers add additional context
                 let alignment = method
                     .align(ref_profile, SeqSrc::Query(&query.sequence), rc_query.as_ref())
                     .with_context(format!(
@@ -369,34 +449,59 @@ where
             })
             .expect("The references field should be non-empty")?;
 
-        let res = writer.write_alignment(best_alignment, &query, best_reference, config);
-
-        if let Some(output) = &config.output {
-            Ok(res.with_file_context("Failed to write SAM output to file", output)?)
-        } else {
-            Ok(res.with_context("Failed to write SAM output")?)
-        }
+        writer.write_alignment(best_alignment, &query, best_reference, config)
     })
 }
 
 /// Performs all alignments as indicated by closure `f`, using either a parallel
-/// iterator (`par_bridge`) or a serial iterator depending on the `one-thread`
+/// iterator (`par_bridge`) or a serial iterator depending on the `dev_no_rayon`
 /// feature.
+///
+/// This implementation is for the serial case.
+///
+/// ## Errors
+///
+/// Any IO errors occurring while calling `f` or flusing `writer` are
+/// propagated.
 #[inline]
-fn align_all<W, F>(query_reader: QueryReader, writer: &mut W, f: F) -> std::io::Result<()>
+#[cfg(feature = "dev_no_rayon")]
+fn align_all<F>(query_reader: QueryReader, mut writer: SamWriter, f: F) -> std::io::Result<()>
 where
-    W: AlignmentWriter + AdditionalBounds,
-    F: Fn(&mut W, std::io::Result<FastX>) -> std::io::Result<()> + Sync + Send, {
-    #[cfg(not(feature = "dev_no_rayon"))]
-    query_reader.par_bridge().try_for_each_with(writer.clone(), f)?;
+    F: Fn(&mut SamWriter, std::io::Result<FastX>) -> std::io::Result<()> + Sync + Send, {
+    let mut query_reader = query_reader;
+    query_reader.try_for_each(|query| f(&mut writer, query))?;
+    writer.flush()
+}
 
-    #[cfg(feature = "dev_no_rayon")]
-    {
-        let mut query_reader = query_reader;
-        query_reader.try_for_each(|query| f(writer, query))?;
+/// Performs all alignments as indicated by closure `f`, using either a parallel
+/// iterator (`par_bridge`) or a serial iterator depending on the `dev_no_rayon`
+/// feature.
+///
+/// This implementation is for the parallel case.
+///
+/// ## Errors
+///
+/// Any IO errors occurring within the writer thread, while flushing `writer`,
+/// or while calling `f` are propagated. If a
+/// [`ThreadedWriteError::ReceiverDeallocated`] occurs, and there is no IO error
+/// found which could've caused this, then an error with a custom message is
+/// thrown.
+#[inline]
+#[cfg(not(feature = "dev_no_rayon"))]
+fn align_all<F>(query_reader: QueryReader, writer: AlignmentWriterThreaded, f: F) -> std::io::Result<()>
+where
+    F: Fn(&mut AlignmentWriterThreaded, std::io::Result<FastX>) -> Result<(), ThreadedWriteError> + Sync + Send, {
+    let res = query_reader
+        .par_bridge()
+        .try_for_each_with(writer.clone(), |w, record| f(w, record));
+
+    match res {
+        Ok(()) => writer.flush(),
+        Err(ThreadedWriteError::IoError(e)) => Err(e),
+        Err(ThreadedWriteError::ReceiverDeallocated) => Err(writer.flush().err().unwrap_or(std::io::Error::other(
+            "The receiver in the writing thread unexpectedly closed",
+        ))),
     }
-
-    Ok(())
 }
 
 /// An enum to track which strand the alignment mapped to
