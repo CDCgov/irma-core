@@ -10,6 +10,7 @@ use zoe::data::err::ResultWithErrorContext;
 use zoe::data::sam::*;
 
 use crate::io::{InputOptions, OutputOptions};
+use crate::utils::get_hasher;
 use crate::utils::paired_reads::get_molecular_id_side;
 
 #[derive(Args, Debug)]
@@ -54,7 +55,7 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
         .open()?;
 
     let mut sam_data: Vec<SamData> = Vec::new();
-    let mut pairs: HashMap<String, IndexPair> = HashMap::new();
+    let mut pairs: HashMap<String, IndexPair, _> = HashMap::with_hasher(get_hasher());
     let mut index = 0;
 
     let sam_records = InputOptions::new_from_path(&args.sam_file).use_file().parse_sam().open()?;
