@@ -2,7 +2,11 @@ use crate::io::{
     OptionalPaths, OutputContext, PairedErrors, RecordWriters, WriteFileZipStdout, WriterWithContext,
     open_options::PairedStruct,
 };
-use std::{fs::File, io::BufWriter, path::Path};
+use std::{
+    fs::File,
+    io::{BufWriter, Stdout, stdout},
+    path::Path,
+};
 
 /// A builder pattern for creating output files in IRMA-core.
 ///
@@ -100,6 +104,24 @@ impl<'a> OutputOptions<'a, &'a Path> {
             output,
             capacity: self.capacity,
         }
+    }
+}
+
+impl<'a> OutputOptions<'a, Stdout> {
+    /// Creates a new [`OutputOptions`] for writing to [`Stdout`].
+    pub fn new_stdout() -> Self {
+        Self {
+            context:  OutputContext::default(),
+            output:   Ok(stdout()),
+            capacity: None,
+        }
+    }
+
+    /// Sets the capacity for the [`BufWriter`] to use when opening the writer.
+    #[allow(dead_code)]
+    pub fn with_capacity(mut self, capacity: usize) -> Self {
+        self.capacity = Some(capacity);
+        self
     }
 }
 
@@ -247,6 +269,26 @@ impl<'a> OutputOptions<'a, File> {
     /// IO errors when opening the file are propagated. Context is added that
     /// includes the path.
     pub fn open(self) -> std::io::Result<BufWriter<WriterWithContext<File>>> {
+        let output = self.output.map(|file| {
+            let output = OutputContext::add_writer_context(file, self.context.output1);
+
+            if let Some(capacity) = self.capacity {
+                BufWriter::with_capacity(capacity, output)
+            } else {
+                BufWriter::new(output)
+            }
+        });
+
+        match output {
+            Ok(output) => Ok(output),
+            Err(e) => Err(self.context.add_context(e).into()),
+        }
+    }
+}
+
+impl<'a> OutputOptions<'a, Stdout> {
+    /// Opens [`Stdout`] for writing, wrapping it in a [`BufWriter`].
+    pub fn open(self) -> std::io::Result<BufWriter<WriterWithContext<Stdout>>> {
         let output = self.output.map(|file| {
             let output = OutputContext::add_writer_context(file, self.context.output1);
 

@@ -2,7 +2,11 @@ use crate::io::{
     FastXReader, InputContext, IterWithContext, IterWithErrorContext, OptionalPaths, PairedErrors, ReadFileStdin,
     ReadFileZip, ReadFileZipPipe, ReaderType, RecordReaders, open_options::PairedStruct,
 };
-use std::{fs::File, io::Read, path::Path};
+use std::{
+    fs::File,
+    io::{Read, Stdin, stdin},
+    path::Path,
+};
 use zoe::{
     data::sam::SAMReader,
     prelude::{FastQReader, FastaReader},
@@ -129,6 +133,17 @@ impl<'a> InputOptions<'a, &'a Path> {
             input:   self
                 .input
                 .and_then(|path| ReadFileZipPipe::open(path).map_err(PairedErrors::Err1)),
+        }
+    }
+}
+
+impl<'a> InputOptions<'a, Stdin> {
+    /// Creates a new [`InputOptions`] for reading from [`Stdin`].
+    #[allow(dead_code)]
+    pub fn new_stdin() -> Self {
+        Self {
+            context: InputContext::default(),
+            input:   Ok(stdin()),
         }
     }
 }

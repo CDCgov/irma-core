@@ -8,7 +8,7 @@ use crate::{
 use clap::Parser;
 use std::{
     collections::HashMap,
-    io::{BufRead, BufReader, BufWriter, Write},
+    io::{BufRead, BufReader, Write},
     path::{Path, PathBuf},
 };
 use zoe::{
@@ -33,7 +33,7 @@ pub struct XflateArgs {
 
 fn inflate(table_file: &Path, fasta_files: &Vec<PathBuf>) -> Result<(), std::io::Error> {
     let table_reader = BufReader::new(InputOptions::new_from_path(table_file).use_file().open()?);
-    let mut stdout_writer = BufWriter::new(std::io::stdout());
+    let mut stdout_writer = OutputOptions::new_stdout().open()?;
 
     let mut sequence_by_cluster = HashMap::with_hasher(get_hasher());
 
@@ -89,7 +89,7 @@ fn inflate(table_file: &Path, fasta_files: &Vec<PathBuf>) -> Result<(), std::io:
 
 fn deflate(table_file: &Path, fastq_files: &Vec<PathBuf>) -> Result<(), std::io::Error> {
     let mut table_writer = OutputOptions::new_from_path(table_file).use_file().open()?;
-    let mut stdout_writer = BufWriter::new(std::io::stdout());
+    let mut stdout_writer = OutputOptions::new_stdout().open()?;
 
     let mut metadata_by_sequence: HashMap<Nucleotides, Vec<(String, QualityScores)>, _> = HashMap::with_hasher(get_hasher());
 

@@ -43,6 +43,15 @@ pub enum InputType<'a> {
     Stdin,
 }
 
+impl Default for InputType<'_> {
+    /// Returns the default value for [`InputType`], which is [`Stdin`].
+    ///
+    /// [`Stdin`]: InputType::Stdin
+    fn default() -> Self {
+        Self::Stdin
+    }
+}
+
 impl<'a> InputType<'a> {
     /// Creates a new [`InputType`] from an optional path. If present,
     /// [`InputType::File`] is used, otherwise [`InputType::Stdin`] is assumed.
@@ -66,6 +75,15 @@ pub enum OutputType<'a> {
     File(&'a Path),
     /// The content is being written to stdout.
     Stdout,
+}
+
+impl Default for OutputType<'_> {
+    /// Returns the default value for [`OutputType`], which is [`Stdout`].
+    ///
+    /// [`Stdout`]: OutputType::Stdout
+    fn default() -> Self {
+        Self::Stdout
+    }
 }
 
 impl<'a> OutputType<'a> {
@@ -100,6 +118,19 @@ pub struct InputContext<'a> {
     /// this defaults to [`InputType::Stdin`], but it will not influence the
     /// error context displayed.
     pub input2:  InputType<'a>,
+}
+
+impl Default for InputContext<'_> {
+    /// Returns the default value for [`InputContext`], which is solely stdin
+    /// inputs with no record parsing.
+    fn default() -> Self {
+        Self {
+            reader1: None,
+            reader2: None,
+            input1:  InputType::default(),
+            input2:  InputType::default(),
+        }
+    }
 }
 
 impl<'a> InputContext<'a> {
@@ -201,6 +232,7 @@ impl InputContext<'_> {
 /// errors.
 ///
 /// [`OutputOptions`]: crate::io::open_options::OutputOptions
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
 pub struct OutputContext<'a> {
     /// The [`OutputType`] used by the first output.
     pub output1: OutputType<'a>,
@@ -208,6 +240,17 @@ pub struct OutputContext<'a> {
     /// output, this defaults to [`OutputType::Stdout`], but it will not
     /// influence the error context displayed.
     pub output2: OutputType<'a>,
+}
+
+impl Default for OutputContext<'_> {
+    /// Returns the default value for [`OutputContext`], which is solely stdout
+    /// outputs.
+    fn default() -> Self {
+        Self {
+            output1: OutputType::default(),
+            output2: OutputType::default(),
+        }
+    }
 }
 
 impl<'a> OutputContext<'a> {
