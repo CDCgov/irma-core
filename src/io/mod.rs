@@ -148,7 +148,23 @@ impl<R: Read> IterWithContext<FastXReader<R>> {
     }
 }
 
+/// Checks whether a path represents a device file, such as `/dev/null`.
+fn is_linux_device(path: &Path) -> bool {
+    path.starts_with("/dev/")
+}
+
+/// Checks whether two paths represent repeated files.
+///
+/// A repeated device file such as `/dev/null` is not considered a repeated
+/// file.
+fn is_repeated_file(path1: &Path, path2: &Path) -> bool {
+    path1 == path2 && !is_linux_device(path1)
+}
+
 /// Checks that all the provided paths are distinct from each other.
+///
+/// Repeated paths are allowed if they refer to a device file, such as
+/// `/dev/null`.
 ///
 /// ## Errors
 ///
@@ -171,33 +187,33 @@ pub(crate) fn check_distinct_files(
     let output2 = output2.as_ref().map(AsRef::as_ref);
 
     if let Some(input2) = input2
-        && input1 == input2
+        && is_repeated_file(input1, input2)
     {
         Err(std::io::Error::other(format!(
             "An identical path was found for the two input files: {}",
             input1.display()
         )))
     } else if let Some(output1) = output1
-        && input1 == output1
+        && is_repeated_file(input1, output1)
     {
         Err(identical_path_input_output(input1))
     } else if let Some(output2) = output2
-        && input1 == output2
+        && is_repeated_file(input1, output2)
     {
         Err(identical_path_input_output(input1))
     } else if let Some(input2) = input2
         && let Some(output1) = output1
-        && input2 == output1
+        && is_repeated_file(input2, output1)
     {
         Err(identical_path_input_output(input1))
     } else if let Some(input2) = input2
         && let Some(output2) = output2
-        && input2 == output2
+        && is_repeated_file(input2, output2)
     {
         Err(identical_path_input_output(input1))
     } else if let Some(output1) = output1
         && let Some(output2) = output2
-        && output1 == output2
+        && is_repeated_file(output1, output2)
     {
         Err(std::io::Error::other(format!(
             "An identical path was found for the two output files: {}",

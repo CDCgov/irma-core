@@ -16,6 +16,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 ### Fixes
 
 - Fixes a bug where leading whitespace in a record file can cause the program to stall (in `sampler` and `aligner`)
+- Allows repeated input/output files from processes if they are device files (e.g., `/dev/null`)
 
 ## [0.8.1] - 2025-12-02
 
