@@ -31,6 +31,13 @@ pub struct XflateArgs {
     inflate: bool,
 }
 
+/// ## Validity
+///
+/// This function returns an error intended to be displayed at the top-level. No
+/// callers should add additional context other than calling a method in
+/// [`OrFail`].
+///
+/// [`OrFail`]: zoe::data::err::OrFail
 fn inflate(table_file: &Path, fasta_files: &Vec<PathBuf>) -> Result<(), std::io::Error> {
     let table_reader = BufReader::new(InputOptions::new_from_path(table_file).use_file().open()?);
     let mut stdout_writer = OutputOptions::new_stdout().open()?;
@@ -44,41 +51,35 @@ fn inflate(table_file: &Path, fasta_files: &Vec<PathBuf>) -> Result<(), std::io:
             let FastaSeq { name, sequence } = record?;
             let mut sequence = Nucleotides::from_vec_unchecked(sequence);
 
-            if let Some(name) = name.strip_prefix(CLUSTER_PREFIX)
-                && let Some(cluster_id) = name.split('%').next()
-                && let Ok(cluster_num) = cluster_id.parse::<usize>()
-            {
-                if name.ends_with("{c}") {
-                    sequence.make_reverse_complement();
-                }
-                sequence_by_cluster.insert(cluster_num, sequence);
-            } else {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "Invalid header in fasta file!",
-                ));
+            let cluster_num = parse_cluster_num(&name, file)?;
+
+            if name.ends_with("{c}") {
+                sequence.make_reverse_complement();
             }
+            sequence_by_cluster.insert(cluster_num, sequence);
         }
     }
 
     for table_record in table_reader.lines() {
         let data = table_record?;
+
+        if data.is_empty() {
+            continue;
+        }
+
         let mut split = data.split('\t');
-        if let Some(name) = split.next()
-            && let Some(name) = name.strip_prefix(CLUSTER_PREFIX)
-            && let Some(cluster_id) = name.split('%').next()
-            && let Ok(cluster_num) = cluster_id.parse::<usize>()
-        {
-            if let Some(sequence) = sequence_by_cluster.get(&cluster_num) {
-                while let (Some(header), Some(quality)) = (split.next(), split.next()) {
-                    stdout_writer.write_all(format!("@{header}\n{sequence}\n+\n{quality}\n").as_bytes())?;
-                }
+
+        let Some(name) = split.next() else {
+            // This should be unreachable per the docs in split
+            continue;
+        };
+
+        let cluster_num = parse_cluster_num(name, table_file)?;
+
+        if let Some(sequence) = sequence_by_cluster.get(&cluster_num) {
+            while let (Some(header), Some(quality)) = (split.next(), split.next()) {
+                stdout_writer.write_all(format!("@{header}\n{sequence}\n+\n{quality}\n").as_bytes())?;
             }
-        } else if !data.is_empty() {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "Invalid header in table file!",
-            ));
         }
     }
 
@@ -126,8 +127,37 @@ fn deflate(table_file: &Path, fastq_files: &Vec<PathBuf>) -> Result<(), std::io:
 
 pub fn xflate_process(args: XflateArgs) -> Result<(), std::io::Error> {
     if args.inflate {
+        // Validity: No context is added to the result
         inflate(&args.table_file, &args.seq_files)
     } else {
         deflate(&args.table_file, &args.seq_files)
+    }
+}
+
+/// Given a header containing the contents `name`, parse the cluster number from
+/// it.
+///
+/// The header should be of the format `C<ID>%[REST]`, where `<ID>` is the
+/// cluster number being parsed and `[REST]` is any additional optional
+/// characters.
+///
+/// ## Errors
+///
+/// If `name` does not meet the required format, then an error is returned,
+/// including `name` and `path` as context.
+fn parse_cluster_num(name: &str, path: &Path) -> std::io::Result<usize> {
+    if let Some(name) = name.strip_prefix(CLUSTER_PREFIX)
+        && let Some(cluster_id) = name.split('%').next()
+        && let Ok(cluster_num) = cluster_id.parse::<usize>()
+    {
+        Ok(cluster_num)
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "Invalid header in file: {path}\nHeader: {name}\n\nInflation requires a header of the format: C<ID>%[REST], where:\n  - <ID> is a nonnegative integer\n  - [REST] is any additional optional characters",
+                path = path.display()
+            ),
+        ))
     }
 }
