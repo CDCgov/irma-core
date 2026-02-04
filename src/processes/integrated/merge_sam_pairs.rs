@@ -6,7 +6,6 @@ use clap::Args;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::PathBuf;
-use zoe::data::err::ResultWithErrorContext;
 use zoe::data::sam::*;
 
 use crate::io::{InputOptions, OutputOptions};
@@ -69,8 +68,7 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
                 d
             }
             SamRow::Header(h) => {
-                writeln!(sam_writer, "{h}")
-                    .with_file_context("Failed to write header to merged SAM file", &merged_sam_file)?;
+                writeln!(sam_writer, "{h}")?;
                 continue;
             }
         };
@@ -108,11 +106,10 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
                 );
                 paired_merging_stats += stats;
 
-                writeln!(sam_writer, "{s}").with_file_context("Failed to write to merged SAM file", &merged_sam_file)?;
+                writeln!(sam_writer, "{s}")?;
             }
             (Some(index), None) | (None, Some(index)) => {
-                writeln!(sam_writer, "{}", sam_data[index])
-                    .with_file_context("Failed to write to merged SAM file", &merged_sam_file)?;
+                writeln!(sam_writer, "{}", sam_data[index])?;
             }
             _ => continue,
         }
@@ -141,11 +138,12 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
              {name}\tinsObs\t{insert_obs}\n\
              {name}\tinsErr\t{insert_errors}",
             name = reference.name
-        )
-        .with_file_context("Failed to write paired stats file", &paired_stats_file)?;
+        )?;
+
+        w.flush()?;
     }
 
-    Ok(())
+    sam_writer.flush()
 }
 
 #[derive(Debug)]
