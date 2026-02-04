@@ -78,7 +78,7 @@ fn inflate(table_file: &Path, fasta_files: &Vec<PathBuf>) -> Result<(), std::io:
 
         if let Some(sequence) = sequence_by_cluster.get(&cluster_num) {
             while let (Some(header), Some(quality)) = (split.next(), split.next()) {
-                stdout_writer.write_all(format!("@{header}\n{sequence}\n+\n{quality}\n").as_bytes())?;
+                write!(stdout_writer, "@{header}\n{sequence}\n+\n{quality}\n")?;
             }
         }
     }
@@ -110,13 +110,13 @@ fn deflate(table_file: &Path, fastq_files: &Vec<PathBuf>) -> Result<(), std::io:
     for (i, (sequence, metadata)) in metadata_by_sequence.into_iter().enumerate() {
         let cluster_size = metadata.len();
 
-        stdout_writer.write_all(format!(">{CLUSTER_PREFIX}{i}%{cluster_size}\n{sequence}\n").as_bytes())?;
+        write!(stdout_writer, ">{CLUSTER_PREFIX}{i}%{cluster_size}\n{sequence}\n")?;
 
-        table_writer.write_all(format!("{CLUSTER_PREFIX}{i}%{cluster_size}").as_bytes())?;
+        write!(table_writer, "{CLUSTER_PREFIX}{i}%{cluster_size}")?;
         for (header, quality_scores) in metadata {
-            table_writer.write_all(format!("\t{header}\t{quality_scores}").as_bytes())?;
+            write!(table_writer, "\t{header}\t{quality_scores}")?;
         }
-        table_writer.write_all(b"\n")?;
+        writeln!(table_writer)?;
     }
 
     table_writer.flush()?;
