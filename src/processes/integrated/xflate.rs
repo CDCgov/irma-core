@@ -8,7 +8,7 @@ use crate::{
 use clap::Parser;
 use std::{
     collections::HashMap,
-    io::{BufRead, BufReader, Write},
+    io::{BufRead, Write},
     path::{Path, PathBuf},
 };
 use zoe::{
@@ -39,7 +39,7 @@ pub struct XflateArgs {
 ///
 /// [`OrFail`]: zoe::data::err::OrFail
 fn inflate(table_file: &Path, fasta_files: &Vec<PathBuf>) -> Result<(), std::io::Error> {
-    let table_reader = BufReader::new(InputOptions::new_from_path(table_file).use_file().open()?);
+    let table_reader = InputOptions::new_from_path(table_file).use_file().open()?;
     let mut stdout_writer = OutputOptions::new_stdout().open()?;
 
     let mut sequence_by_cluster = HashMap::with_hasher(get_hasher());

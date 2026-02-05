@@ -10,7 +10,7 @@ use clap::Args;
 use rand::{SeedableRng, make_rng};
 use rand_xoshiro::Xoshiro256StarStar;
 use std::{
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufRead, Read, Write},
     path::PathBuf,
 };
 use zoe::{
@@ -395,8 +395,7 @@ fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, 
 
 fn get_seq_count<R: Read>(fastq: &PathBuf, reader: &FastXReader<R>) -> std::io::Result<usize> {
     let input = InputOptions::new_from_path(fastq).use_file().open()?;
-    let buffered = BufReader::new(input);
-    let line_count = buffered.lines().count();
+    let line_count = input.lines().process_results(|iter| iter.count())?;
     match reader {
         FastXReader::Fasta(_) => Ok(line_count / 2),
         FastXReader::Fastq(_) => Ok(line_count / 4),

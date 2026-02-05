@@ -1,10 +1,10 @@
 use crate::io::{
     FastXReader, InputContext, IterWithContext, IterWithErrorContext, OptionalPaths, PairedErrors, ReadFileStdin,
-    ReadFileZip, ReadFileZipPipe, ReaderType, RecordReaders, open_options::PairedStruct,
+    ReadFileZip, ReadFileZipPipe, ReaderType, ReaderWithContext, RecordReaders, open_options::PairedStruct,
 };
 use std::{
     fs::File,
-    io::{Read, Stdin, stdin},
+    io::{BufReader, Read, Stdin, stdin},
     path::Path,
 };
 use zoe::{
@@ -467,9 +467,11 @@ where
     }
 }
 
-impl<'a, R> InputOptions<'a, R> {
-    /// A helper function for opening something implementing [`Read`] or
-    /// [`RecordReaders`] of something implementing [`Read`].
+impl<'a, R> InputOptions<'a, R>
+where
+    R: Read,
+{
+    /// A helper function for opening something implementing [`Read`].
     ///
     /// For opening an iterator ([`FastQReader`], [`FastaReader`], etc.), use
     /// `open_iter`.
@@ -478,10 +480,37 @@ impl<'a, R> InputOptions<'a, R> {
     ///
     /// Any IO or parsing error is propagated. Context is added that includes
     /// the path if available, and the record type if a `parse` method was
-    /// called and the error originated during parsing.
-    fn open_readable(self) -> std::io::Result<R> {
+    /// called and the error originated during parsing. Any failed reads from
+    /// the reader will also have similar context due to the
+    /// [`ReaderWithContext`] wrapper.
+    fn open_readable(self) -> std::io::Result<ReaderWithContext<R>> {
         match self.input {
-            Ok(reader) => Ok(reader),
+            Ok(reader) => Ok(InputContext::add_reader_context(reader, self.context.input1)),
+            Err(e) => Err(self.context.add_context(e).into()),
+        }
+    }
+}
+
+impl<'a, R> InputOptions<'a, RecordReaders<R>>
+where
+    R: Read,
+{
+    /// A helper function for opening [`RecordReaders`] of something
+    /// implementing [`Read`].
+    ///
+    /// For opening an iterator ([`FastQReader`], [`FastaReader`], etc.), use
+    /// `open_iter`.
+    ///
+    /// ## Errors
+    ///
+    /// Any IO or parsing error is propagated. Context is added that includes
+    /// the path if available, and the record type if a `parse` method was
+    /// called and the error originated during parsing. Any failed reads from
+    /// the readers will also have similar context due to the
+    /// [`ReaderWithContext`] wrapper.
+    fn open_readable(self) -> std::io::Result<RecordReaders<ReaderWithContext<R>>> {
+        match self.input {
+            Ok(readers) => Ok(self.context.add_paired_reader_context(readers)),
             Err(e) => Err(self.context.add_context(e).into()),
         }
     }
@@ -494,15 +523,12 @@ where
     /// A helper function for opening an iterator ([`FastQReader`],
     /// [`FastaReader`], [`FastXReader`], or [`SAMReader`]).
     ///
-    /// Aside from adding context to an error, this also adds context to each
-    /// item of the fallible iterator via [`IterWithContext`]. The context will
-    /// include the path if available and the record type.
-    ///
     /// ## Errors
     ///
     /// Any IO or parsing error is propagated. Context is added that includes
-    /// the path if available, and the record type if a `parse` method was
-    /// called and the error originated during parsing.
+    /// the path if available and the record type if the error originated during
+    /// parsing. Any items that are errors in the iterator will also have
+    /// similar context due to the [`IterWithContext`] wrapper.
     fn open_iter(self) -> std::io::Result<IterWithContext<I>> {
         match self.input {
             Ok(reader) => Ok(InputContext::add_iter_context(
@@ -522,15 +548,12 @@ where
     /// A helper function for opening a [`RecordReaders`] of iterators
     /// ([`FastQReader`], [`FastaReader`], [`FastXReader`], or [`SAMReader`]).
     ///
-    /// Aside from adding context to an error, this also adds context to each
-    /// item of the fallible iterators via [`IterWithContext`]. The context will
-    /// include the paths if available and the record type.
-    ///
     /// ## Errors
     ///
     /// Any IO or parsing error is propagated. Context is added that includes
-    /// the path if available, and the record type if a `parse` method was
-    /// called and the error originated during parsing.
+    /// the path if available and the record type if the error originated during
+    /// parsing. Any items that are errors in the iterator will also have
+    /// similar context due to the [`IterWithContext`] wrapper.
     fn open_iter(self) -> std::io::Result<RecordReaders<IterWithContext<I>>> {
         match self.input {
             Ok(readers) => Ok(self.context.add_paired_iter_context(readers)),
@@ -540,54 +563,59 @@ where
 }
 
 impl InputOptions<'_, File> {
-    /// Opens the [`File`].
+    /// Opens the [`File`] for reading, wrapping it in a [`BufReader`].
     ///
     /// ## Errors
     ///
     /// IO errors when opening the file are propagated. Context is added that
-    /// includes the path.
-    #[allow(dead_code)]
-    pub fn open(self) -> std::io::Result<File> {
-        self.open_readable()
+    /// includes the path. Any failed reads from the reader will also have
+    /// similar context due to the [`ReaderWithContext`] wrapper.
+    pub fn open(self) -> std::io::Result<BufReader<ReaderWithContext<File>>> {
+        self.open_readable().map(BufReader::new)
     }
 }
 
 impl InputOptions<'_, ReadFileZip> {
-    /// Opens the [`ReadFileZip`].
+    /// Opens the [`ReadFileZip`], wrapping it in a [`BufReader`].
     ///
     /// ## Errors
     ///
     /// IO errors when opening the file are propagated. Context is added that
-    /// includes the path.
+    /// includes the path. Any failed reads from the reader will also have
+    /// similar context due to the [`ReaderWithContext`] wrapper.
     #[allow(dead_code)]
-    pub fn open(self) -> std::io::Result<ReadFileZip> {
-        self.open_readable()
+    pub fn open(self) -> std::io::Result<BufReader<ReaderWithContext<ReadFileZip>>> {
+        self.open_readable().map(BufReader::new)
     }
 }
 
 impl InputOptions<'_, ReadFileZipPipe> {
-    /// Opens the [`ReadFileZipPipe`].
+    /// Opens the [`ReadFileZipPipe`], wrapping it in a [`BufReader`].
     ///
     /// ## Errors
     ///
     /// IO errors when opening the file or forming the pipe are propagated.
-    /// Context is added that includes the path.
+    /// Context is added that includes the path. Any failed reads from the
+    /// reader will also have similar context due to the [`ReaderWithContext`]
+    /// wrapper.
     #[allow(dead_code)]
-    pub fn open(self) -> std::io::Result<ReadFileZipPipe> {
-        self.open_readable()
+    pub fn open(self) -> std::io::Result<BufReader<ReaderWithContext<ReadFileZipPipe>>> {
+        self.open_readable().map(BufReader::new)
     }
 }
 
 impl InputOptions<'_, ReadFileStdin> {
-    /// Opens the [`ReadFileStdin`].
+    /// Opens the [`ReadFileStdin`], wrapping it in a [`BufReader`].
     ///
     /// ## Errors
     ///
     /// If a path was provided, IO errors when opening the file are propagated.
-    /// Context is added that includes the path.
+    /// Context is added that includes the path. Any failed reads from the
+    /// reader will also have similar context due to the [`ReaderWithContext`]
+    /// wrapper.
     #[allow(dead_code)]
-    pub fn open(self) -> std::io::Result<ReadFileStdin> {
-        self.open_readable()
+    pub fn open(self) -> std::io::Result<BufReader<ReaderWithContext<ReadFileStdin>>> {
+        self.open_readable().map(BufReader::new)
     }
 }
 
@@ -597,15 +625,12 @@ where
 {
     /// Opens the [`FastQReader`].
     ///
-    /// This adds context to each item of the iterator via [`IterWithContext`].
-    /// The context will include the path if available and the record type
-    /// (FASTQ).
-    ///
     /// ## Errors
     ///
     /// Any IO or parsing error is propagated. Context is added that includes
     /// the path if available, and the record type FASTQ if the error originated
-    /// during parsing.
+    /// during parsing. Any items that are errors in the iterator will also have
+    /// similar context due to the [`IterWithContext`] wrapper.
     #[allow(dead_code)]
     pub fn open(self) -> std::io::Result<IterWithContext<FastQReader<R>>> {
         self.open_iter()
@@ -618,15 +643,12 @@ where
 {
     /// Opens the [`FastaReader`].
     ///
-    /// This adds context to each item of the iterator via [`IterWithContext`].
-    /// The context will include the path if available and the record type
-    /// (FASTA).
-    ///
     /// ## Errors
     ///
     /// Any IO or parsing error is propagated. Context is added that includes
     /// the path if available, and the record type FASTA if the error originated
-    /// during parsing.
+    /// during parsing. Any items that are errors in the iterator will also have
+    /// similar context due to the [`IterWithContext`] wrapper.
     pub fn open(self) -> std::io::Result<IterWithContext<FastaReader<R>>> {
         self.open_iter()
     }
@@ -637,9 +659,6 @@ where
     R: Read,
 {
     /// Opens the [`FastXReader`].
-    ///
-    /// This adds context to each item of the iterator via [`IterWithContext`].
-    /// The context will include the path if available and the record type.
     ///
     /// The output (after handling the error case) can be directly used as an
     /// iterator, and context will be added since it is wrapped in
@@ -652,7 +671,8 @@ where
     ///
     /// Any IO or parsing error is propagated. Context is added that includes
     /// the path if available, and the record type if the error originated
-    /// during parsing.
+    /// during parsing. Any items that are errors in the iterator will also have
+    /// similar context due to the [`IterWithContext`] wrapper.
     pub fn open(self) -> std::io::Result<IterWithContext<FastXReader<R>>> {
         self.open_iter()
     }
@@ -664,15 +684,12 @@ where
 {
     /// Opens the [`SAMReader`].
     ///
-    /// This adds context to each item of the iterator via [`IterWithContext`].
-    /// The context will include the path if available and the record type
-    /// (SAM).
-    ///
     /// ## Errors
     ///
     /// Any IO or parsing error is propagated. Context is added that includes
     /// the path if available, and the record type SAM if the error originated
-    /// during parsing.
+    /// during parsing. Any items that are errors in the iterator will also have
+    /// similar context due to the [`IterWithContext`] wrapper.
     #[allow(dead_code)]
     pub fn open(self) -> std::io::Result<IterWithContext<SAMReader<R, true>>> {
         self.open_iter()
@@ -680,54 +697,64 @@ where
 }
 
 impl InputOptions<'_, RecordReaders<File>> {
-    /// Opens the potentially paired [`File`] inputs.
+    /// Opens the potentially paired [`File`] inputs, wrapping each in a
+    /// [`BufReader`].
     ///
     /// ## Errors
     ///
     /// IO errors when opening the files are propagated. Context is added that
-    /// includes the path.
+    /// includes the path. Any failed reads from the readers will also have
+    /// similar context due to the [`ReaderWithContext`] wrapper.
     #[allow(dead_code)]
-    pub fn open(self) -> std::io::Result<RecordReaders<File>> {
-        self.open_readable()
+    pub fn open(self) -> std::io::Result<RecordReaders<BufReader<ReaderWithContext<File>>>> {
+        self.open_readable().map(|readers| readers.map(BufReader::new))
     }
 }
 
 impl InputOptions<'_, RecordReaders<ReadFileZip>> {
-    /// Opens the potentially paired [`ReadFileZip`] inputs.
+    /// Opens the potentially paired [`ReadFileZip`] inputs, wrapping each in a
+    /// [`BufReader`].
     ///
     /// ## Errors
     ///
     /// IO errors when opening the files are propagated. Context is added that
-    /// includes the path.
+    /// includes the path. Any failed reads from the readers will also have
+    /// similar context due to the [`ReaderWithContext`] wrapper.
     #[allow(dead_code)]
-    pub fn open(self) -> std::io::Result<RecordReaders<ReadFileZip>> {
-        self.open_readable()
+    pub fn open(self) -> std::io::Result<RecordReaders<BufReader<ReaderWithContext<ReadFileZip>>>> {
+        self.open_readable().map(|readers| readers.map(BufReader::new))
     }
 }
 
 impl InputOptions<'_, RecordReaders<ReadFileZipPipe>> {
-    /// Opens the potentially paired [`ReadFileZipPipe`] inputs.
+    /// Opens the potentially paired [`ReadFileZipPipe`] inputs, wrapping each
+    /// in a [`BufReader`].
     ///
     /// ## Errors
     ///
     /// IO errors when opening the files or forming the pipe are propagated.
-    /// Context is added that includes the path.
+    /// Context is added that includes the path. Any failed reads from the
+    /// readers will also have similar context due to the [`ReaderWithContext`]
+    /// wrapper.
     #[allow(dead_code)]
-    pub fn open(self) -> std::io::Result<RecordReaders<ReadFileZipPipe>> {
-        self.open_readable()
+    pub fn open(self) -> std::io::Result<RecordReaders<BufReader<ReaderWithContext<ReadFileZipPipe>>>> {
+        self.open_readable().map(|readers| readers.map(BufReader::new))
     }
 }
 
 impl InputOptions<'_, RecordReaders<ReadFileStdin>> {
-    /// Opens the potentially paired [`ReadFileStdin`] inputs.
+    /// Opens the potentially paired [`ReadFileStdin`] inputs, wrapping each in
+    /// a [`BufReader`].
     ///
     /// ## Errors
     ///
     /// If a path was provided for the first input, IO errors when opening the
-    /// file are propagated. Context is added that includes the path.
+    /// file are propagated. Context is added that includes the path. Any failed
+    /// reads from the readers will also have similar context due to the
+    /// [`ReaderWithContext`] wrapper.
     #[allow(dead_code)]
-    pub fn open(self) -> std::io::Result<RecordReaders<ReadFileStdin>> {
-        self.open_readable()
+    pub fn open(self) -> std::io::Result<RecordReaders<BufReader<ReaderWithContext<ReadFileStdin>>>> {
+        self.open_readable().map(|readers| readers.map(BufReader::new))
     }
 }
 
@@ -737,15 +764,12 @@ where
 {
     /// Opens the potentially paired [`FastQReader`] inputs.
     ///
-    /// This adds context to each item of the iterators via [`IterWithContext`].
-    /// The context will include the path if available and the record type
-    /// (FASTQ).
-    ///
     /// ## Errors
     ///
     /// Any IO or parsing error is propagated. Context is added that includes
     /// the path if available, and the record type FASTQ if the error originated
-    /// during parsing.
+    /// during parsing. Any items that are errors in the iterator will also have
+    /// similar context due to the [`IterWithContext`] wrapper.
     pub fn open(self) -> std::io::Result<RecordReaders<IterWithContext<FastQReader<R>>>> {
         self.open_iter()
     }
@@ -757,15 +781,12 @@ where
 {
     /// Opens the potentially paired [`FastaReader`] inputs.
     ///
-    /// This adds context to each item of the iterators via [`IterWithContext`].
-    /// The context will include the path if available and the record type
-    /// (FASTA).
-    ///
     /// ## Errors
     ///
     /// Any IO or parsing error is propagated. Context is added that includes
     /// the path if available, and the record type FASTA if the error originated
-    /// during parsing.
+    /// during parsing. Any items that are errors in the iterator will also have
+    /// similar context due to the [`IterWithContext`] wrapper.
     #[allow(dead_code)]
     pub fn open(self) -> std::io::Result<RecordReaders<IterWithContext<FastaReader<R>>>> {
         self.open_iter()
@@ -778,9 +799,6 @@ where
 {
     /// Opens the potentially paired [`FastXReader`] inputs.
     ///
-    /// This adds context to each item of the iterators via [`IterWithContext`].
-    /// The context will include the path if available and the record type.
-    ///
     /// The output readers (after handling the error case) can be directly used
     /// as iterators, and context will be added since they are wrapped in
     /// [`IterWithContext`]. To instead match on whether each reader is a
@@ -792,7 +810,8 @@ where
     ///
     /// Any IO or parsing error is propagated. Context is added that includes
     /// the path if available, and the record type if the error originated
-    /// during parsing.
+    /// during parsing. Any items that are errors in the iterator will also have
+    /// similar context due to the [`IterWithContext`] wrapper.
     pub fn open(self) -> std::io::Result<RecordReaders<IterWithContext<FastXReader<R>>>> {
         self.open_iter()
     }
@@ -804,15 +823,12 @@ where
 {
     /// Opens the potentially paired [`SAMReader`] inputs.
     ///
-    /// This adds context to each item of the iterators via [`IterWithContext`].
-    /// The context will include the path if available and the record type
-    /// (SAM).
-    ///
     /// ## Errors
     ///
     /// Any IO or parsing error is propagated. Context is added that includes
     /// the path if available, and the record type SAM if the error originated
-    /// during parsing.
+    /// during parsing. Any items that are errors in the iterator will also have
+    /// similar context due to the [`IterWithContext`] wrapper.
     #[allow(dead_code)]
     pub fn open(self) -> std::io::Result<RecordReaders<IterWithContext<SAMReader<R, true>>>> {
         self.open_iter()

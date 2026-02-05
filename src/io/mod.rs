@@ -306,3 +306,72 @@ where
         Self::writer_with_context(self, format!("{msg}: '{path}'", path = file.as_ref().display()))
     }
 }
+
+/// A wrapper around a reader of type `R` such that error context is added to
+/// any failed reads.
+pub struct ReaderWithContext<R> {
+    /// The inner reader.
+    reader:      R,
+    /// The context to add to any failed reads.
+    description: String,
+}
+
+impl<R> Read for ReaderWithContext<R>
+where
+    R: Read,
+{
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        Ok(self.reader.read(buf).with_context(&self.description)?)
+    }
+
+    fn read_vectored(&mut self, bufs: &mut [std::io::IoSliceMut<'_>]) -> std::io::Result<usize> {
+        Ok(self.reader.read_vectored(bufs).with_context(&self.description)?)
+    }
+
+    fn read_to_end(&mut self, buf: &mut Vec<u8>) -> std::io::Result<usize> {
+        Ok(self.reader.read_to_end(buf).with_context(&self.description)?)
+    }
+
+    fn read_to_string(&mut self, buf: &mut String) -> std::io::Result<usize> {
+        Ok(self.reader.read_to_string(buf).with_context(&self.description)?)
+    }
+
+    fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
+        Ok(self.reader.read_exact(buf).with_context(&self.description)?)
+    }
+}
+
+/// An extension trait for [`Read`] allowing additional context to be added to
+/// each failed read (via [`ReaderWithContext`]).
+pub trait ReaderWithErrorContext: Sized {
+    /// Wraps any errors that get produced during reading in an
+    /// [`ErrorWithContext`] with the given description.
+    ///
+    /// The `description` field may be anything implementing `Into<String>`.
+    /// Passing an owned `String` avoids an extra allocation.
+    ///
+    /// [`ErrorWithContext`]: zoe::data::err::ErrorWithContext
+    fn reader_with_context(self, description: impl Into<String>) -> ReaderWithContext<Self>;
+
+    /// Convenience function for adding file context to any produced errors.
+    ///
+    /// The context will be formatted as `msg: file`. The `msg` field may be
+    /// anything implementing [`Display`].
+    fn reader_with_file_context(self, msg: impl Display, file: impl AsRef<Path>) -> ReaderWithContext<Self>;
+}
+
+impl<R> ReaderWithErrorContext for R
+where
+    R: Read,
+{
+    fn reader_with_context(self, description: impl Into<String>) -> ReaderWithContext<Self> {
+        ReaderWithContext {
+            reader:      self,
+            description: description.into(),
+        }
+    }
+
+    fn reader_with_file_context(self, msg: impl Display, file: impl AsRef<Path>) -> ReaderWithContext<Self> {
+        Self::reader_with_context(self, format!("{msg}: '{path}'", path = file.as_ref().display()))
+    }
+}

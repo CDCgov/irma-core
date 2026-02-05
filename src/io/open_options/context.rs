@@ -1,8 +1,13 @@
 use crate::io::{
-    IterWithContext, IterWithErrorContext, PairedWriters, RecordReaders, RecordWriters, WriterWithContext,
-    WriterWithErrorContext,
+    IterWithContext, IterWithErrorContext, PairedWriters, ReaderWithContext, ReaderWithErrorContext, RecordReaders,
+    RecordWriters, WriterWithContext, WriterWithErrorContext,
 };
-use std::{error::Error, fmt::Display, io::Write, path::Path};
+use std::{
+    error::Error,
+    fmt::Display,
+    io::{Read, Write},
+    path::Path,
+};
 use zoe::data::err::{ErrorWithContext, WithErrorContext};
 
 /// An enum to represent the possible reader types for [`InputOptions`], for the
@@ -231,7 +236,7 @@ impl InputContext<'_> {
     }
 
     /// Wrap the fallible iterators contained in a [`RecordReaders`] so that
-    /// failed reads have context added.
+    /// items that are errors have context added.
     pub fn add_paired_iter_context<I>(&self, iters: RecordReaders<I>) -> RecordReaders<IterWithContext<I>>
     where
         I: IterWithErrorContext, {
@@ -240,6 +245,31 @@ impl InputContext<'_> {
             reader2: iters
                 .reader2
                 .map(|iter| InputContext::add_iter_context(iter, self.reader2, self.input2)),
+        }
+    }
+
+    /// Adds context to a reader, so that failed reads have context.
+    ///
+    /// `reader` and `input` should be corresponding fields in an
+    /// [`InputContext`] struct. The context will include the path if available
+    /// and the record type.
+    pub fn add_reader_context<R>(reader: R, input: InputType) -> ReaderWithContext<R>
+    where
+        R: Read, {
+        match input {
+            InputType::File(path) => reader.reader_with_file_context("Failed to read from file", path),
+            InputType::Stdin => reader.reader_with_context("Failed to read from stdin"),
+        }
+    }
+
+    /// Wrap the readers contained in a [`RecordReaders`] so that failed reads
+    /// have context added.
+    pub fn add_paired_reader_context<R>(&self, readers: RecordReaders<R>) -> RecordReaders<ReaderWithContext<R>>
+    where
+        R: Read, {
+        RecordReaders {
+            reader1: InputContext::add_reader_context(readers.reader1, self.input1),
+            reader2: readers.reader2.map(|r| InputContext::add_reader_context(r, self.input2)),
         }
     }
 }
