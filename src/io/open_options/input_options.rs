@@ -96,7 +96,6 @@ impl<'a> InputOptions<'a, &'a Path> {
     }
 
     /// Interprets the path using [`File`] for reading.
-    #[allow(dead_code)]
     pub fn use_file(self) -> InputOptions<'a, File> {
         InputOptions {
             context: self.context,
@@ -280,7 +279,6 @@ where
     R: Read,
 {
     /// Parses the input as a FASTQ file, via the iterator [`FastQReader`].
-    #[allow(dead_code)]
     pub fn parse_fastq(self) -> InputOptions<'a, FastQReader<R>> {
         let src = match self.input {
             Ok(src) => src,
@@ -347,7 +345,6 @@ where
     }
 
     /// Parses the input as a SAM file, via the iterator [`SAMReader`].
-    #[allow(dead_code)]
     pub fn parse_sam(self) -> InputOptions<'a, SAMReader<R, true>> {
         let src = match self.input {
             Ok(src) => src,
@@ -536,12 +533,7 @@ where
     /// called and the error originated during parsing.
     fn open_iter(self) -> std::io::Result<RecordReaders<IterWithContext<I>>> {
         match self.input {
-            Ok(readers) => Ok(RecordReaders {
-                reader1: InputContext::add_iter_context(readers.reader1, self.context.reader1, self.context.input1),
-                reader2: readers
-                    .reader2
-                    .map(|r2| InputContext::add_iter_context(r2, self.context.reader2, self.context.input2)),
-            }),
+            Ok(readers) => Ok(self.context.add_paired_iter_context(readers)),
             Err(e) => Err(self.context.add_context(e).into()),
         }
     }

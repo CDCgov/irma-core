@@ -185,14 +185,20 @@ impl<A> From<std::io::Error> for ZipPairedReadsError<A> {
 impl<A: HeaderReadable> From<ZipReadsError<A>> for std::io::Error {
     #[inline]
     fn from(value: ZipReadsError<A>) -> Self {
-        std::io::Error::other(value.to_string())
+        match value {
+            ZipReadsError::IoError(e) => e,
+            other => std::io::Error::other(other.to_string()),
+        }
     }
 }
 
 impl<A: HeaderReadable> From<ZipPairedReadsError<A>> for std::io::Error {
     #[inline]
     fn from(value: ZipPairedReadsError<A>) -> Self {
-        std::io::Error::other(value.to_string())
+        match value {
+            ZipPairedReadsError::IoError(e) => e,
+            other => std::io::Error::other(other.to_string()),
+        }
     }
 }
 
@@ -325,10 +331,41 @@ impl<A: HeaderReadable> Display for ZipPairedReadsError<A> {
     }
 }
 
-impl<A: HeaderReadable + Debug> Error for ZipReadsError<A> {}
-impl<A: HeaderReadable> GetCode for ZipReadsError<A> {}
-impl<A: HeaderReadable + Debug> Error for ZipPairedReadsError<A> {}
-impl<A: HeaderReadable> GetCode for ZipPairedReadsError<A> {}
+impl<A: HeaderReadable + Debug> Error for ZipReadsError<A> {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            ZipReadsError::IoError(e) => e.source(),
+            _ => None,
+        }
+    }
+}
+
+impl<A: HeaderReadable> GetCode for ZipReadsError<A> {
+    fn get_code(&self) -> i32 {
+        match self {
+            ZipReadsError::IoError(e) => e.get_code(),
+            _ => 1,
+        }
+    }
+}
+
+impl<A: HeaderReadable + Debug> Error for ZipPairedReadsError<A> {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            ZipPairedReadsError::IoError(e) => e.source(),
+            _ => None,
+        }
+    }
+}
+
+impl<A: HeaderReadable> GetCode for ZipPairedReadsError<A> {
+    fn get_code(&self) -> i32 {
+        match self {
+            ZipPairedReadsError::IoError(e) => e.get_code(),
+            _ => 1,
+        }
+    }
+}
 
 impl<I, J, A, C> Iterator for ZipReads<I, J, A, C>
 where
@@ -390,7 +427,7 @@ where
                 Some(Ok(r2)) => r2,
             };
 
-            f(accum, Ok([r1, r2]))
+            f(accum, C::zip_pair(r1, r2))
         })?;
 
         match self.reads2.next() {

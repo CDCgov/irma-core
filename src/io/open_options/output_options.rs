@@ -262,47 +262,49 @@ impl<'a> OutputOptions<'a, OptionalPaths<'a>> {
 }
 
 impl<'a> OutputOptions<'a, File> {
-    /// Opens the [`File`] for writing, wrapping it in a [`BufWriter`].
+    /// Opens the [`File`] for writing, wrapping it in a [`BufWriter`] and a
+    /// [`WriterWithContext`].
     ///
     /// ## Errors
     ///
     /// IO errors when opening the file are propagated. Context is added that
-    /// includes the path.
+    /// includes the path. Any failed writes will also have similar context
+    /// added.
     pub fn open(self) -> std::io::Result<BufWriter<WriterWithContext<File>>> {
-        let output = self.output.map(|file| {
-            let output = OutputContext::add_writer_context(file, self.context.output1);
+        let file = self.output.map_err(|e| self.context.add_context(e))?;
 
-            if let Some(capacity) = self.capacity {
-                BufWriter::with_capacity(capacity, output)
-            } else {
-                BufWriter::new(output)
-            }
-        });
+        let with_writer_context = OutputContext::add_writer_context(file, self.context.output1);
 
-        match output {
-            Ok(output) => Ok(output),
-            Err(e) => Err(self.context.add_context(e).into()),
-        }
+        let with_bufwriter = if let Some(capacity) = self.capacity {
+            BufWriter::with_capacity(capacity, with_writer_context)
+        } else {
+            BufWriter::new(with_writer_context)
+        };
+
+        Ok(with_bufwriter)
     }
 }
 
 impl<'a> OutputOptions<'a, Stdout> {
-    /// Opens [`Stdout`] for writing, wrapping it in a [`BufWriter`].
+    /// Opens [`Stdout`] for writing, wrapping it in a [`BufWriter`] and a
+    /// [`WriterWithContext`].
+    ///
+    /// ## Errors
+    ///
+    /// Any failed writes will have context added (mentioning that there was a
+    /// failure to write to stdout).
     pub fn open(self) -> std::io::Result<BufWriter<WriterWithContext<Stdout>>> {
-        let output = self.output.map(|file| {
-            let output = OutputContext::add_writer_context(file, self.context.output1);
+        let stdout = self.output.map_err(|e| self.context.add_context(e))?;
 
-            if let Some(capacity) = self.capacity {
-                BufWriter::with_capacity(capacity, output)
-            } else {
-                BufWriter::new(output)
-            }
-        });
+        let with_writer_context = OutputContext::add_writer_context(stdout, self.context.output1);
 
-        match output {
-            Ok(output) => Ok(output),
-            Err(e) => Err(self.context.add_context(e).into()),
-        }
+        let with_bufwriter = if let Some(capacity) = self.capacity {
+            BufWriter::with_capacity(capacity, with_writer_context)
+        } else {
+            BufWriter::new(with_writer_context)
+        };
+
+        Ok(with_bufwriter)
     }
 }
 
@@ -312,7 +314,8 @@ impl<'a> OutputOptions<'a, WriteFileZipStdout> {
     /// ## Errors
     ///
     /// If a path was provided, IO errors when creating the file are propagated.
-    /// Context is added that includes the path.
+    /// Context is added that includes the path. Any failed writes will also
+    /// have similar context added (by definition of [`WriteFileZipStdout`]).
     pub fn open(self) -> std::io::Result<WriteFileZipStdout> {
         match self.output {
             Ok(writer) => Ok(writer),
@@ -328,23 +331,23 @@ impl<'a> OutputOptions<'a, RecordWriters<File>> {
     /// ## Errors
     ///
     /// IO errors when creating the files are propagated. Context is added that
-    /// includes the path.
+    /// includes the path. Any failed writes will also have similar context
+    /// added.
     #[allow(dead_code)]
-    pub fn open(self) -> std::io::Result<RecordWriters<BufWriter<File>>> {
-        let output = self.output.map(|writers| {
-            writers.map(|file| {
-                if let Some(capacity) = self.capacity {
-                    BufWriter::with_capacity(capacity, file)
-                } else {
-                    BufWriter::new(file)
-                }
-            })
+    pub fn open(self) -> std::io::Result<RecordWriters<BufWriter<WriterWithContext<File>>>> {
+        let files = self.output.map_err(|e| self.context.add_context(e))?;
+
+        let with_writer_context = self.context.add_paired_writer_context(files);
+
+        let with_bufwriter = with_writer_context.map(|writer| {
+            if let Some(capacity) = self.capacity {
+                BufWriter::with_capacity(capacity, writer)
+            } else {
+                BufWriter::new(writer)
+            }
         });
 
-        match output {
-            Ok(output) => Ok(output),
-            Err(e) => Err(self.context.add_context(e).into()),
-        }
+        Ok(with_bufwriter)
     }
 }
 
@@ -354,7 +357,9 @@ impl<'a> OutputOptions<'a, RecordWriters<WriteFileZipStdout>> {
     /// ## Errors
     ///
     /// If a path was provided for the first input, IO errors when creating the
-    /// file are propagated. Context is added that includes the path.
+    /// file are propagated. Context is added that includes the path. Any failed
+    /// writes will also have similar context added (by definition of
+    /// [`WriteFileZipStdout`]).
     pub fn open(self) -> std::io::Result<RecordWriters<WriteFileZipStdout>> {
         match self.output {
             Ok(writer) => Ok(writer),

@@ -1,4 +1,7 @@
-use crate::io::{IterWithContext, IterWithErrorContext, WriterWithContext, WriterWithErrorContext};
+use crate::io::{
+    IterWithContext, IterWithErrorContext, PairedWriters, RecordReaders, RecordWriters, WriterWithContext,
+    WriterWithErrorContext,
+};
 use std::{error::Error, fmt::Display, io::Write, path::Path};
 use zoe::data::err::{ErrorWithContext, WithErrorContext};
 
@@ -154,7 +157,7 @@ impl<'a> InputContext<'a> {
 
     /// Attaches a [`ReaderType`] to the context for the second input.
     pub fn with_reader2(mut self, reader: ReaderType) -> Self {
-        self.reader1 = Some(reader);
+        self.reader2 = Some(reader);
         self
     }
 }
@@ -226,6 +229,19 @@ impl InputContext<'_> {
             (Some(ReaderType::Sam), InputType::Stdin) => iter.iter_with_context("Invalid SAM record from stdin"),
         }
     }
+
+    /// Wrap the fallible iterators contained in a [`RecordReaders`] so that
+    /// failed reads have context added.
+    pub fn add_paired_iter_context<I>(&self, iters: RecordReaders<I>) -> RecordReaders<IterWithContext<I>>
+    where
+        I: IterWithErrorContext, {
+        RecordReaders {
+            reader1: InputContext::add_iter_context(iters.reader1, self.reader1, self.input1),
+            reader2: iters
+                .reader2
+                .map(|iter| InputContext::add_iter_context(iter, self.reader2, self.input2)),
+        }
+    }
 }
 
 /// The complete context for [`OutputOptions`] necessary for displaying any
@@ -293,6 +309,22 @@ impl OutputContext<'_> {
         match output {
             OutputType::File(path) => writer.writer_with_file_context("Failed to write to file", path),
             OutputType::Stdout => writer.writer_with_context("Failed to write to stdout"),
+        }
+    }
+
+    /// Wrap the writers contained in a [`RecordWriters`] so that failed writes
+    /// have context added.
+    pub fn add_paired_writer_context<W>(&self, writers: RecordWriters<W>) -> RecordWriters<WriterWithContext<W>>
+    where
+        W: Write, {
+        match writers {
+            RecordWriters::SingleEnd(writer) => {
+                RecordWriters::SingleEnd(OutputContext::add_writer_context(writer, self.output1))
+            }
+            RecordWriters::PairedEnd(writers) => RecordWriters::PairedEnd(PairedWriters {
+                writer1: OutputContext::add_writer_context(writers.writer1, self.output1),
+                writer2: OutputContext::add_writer_context(writers.writer2, self.output2),
+            }),
         }
     }
 }

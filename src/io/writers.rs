@@ -10,7 +10,7 @@ use zoe::define_whichever;
 define_whichever! {
     /// An enum for the different acceptable output types. A [`BufWriter`] is
     /// used for all variants, and all variants are wrapped in
-    /// [`WriterWithContext`] to context to write errors.
+    /// [`WriterWithContext`] to add context to write errors.
     #[derive(Debug)]
     pub(crate) enum  WriteFileZipStdout {
         /// A writer for a regular uncompressed file.
@@ -31,7 +31,8 @@ impl WriteFileZipStdout {
     /// ## Errors
     ///
     /// If a path is provided, any IO errors when creating the file are
-    /// propagated. If no path is provided, this method is infallible.
+    /// propagated. If no path is provided, this method is infallible. Any
+    /// failed writes will have context added including the path if available.
     pub fn create(path: Option<impl AsRef<Path>>) -> std::io::Result<Self> {
         match path {
             Some(path) => {
