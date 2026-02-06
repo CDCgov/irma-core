@@ -1,7 +1,10 @@
 use crate::{
     aligner::{
         arg_parsing::{AlignerConfig, Alphabet, AnyMatrix, ParsedAlignerArgs, parse_aligner_args},
-        methods::{AlignmentMethod, StripedSmithWatermanLocal, StripedSmithWatermanShared},
+        methods::{
+            AlignmentMethod, StripedSmithWatermanLocal, StripedSmithWatermanLocal3Pass, StripedSmithWatermanShared,
+            StripedSmithWatermanShared3Pass,
+        },
         writers::{AlignmentWriter, write_header},
     },
     io::{FastX, FastXReader, IterWithContext, OutputOptions, ReadFileZipPipe},
@@ -95,6 +98,11 @@ pub struct AlignerArgs {
     profile_from_ref: bool,
 
     #[arg(long)]
+    /// Uses a three-pass algorithm for alignment which is more memory efficient
+    /// for long sequences
+    use_3pass: bool,
+
+    #[arg(long)]
     /// Excludes the unmapped alignments from the final alignment
     exclude_unmapped: bool,
 
@@ -176,8 +184,8 @@ fn dispatch_alphabet(
 }
 
 /// Dispatches the aligner based on whether the profile is built from the query
-/// or reference, and whether all alignments or just the best match alignment
-/// are being reported.
+/// or reference, whether all alignments or just the best match alignment are
+/// being reported, and whether the three-pass algorithm is used.
 ///
 /// ## Errors
 ///
@@ -198,24 +206,44 @@ fn dispatch_runner<M, const S: usize>(
 ) -> std::io::Result<()>
 where
     M: Borrow<WeightMatrix<'static, i8, S>> + Sync + Send + 'static, {
-    match (config.profile_from_ref, config.best_match) {
-        (false, false) => {
+    match (config.profile_from_ref, config.best_match, config.use_3pass) {
+        (false, false, false) => {
             let method = StripedSmithWatermanLocal::<M, S>::new(weight_matrix, config.gap_open, config.gap_extend);
             // Validity: No context is added to this result
             align_all_profile_from_query(method, query_reader, references, writer, config)
         }
-        (true, false) => {
+        (true, false, false) => {
             let method = StripedSmithWatermanShared::<M, S>::new(weight_matrix, config.gap_open, config.gap_extend);
             // Validity: No context is added to this result
             align_all_profile_from_ref(method, query_reader, references, writer, config)
         }
-        (false, true) => {
+        (false, true, false) => {
             let method = StripedSmithWatermanLocal::<M, S>::new(weight_matrix, config.gap_open, config.gap_extend);
             // Validity: No context is added to this result
             align_best_match_profile_from_query(method, query_reader, references, writer, config)
         }
-        (true, true) => {
+        (true, true, false) => {
             let method = StripedSmithWatermanShared::<M, S>::new(weight_matrix, config.gap_open, config.gap_extend);
+            // Validity: No context is added to this result
+            align_best_match_profile_from_ref(method, query_reader, references, writer, config)
+        }
+        (false, false, true) => {
+            let method = StripedSmithWatermanLocal3Pass::<M, S>::new(weight_matrix, config.gap_open, config.gap_extend);
+            // Validity: No context is added to this result
+            align_all_profile_from_query(method, query_reader, references, writer, config)
+        }
+        (true, false, true) => {
+            let method = StripedSmithWatermanShared3Pass::<M, S>::new(weight_matrix, config.gap_open, config.gap_extend);
+            // Validity: No context is added to this result
+            align_all_profile_from_ref(method, query_reader, references, writer, config)
+        }
+        (false, true, true) => {
+            let method = StripedSmithWatermanLocal3Pass::<M, S>::new(weight_matrix, config.gap_open, config.gap_extend);
+            // Validity: No context is added to this result
+            align_best_match_profile_from_query(method, query_reader, references, writer, config)
+        }
+        (true, true, true) => {
+            let method = StripedSmithWatermanShared3Pass::<M, S>::new(weight_matrix, config.gap_open, config.gap_extend);
             // Validity: No context is added to this result
             align_best_match_profile_from_ref(method, query_reader, references, writer, config)
         }

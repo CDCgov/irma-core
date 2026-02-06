@@ -10,8 +10,9 @@ use zoe::{
     prelude::{ProfileSets, SeqSrc},
 };
 
-/// An [`AlignmentMethod`] for performing Striped Smith Waterman with
-/// [`SharedProfiles`] (profiles that are not shared between threads).
+/// An [`AlignmentMethod`] for performing the 3-pass Striped Smith Waterman
+/// algorithm with [`SharedProfiles`] (profiles that are not shared between
+/// threads).
 ///
 /// A register width of 256 is assumed.
 ///
@@ -19,7 +20,7 @@ use zoe::{
 ///
 /// * `M` - The type for the weight matrix (either owned or a reference)
 /// * `S` - The alphabet size
-pub struct StripedSmithWatermanShared<M, const S: usize>
+pub struct StripedSmithWatermanShared3Pass<M, const S: usize>
 where
     M: Borrow<WeightMatrix<'static, i8, S>>, {
     weight_matrix: M,
@@ -27,12 +28,12 @@ where
     gap_extend:    i8,
 }
 
-impl<M, const S: usize> StripedSmithWatermanShared<M, S>
+impl<M, const S: usize> StripedSmithWatermanShared3Pass<M, S>
 where
     M: Borrow<WeightMatrix<'static, i8, S>>,
 {
-    /// Creates a new [`StripedSmithWatermanShared`] alignment method with the
-    /// provided scoring parameters.
+    /// Creates a new [`StripedSmithWatermanShared3Pass`] alignment method with
+    /// the provided scoring parameters.
     pub fn new(weight_matrix: M, gap_open: i8, gap_extend: i8) -> Self {
         Self {
             weight_matrix,
@@ -42,7 +43,7 @@ where
     }
 }
 
-impl<M, const S: usize> AlignmentMethod for StripedSmithWatermanShared<M, S>
+impl<M, const S: usize> AlignmentMethod for StripedSmithWatermanShared3Pass<M, S>
 where
     M: Borrow<WeightMatrix<'static, i8, S>> + Sync + Send + 'static,
 {
@@ -72,7 +73,7 @@ where
         &self, profile: &Self::Profile<'_>, regular_seq: SeqSrc<&[u8]>,
     ) -> std::io::Result<Option<Alignment<Self::Score>>> {
         // TODO: Offer starting integer option?
-        match profile.sw_align_from_i8(regular_seq) {
+        match profile.sw_align_from_i8_3pass(regular_seq) {
             MaybeAligned::Some(alignment) => Ok(Some(alignment)),
             MaybeAligned::Overflowed => Err(std::io::Error::other("The score exceeded the capacity of i32!")),
             MaybeAligned::Unmapped => Ok(None),

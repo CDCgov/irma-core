@@ -16,10 +16,14 @@ use zoe::{
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
 mod striped_sw_local;
+mod striped_sw_local_3pass;
 mod striped_sw_shared;
+mod striped_sw_shared_3pass;
 
 pub use striped_sw_local::*;
+pub use striped_sw_local_3pass::*;
 pub use striped_sw_shared::*;
+pub use striped_sw_shared_3pass::*;
 
 use crate::aligner::Strand;
 

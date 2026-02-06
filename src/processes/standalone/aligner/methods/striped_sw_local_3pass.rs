@@ -1,7 +1,7 @@
 use crate::aligner::methods::AlignmentMethod;
 use std::borrow::Borrow;
 use zoe::{
-    alignment::{Alignment, MaybeAligned, SharedProfiles},
+    alignment::{Alignment, LocalProfiles, MaybeAligned},
     data::{
         err::{ErrorWithContext, ResultWithErrorContext},
         matrices::WeightMatrix,
@@ -10,8 +10,9 @@ use zoe::{
     prelude::{ProfileSets, SeqSrc},
 };
 
-/// An [`AlignmentMethod`] for performing Striped Smith Waterman with
-/// [`SharedProfiles`] (profiles that are not shared between threads).
+/// An [`AlignmentMethod`] for performing the 3-pass Striped Smith Waterman
+/// algorithm with [`LocalProfiles`] (profiles that are not shared between
+/// threads).
 ///
 /// A register width of 256 is assumed.
 ///
@@ -19,7 +20,7 @@ use zoe::{
 ///
 /// * `M` - The type for the weight matrix (either owned or a reference)
 /// * `S` - The alphabet size
-pub struct StripedSmithWatermanShared<M, const S: usize>
+pub struct StripedSmithWatermanLocal3Pass<M, const S: usize>
 where
     M: Borrow<WeightMatrix<'static, i8, S>>, {
     weight_matrix: M,
@@ -27,11 +28,11 @@ where
     gap_extend:    i8,
 }
 
-impl<M, const S: usize> StripedSmithWatermanShared<M, S>
+impl<M, const S: usize> StripedSmithWatermanLocal3Pass<M, S>
 where
     M: Borrow<WeightMatrix<'static, i8, S>>,
 {
-    /// Creates a new [`StripedSmithWatermanShared`] alignment method with the
+    /// Creates a new [`StripedSmithWatermanLocal`] alignment method with the
     /// provided scoring parameters.
     pub fn new(weight_matrix: M, gap_open: i8, gap_extend: i8) -> Self {
         Self {
@@ -42,12 +43,12 @@ where
     }
 }
 
-impl<M, const S: usize> AlignmentMethod for StripedSmithWatermanShared<M, S>
+impl<M, const S: usize> AlignmentMethod for StripedSmithWatermanLocal3Pass<M, S>
 where
     M: Borrow<WeightMatrix<'static, i8, S>> + Sync + Send + 'static,
 {
     type Profile<'a>
-        = SharedProfiles<'a, 32, 16, 8, S>
+        = LocalProfiles<'a, 32, 16, 8, S>
     where
         Self: 'a;
 
@@ -56,7 +57,7 @@ where
     fn build_profile<'a, R>(&'a self, profile_seq: &'a R) -> Result<Self::Profile<'a>, ErrorWithContext>
     where
         R: SequenceReadable + HeaderReadable, {
-        SharedProfiles::new_with_w256(
+        LocalProfiles::new_with_w256(
             profile_seq.sequence_bytes(),
             self.weight_matrix.borrow(),
             self.gap_open,
@@ -68,11 +69,12 @@ where
         ))
     }
 
+    #[inline]
     fn align_one(
         &self, profile: &Self::Profile<'_>, regular_seq: SeqSrc<&[u8]>,
     ) -> std::io::Result<Option<Alignment<Self::Score>>> {
         // TODO: Offer starting integer option?
-        match profile.sw_align_from_i8(regular_seq) {
+        match profile.sw_align_from_i8_3pass(regular_seq) {
             MaybeAligned::Some(alignment) => Ok(Some(alignment)),
             MaybeAligned::Overflowed => Err(std::io::Error::other("The score exceeded the capacity of i32!")),
             MaybeAligned::Unmapped => Ok(None),

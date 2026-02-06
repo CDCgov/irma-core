@@ -42,6 +42,8 @@ pub struct AlignerConfig {
     pub rev_comp:         bool,
     /// Whether the profiles are built from the references
     pub profile_from_ref: bool,
+    /// Whether to use the three-pass algorithm
+    pub use_3pass:        bool,
     /// Whether to exclude unmapped alignments from the final output
     pub exclude_unmapped: bool,
     /// Whether to perform best match alignment
@@ -129,6 +131,7 @@ pub fn parse_aligner_args(args: AlignerArgs) -> std::io::Result<ParsedAlignerArg
             gap_extend,
             rev_comp: args.rev_comp,
             profile_from_ref: args.profile_from_ref,
+            use_3pass: args.use_3pass,
             exclude_unmapped: args.exclude_unmapped,
             best_match: args.best_match,
             output: args.output,

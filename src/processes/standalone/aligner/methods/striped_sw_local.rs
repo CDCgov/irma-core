@@ -1,5 +1,3 @@
-//! The striped Smith Waterman algorithm
-
 use crate::aligner::methods::AlignmentMethod;
 use std::borrow::Borrow;
 use zoe::{
