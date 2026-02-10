@@ -81,6 +81,7 @@ impl<R: std::io::Read> FastXReader<R> {
 }
 
 /// A record type for either FASTQ or FASTA data.
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
 pub struct FastX {
     pub header:   String,
     pub sequence: Vec<u8>,

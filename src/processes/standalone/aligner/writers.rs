@@ -1,12 +1,8 @@
 //! Traits and structs for writing the output of aligner
 
-use crate::{
-    aligner::{AlignerConfig, Strand},
-    io::FastX,
-};
+use crate::aligner::{AlignerConfig, AlignmentAndSeqs, Strand};
 use std::io::Write;
 use zoe::{
-    alignment::Alignment,
     data::{fasta::FastaSeq, sam::SamDataView},
     math::AnyInt,
     prelude::{DataOwned, NucleotidesView, QualityScores, QualityScoresView},
@@ -40,6 +36,7 @@ pub type WriterError = std::io::Error;
 /// original writer to properly finalize the thread.
 ///
 /// [`flush`]: AlignmentWriterThreaded::flush
+/// [`mpsc`]: std::sync::mpsc
 #[cfg(not(feature = "dev_no_rayon"))]
 pub struct AlignmentWriterThreaded {
     sender:        std::sync::mpsc::Sender<String>,
@@ -203,36 +200,38 @@ pub trait AlignmentWriter: Sized {
     /// for the score is included when the read is mapped. The query and
     /// reference name are truncated to only include the characters before the
     /// first whitespace. A trailing linebreak is not included.
-    fn write_alignment<T: AnyInt>(
-        &mut self, alignment: Option<(Alignment<T>, Strand)>, query: &FastX, reference: &FastaSeq, config: &AlignerConfig,
+    fn write_alignment<'q, 'r>(
+        &mut self, alignment: AlignmentAndSeqs<'q, 'r>, config: &AlignerConfig,
     ) -> Result<(), WriterError> {
-        let qname = process_header(&query.header);
+        let qname = process_header(&alignment.query.header);
 
-        match alignment {
-            Some((alignment, strand)) if alignment.score > T::ZERO => {
-                let rname = process_header(&reference.name);
-                let pos = alignment.ref_range.start + 1;
+        match alignment.mapping {
+            Some(mapping) if mapping.inner.score > 0 => {
+                let rname = process_header(&alignment.reference.name);
+                let pos = mapping.inner.ref_range.start + 1;
                 let mapq = 255;
-                let cigar = alignment.states.to_cigar_unchecked();
+                let cigar = mapping.inner.states.to_cigar_unchecked();
 
-                match strand {
+                match mapping.strand {
                     Strand::Forward => {
                         let flag = 0;
-                        let seq = &query.sequence;
-                        let qual = query
+                        let seq = &alignment.query.sequence;
+                        let qual = alignment
+                            .query
                             .quality
                             .as_ref()
                             .map_or(QualityScoresView::try_from(b"*").unwrap(), DataOwned::as_view);
                         let record =
                             SamDataView::new(qname, flag, rname, pos, mapq, cigar.as_view(), seq.as_slice().into(), qual);
-                        return self.write_record(record, alignment.score);
+                        return self.write_record(record, mapping.inner.score);
                     }
                     Strand::Reverse => {
                         let flag = 16;
-                        let seq = NucleotidesView::from(query.sequence.as_slice())
+                        let seq = NucleotidesView::from(alignment.query.sequence.as_slice())
                             .to_reverse_complement()
                             .into_vec();
-                        let qual = query
+                        let qual = alignment
+                            .query
                             .quality
                             .as_ref()
                             .map_or(QualityScores::try_from(b"*").unwrap(), |qual| qual.to_reverse());
@@ -246,7 +245,7 @@ pub trait AlignmentWriter: Sized {
                             seq.as_slice().into(),
                             qual.as_view(),
                         );
-                        return self.write_record(record, alignment.score);
+                        return self.write_record(record, mapping.inner.score);
                     }
                 };
             }
