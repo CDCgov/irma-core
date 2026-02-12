@@ -11,7 +11,7 @@ irma-build:
   stage: build
   tags:
     - docker
-    - scicomp
+    - ifx
   script:
     - cargo build
   artifacts:
@@ -23,7 +23,7 @@ irma-test:
   stage: test
   tags:
     - docker
-    - scicomp
+    - ifx
   dependencies:
     - irma-build
   script:
