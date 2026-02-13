@@ -19,7 +19,7 @@ readme = "README.md"
 
 [dependencies]
 zoe = { git = "https://github.com/CDCgov/zoe.git", default-features = false, features = [
-    "multiversion", "rand"
+    "multiversion", "rand", "dev-max-score-for-type"
 ] }
 clap = { version = "4", features = ["derive"] }
 foldhash = "0.2"
@@ -32,6 +32,9 @@ rayon = { version = "1" }
 [features]
 # An optional feature for disabling rayon parallelization in aligner
 dev_no_rayon = []
+
+# An optional feature enabling the adaptive algorithm
+dev-adaptive = []
 
 [profile.dev]
 opt-level = 1

@@ -6,9 +6,9 @@ IRMA-core's `aligner` provides an efficient and exact local sequence alignment r
 
 ## Multithreading
 
-`aligner` uses `rayon` to perform multithreading to enable higher throughput. To specify the number of threads, set the `RAYON_NUM_THREADS` environmental variable as described [here](https://docs.rs/rayon/latest/rayon/fn.max_num_threads.html). Or, to limit to a single thread, pass `--single-thread` to `aligner`.
+`aligner` uses `rayon` to perform multithreading to enable higher throughput. To specify the number of threads, set the `RAYON_NUM_THREADS` environmental variable as described [here](https://docs.rs/rayon/latest/rayon/fn.max_num_threads.html). Or, to limit to a single worker thread, pass `--single-thread` to `aligner`.
 
-For benchmarking or scenarios where a single thread is always used, the `dev_no_rayon` feature can be enabled in IRMA-core to remove the use of channels. This will also remove the `--single-thread` flag since it is no longer relevant. This feature may be removed in future releases, and so should not be relied upon except for testing.
+For benchmarking or scenarios where a single thread is always used, the `dev_no_rayon` feature can be enabled in IRMA-core to remove the use of channels. This feature may be removed in future releases, and so should not be relied upon except for testing.
 
 ## Inputs and Outputs
 
@@ -87,19 +87,34 @@ An affine gap penalty is used with `--gap-open` and `--gap-extend`, which defaul
 | `--matrix`            | `blosum62` | [`blosum30`, `blosum35`, ..., `pam30`, `pam40`, ...] | The protein substitution matrix to use for scoring               |
 | `--alphabet`          | `dna`      | [`dna`, `aa`]                                        | The alphabet to interpret the inputs as                          |
 
+## Performance Options
+
+When trying to optimize the runtime or memory usage of `aligner`, there are two configuration options that can be considered. Using `--method 1pass` (default) or `--method 3pass`, the underlying method for computing the alignments can be altered. The one-pass algorithm builds the full traceback matrix, as is traditional with Striped Smith Waterman. For aligning against a long reference sequence, or aligning against two long full-length sequences, this can use a significant amount of memory (and cache misses can impact runtime). To improve this, the three-pass algorithm uses three passes to avoid building the full traceback matrix:
+
+1. A single pass to determine the ending position of the alignment within the query and reference
+2. A second truncated pass to determine the starting position of the alignment within the query and reference
+3. A final restricted alignment pass using banded Smith Waterman, automatically increasing the band width until an optimal alignment is found
+
+A second configuration option which can alter performance is passing either `--profile-from-query` (default) or `--profile-from-ref`. These mutually exclusive flags toggle whether the striped profile is built from the query or the reference, respectively. For the one-pass algorithm, `--profile-from-ref` can often offer faster performance by reusing profiles between multiple alignments. For the three-pass algorithm, `--profile-from-query` is often fastest (since the reverse profile in the second pass is cheaper for smaller sequences), but under certain scoring schemes, `--profile-from-ref` may perform better.
+
+When in doubt, benchmarking on data reflective of the use-case can be informative.
+
+| Parameter             | Default    | Kind                                                 | Description                                                      |
+| --------------------- | ---------- | ---------------------------------------------------- | ---------------------------------------------------------------- |
+| `--method` | `1pass` | `1pass` or `3pass` | The alignment method to use       |
+| `--profile-from-ref` | False |  |  Builds the striped profiles from the reference sequence(s) |
+| `--profile-from-query` | True |  |  Builds the striped profiles from the query sequences |
+
 ## Other Options
 
 For DNA alignments, passing `--rev-comp` or `-r` will also check the alignment against the reverse complement and return whichever is better. SAM uses the 5th bit (16 or 0b0001 0000) to indicate that the best alignment was against the reverse complement of the reference. To exclude unmapped (zero-scoring) alignments from the output, use `--exclude-unmapped`.
 
 By default, `aligner` will align all references against all queries and output each result. To instead only output the best match for each query, use `--best-match`.
 
-`aligner` by default builds the striped profile from the query sequences, using them once and then discarding them. For certain data, it may be more efficienct to build larger profiles from the reference(s) and then reuse them. To do this, use `--profile-from-ref`.
-
 | Parameter            | Description                                                                                       |
 | -------------------- | ------------------------------------------------------------------------------------------------- |
 | `--rev-comp` (`-r`)  | Also checks alignments against the reverse complement, outputting whichever has the highest score |
 | `--exclude-unmapped` | Excludes unmapped alignments from the output file                                                 |
 | `--best-match`       | The best matching alignment for each query is output, instead of all of them                      |
-| `--profile-from-ref` | Which sequence to build the striped profiles from                                                 |
 | `--single-thread`    | Sets the number of `rayon` threads to 1. See [here](#features) for more details                   |
 | `--header`           | Includes a SAM header in the output, containing the `HD` and `SQ` lines                           |

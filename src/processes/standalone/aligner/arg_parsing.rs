@@ -17,19 +17,21 @@ use zoe::{
 /// The parsed and validated command line arguments for `aligner`
 pub struct ParsedAlignerArgs {
     /// The streamed query sequences
-    pub query_reader:  QueryReader,
+    pub query_reader:      QueryReader,
     /// The slurped reference sequences
     ///
     /// ## Validity
     ///
     /// This field must be non-empty.
-    pub references:    Vec<FastaSeq>,
+    pub references:        Vec<FastaSeq>,
     /// The weight matrix to use for the alignment
-    pub weight_matrix: AnyMatrix<'static, i8>,
+    pub weight_matrix:     AnyMatrix<'static, i8>,
     /// Whether to write the SAM header
-    pub header:        bool,
+    pub header:            bool,
+    /// The file to print tally diagnostics to
+    pub tally_diagnostics: Option<PathBuf>,
     /// Any additional configuration
-    pub config:        AlignerConfig,
+    pub config:            AlignerConfig,
 }
 
 /// The parsed and validated configuration options for `aligner`
@@ -40,10 +42,10 @@ pub struct AlignerConfig {
     pub gap_extend:       i8,
     /// Whether to also align the reverse complements
     pub rev_comp:         bool,
-    /// Whether the profiles are built from the references
-    pub profile_from_ref: bool,
-    /// Whether to use the three-pass algorithm
-    pub use_3pass:        bool,
+    /// Any override for which sequence to build the profile from
+    pub profile_from:     Option<WhichSequence>,
+    /// Any override for the number of passes to use
+    pub method:           Option<NumPasses>,
     /// Whether to exclude unmapped alignments from the final output
     pub exclude_unmapped: bool,
     /// Whether to perform best match alignment
@@ -77,6 +79,9 @@ pub struct AlignerConfig {
 ///
 /// [`Aa`]: Alphabet::Aa
 pub fn parse_aligner_args(args: AlignerArgs) -> std::io::Result<ParsedAlignerArgs> {
+    #[cfg(not(feature = "dev-adaptive"))]
+    let mut args = args;
+
     let weight_matrix = AnyMatrix::parse_from_clap(args.alphabet, args.matrix, args.matching, args.mismatch, args.ignore_n);
 
     if weight_matrix.alphabet() == Alphabet::Aa && args.rev_comp {
@@ -121,17 +126,36 @@ pub fn parse_aligner_args(args: AlignerArgs) -> std::io::Result<ParsedAlignerArg
         )));
     }
 
+    let mut profile_from = if args.profile_from_query {
+        Some(WhichSequence::Query)
+    } else if args.profile_from_ref {
+        Some(WhichSequence::Reference)
+    } else {
+        None
+    };
+
+    #[cfg(not(feature = "dev-adaptive"))]
+    if profile_from.is_none() {
+        profile_from = Some(WhichSequence::Query);
+    }
+
+    #[cfg(not(feature = "dev-adaptive"))]
+    if args.method.is_none() {
+        args.method = Some(NumPasses::OnePass);
+    }
+
     Ok(ParsedAlignerArgs {
         query_reader,
         references,
         weight_matrix,
         header: args.header,
+        tally_diagnostics: args.tally_diagnostics,
         config: AlignerConfig {
             gap_open,
             gap_extend,
             rev_comp: args.rev_comp,
-            profile_from_ref: args.profile_from_ref,
-            use_3pass: args.use_3pass,
+            profile_from,
+            method: args.method,
             exclude_unmapped: args.exclude_unmapped,
             best_match: args.best_match,
             output: args.output,
@@ -141,8 +165,8 @@ pub fn parse_aligner_args(args: AlignerArgs) -> std::io::Result<ParsedAlignerArg
     })
 }
 
-/// A clap enum for specifying the alphabet
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+/// A clap enum for specifying the alphabet.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub enum Alphabet {
     Dna,
     Aa,
@@ -169,6 +193,71 @@ impl ValueEnum for Alphabet {
         match self {
             Self::Dna => Some(PossibleValue::new("DNA").alias("dna")),
             Self::Aa => Some(PossibleValue::new("AA").alias("aa")),
+        }
+    }
+}
+
+/// A clap enum for specifying the method to use when aligning (one-pass or
+/// three-pass).
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub enum NumPasses {
+    OnePass,
+    ThreePass,
+}
+
+impl Display for NumPasses {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NumPasses::OnePass => write!(f, "1pass"),
+            NumPasses::ThreePass => write!(f, "3pass"),
+        }
+    }
+}
+
+impl ValueEnum for NumPasses {
+    #[inline]
+    fn value_variants<'a>() -> &'a [Self] {
+        &[Self::OnePass, Self::ThreePass]
+    }
+
+    #[inline]
+    fn to_possible_value(&self) -> Option<PossibleValue> {
+        match self {
+            Self::OnePass => Some(PossibleValue::new("1pass").alias("1-pass")),
+            Self::ThreePass => Some(PossibleValue::new("3pass").alias("3-pass")),
+        }
+    }
+}
+
+/// A clap enum for specifying which sequence to build the profile from.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub enum WhichSequence {
+    Query,
+    Reference,
+}
+
+impl Display for WhichSequence {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WhichSequence::Query => write!(f, "query"),
+            WhichSequence::Reference => write!(f, "reference"),
+        }
+    }
+}
+
+impl ValueEnum for WhichSequence {
+    #[inline]
+    fn value_variants<'a>() -> &'a [Self] {
+        &[Self::Query, Self::Reference]
+    }
+
+    #[inline]
+    fn to_possible_value(&self) -> Option<PossibleValue> {
+        match self {
+            Self::Query => Some(PossibleValue::new("query").alias("Query")),
+            Self::Reference => Some(PossibleValue::new("reference").aliases(["ref", "Reference", "Ref"])),
         }
     }
 }

@@ -1,14 +1,14 @@
 use crate::{
     aligner::{
-        arg_parsing::{AlignerConfig, Alphabet, AnyMatrix, ParsedAlignerArgs, parse_aligner_args},
+        arg_parsing::{AlignerConfig, Alphabet, AnyMatrix, NumPasses, ParsedAlignerArgs, WhichSequence, parse_aligner_args},
         writers::{AlignmentWriter, write_header},
     },
     io::{FastX, FastXReader, IterWithContext, OutputOptions, ReadFileZipPipe},
 };
 use clap::{Args, builder::RangedI64ValueParser};
-use std::{cmp::Ordering, path::PathBuf};
+use std::{cmp::Ordering, io::Write, path::PathBuf, sync::atomic::AtomicU64};
 use zoe::{
-    alignment::{Alignment, LocalProfiles, MaybeAligned, SharedProfiles},
+    alignment::{Alignment, LocalProfiles, MaybeAligned, SharedProfiles, sw::max_score_for_int_type},
     data::{err::ResultWithErrorContext, fasta::FastaSeq, matrices::WeightMatrix},
     prelude::{NucleotidesView, ProfileSets, SeqSrc},
 };
@@ -88,14 +88,18 @@ pub struct AlignerArgs {
     /// The alphabet to use. [defaults: DNA, if --matrix, then AA]
     alphabet: Option<Alphabet>,
 
-    #[arg(long)]
+    #[arg(long, conflicts_with = "profile_from_query")]
     /// Builds the profile from the reference sequences instead of the queries
     profile_from_ref: bool,
 
+    #[arg(long, conflicts_with = "profile_from_ref")]
+    /// Builds the profile from the query sequences (currently the default)
+    profile_from_query: bool,
+
     #[arg(long)]
-    /// Uses a three-pass algorithm for alignment which is more memory efficient
-    /// for long sequences
-    use_3pass: bool,
+    /// The method to use for alignment. If not specified, the 1pass algorithm
+    /// is used
+    method: Option<NumPasses>,
 
     #[arg(long)]
     /// Excludes the unmapped alignments from the final alignment
@@ -112,6 +116,10 @@ pub struct AlignerArgs {
     #[arg(long)]
     /// Include the SAM header line
     header: bool,
+
+    #[arg(long)]
+    /// The file to print tally diagnostics to
+    tally_diagnostics: Option<PathBuf>,
 }
 
 /// Sub-program for performing sequence alignment
@@ -121,6 +129,7 @@ pub fn aligner_process(args: AlignerArgs) -> std::io::Result<()> {
         references,
         weight_matrix,
         header,
+        tally_diagnostics,
         config,
     } = parse_aligner_args(args)?;
 
@@ -141,7 +150,31 @@ pub fn aligner_process(args: AlignerArgs) -> std::io::Result<()> {
     let writer = AlignmentWriterThreaded::from_writer(writer);
 
     // Validity: No context is added to the result
-    dispatch_alphabet(query_reader, references, writer, weight_matrix, &config)
+    let tallies = dispatch_alphabet(query_reader, references, writer, weight_matrix, &config)?;
+
+    if let Some(path) = tally_diagnostics {
+        let mut tally_diagnostics = OutputOptions::new_from_path(&path).use_file().open()?;
+
+        let UnpackedTallies {
+            satisfying: scores_fitting_i8,
+            failing: scores_exceeding_i8,
+        } = tallies.scores_fitting_i8.unpack();
+
+        let UnpackedTallies {
+            satisfying: queries_at_most_300,
+            failing: queries_over_300,
+        } = tallies.queries_at_most_300.unpack();
+
+        let first_ref_len = tallies.first_ref_len;
+
+        writeln!(tally_diagnostics, "Scores fitting i8: {scores_fitting_i8}")?;
+        writeln!(tally_diagnostics, "Scores exceeding i8: {scores_exceeding_i8}")?;
+        writeln!(tally_diagnostics, "Queries at most length 300: {queries_at_most_300}")?;
+        writeln!(tally_diagnostics, "Queries over length 300: {queries_over_300}")?;
+        writeln!(tally_diagnostics, "First reference length: {first_ref_len}")?;
+    }
+
+    Ok(())
 }
 
 /// Dispatches the aligner based on the alphabet and weight matrix.
@@ -162,7 +195,7 @@ pub fn aligner_process(args: AlignerArgs) -> std::io::Result<()> {
 fn dispatch_alphabet(
     query_reader: QueryReader, references: Vec<FastaSeq>, writer: SamWriter, weight_matrix: AnyMatrix<'static, i8>,
     config: &AlignerConfig,
-) -> std::io::Result<()> {
+) -> std::io::Result<AlignmentTallies> {
     // Validity: No context is added to the results
     match weight_matrix {
         AnyMatrix::Dna(weight_matrix) => dispatch_method(query_reader, references, writer, &weight_matrix, config),
@@ -191,14 +224,7 @@ fn dispatch_alphabet(
 fn dispatch_method<const S: usize>(
     query_reader: QueryReader, references: Vec<FastaSeq>, writer: SamWriter, weight_matrix: &WeightMatrix<'static, i8, S>,
     config: &AlignerConfig,
-) -> std::io::Result<()> {
-    let method = match (config.profile_from_ref, config.use_3pass) {
-        (true, true) => AlignmentMethod::ThreePassRefProfile,
-        (true, false) => AlignmentMethod::OnePassRefProfile,
-        (false, true) => AlignmentMethod::ThreePassQueryProfile,
-        (false, false) => AlignmentMethod::OnePassQueryProfile,
-    };
-
+) -> std::io::Result<AlignmentTallies> {
     let references = References::new(
         &references,
         weight_matrix,
@@ -208,9 +234,9 @@ fn dispatch_method<const S: usize>(
     )?;
 
     if config.best_match {
-        align_best_match(method, query_reader, references, writer, weight_matrix, config)
+        align_best_match(query_reader, references, writer, weight_matrix, config)
     } else {
-        align_all(method, query_reader, references, writer, weight_matrix, config)
+        align_all(query_reader, references, writer, weight_matrix, config)
     }
 }
 
@@ -231,11 +257,14 @@ fn dispatch_method<const S: usize>(
 ///
 /// [`OrFail`]: zoe::data::err::OrFail
 fn align_all<'r, const S: usize>(
-    method: AlignmentMethod, query_reader: QueryReader, references: References<'r, S>, writer: SamWriter,
+    query_reader: QueryReader, references: References<'r, S>, writer: SamWriter,
     weight_matrix: &WeightMatrix<'static, i8, S>, config: &AlignerConfig,
-) -> std::io::Result<()> {
-    align_queries(query_reader, writer, move |writer, query| {
+) -> std::io::Result<AlignmentTallies> {
+    let tallies = AlignmentTallies::new(&references);
+
+    align_queries(query_reader, writer, |writer, query| {
         let query = query?;
+        let method = tallies.pick_alignment_method(config);
 
         match method {
             AlignmentMethod::OnePassQueryProfile => {
@@ -243,6 +272,7 @@ fn align_all<'r, const S: usize>(
 
                 for reference in &references {
                     let alignment = query.sw_1pass_query_profile(reference)?;
+                    tallies.tally_alignment(&alignment, query.forward, weight_matrix);
                     writer.write_alignment(alignment, config)?;
                 }
             }
@@ -251,6 +281,7 @@ fn align_all<'r, const S: usize>(
 
                 for reference in &references.0 {
                     let alignment = reference.sw_1pass_ref_profile(&query)?;
+                    tallies.tally_alignment(&alignment, query.forward, weight_matrix);
                     writer.write_alignment(alignment, config)?;
                 }
             }
@@ -259,6 +290,7 @@ fn align_all<'r, const S: usize>(
 
                 for reference in references.0.iter() {
                     let alignment = query.sw_3pass_query_profile(reference)?;
+                    tallies.tally_alignment(&alignment, query.forward, weight_matrix);
                     writer.write_alignment(alignment, config)?;
                 }
             }
@@ -267,13 +299,16 @@ fn align_all<'r, const S: usize>(
 
                 for reference in references.0.iter() {
                     let alignment = reference.sw_3pass_ref_profile(&query)?;
+                    tallies.tally_alignment(&alignment, query.forward, weight_matrix);
                     writer.write_alignment(alignment, config)?;
                 }
             }
         }
 
         Ok(())
-    })
+    })?;
+
+    Ok(tallies)
 }
 
 /// Aligns all the queries in `query_reader` to the `references`, picking the
@@ -294,11 +329,14 @@ fn align_all<'r, const S: usize>(
 ///
 /// [`OrFail`]: zoe::data::err::OrFail
 fn align_best_match<'r, const S: usize>(
-    method: AlignmentMethod, query_reader: QueryReader, references: References<'r, S>, writer: SamWriter,
+    query_reader: QueryReader, references: References<'r, S>, writer: SamWriter,
     weight_matrix: &WeightMatrix<'static, i8, S>, config: &AlignerConfig,
-) -> std::io::Result<()> {
+) -> std::io::Result<AlignmentTallies> {
+    let tallies = AlignmentTallies::new(&references);
+
     align_queries(query_reader, writer, |writer, query| {
         let query = query?;
+        let method = tallies.pick_alignment_method(config);
 
         // Each match statement ends with a write, which appears redundant.
         // However, this is needed since the lifetime of the query is limited to
@@ -311,6 +349,7 @@ fn align_best_match<'r, const S: usize>(
 
                 let best_alignment = align_best_ref(&references, |reference| {
                     let alignment = query.sw_1pass_query_profile(reference)?;
+                    tallies.tally_alignment(&alignment, query.forward, weight_matrix);
                     Ok(alignment)
                 })?;
 
@@ -319,8 +358,9 @@ fn align_best_match<'r, const S: usize>(
             AlignmentMethod::OnePassRefProfile => {
                 let query = QueryWithRc::new(&query, config.rev_comp);
 
-                let best_alignment = align_best_ref(&references, move |reference| {
+                let best_alignment = align_best_ref(&references, |reference| {
                     let alignment = reference.sw_1pass_ref_profile(&query)?;
+                    tallies.tally_alignment(&alignment, query.forward, weight_matrix);
                     Ok(alignment)
                 })?;
 
@@ -331,6 +371,7 @@ fn align_best_match<'r, const S: usize>(
 
                 let best_alignment = align_best_ref(&references, |reference| {
                     let alignment = query.sw_3pass_query_profile(reference)?;
+                    tallies.tally_alignment(&alignment, query.forward, weight_matrix);
                     Ok(alignment)
                 })?;
 
@@ -341,6 +382,7 @@ fn align_best_match<'r, const S: usize>(
 
                 let best_alignment = align_best_ref(&references, |reference| {
                     let alignment = reference.sw_3pass_ref_profile(&query)?;
+                    tallies.tally_alignment(&alignment, query.forward, weight_matrix);
                     Ok(alignment)
                 })?;
 
@@ -349,7 +391,9 @@ fn align_best_match<'r, const S: usize>(
         }
 
         Ok(())
-    })
+    })?;
+
+    Ok(tallies)
 }
 
 /// Performs all alignments as indicated by closure `f`, using either a parallel
@@ -896,6 +940,122 @@ impl PartialOrd for AlignmentAndSeqs<'_, '_> {
                 }
             }
             ord => ord,
+        }
+    }
+}
+
+/// The unpacked tallies for the number of alignments satisfying and failing a
+/// particular condition.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+struct UnpackedTallies {
+    satisfying: u64,
+    failing:    u64,
+}
+
+/// A tally for the number of alignments satisfying a condition and failing a
+/// condition.
+///
+/// To prevent skew in the update of the tallies, the two are packed into a
+/// single atomic (which is guaranteed to have an ordering which is consistent
+/// with the program's order). The lower 32 bits are the tally for the number
+/// satisfying the condition, and the upper 32 bits are for the tally failing
+/// the condition.
+#[repr(transparent)]
+#[derive(Debug, Default)]
+struct AlignmentTally(AtomicU64);
+
+impl AlignmentTally {
+    /// Unpacks the two counters contained in the [`AtomicU64`] for easier
+    /// handling and computation.
+    fn unpack(&self) -> UnpackedTallies {
+        let bits = self.0.load(std::sync::atomic::Ordering::Relaxed);
+        let (satisfying, failing) = (bits & 0xFFFF_FFFF, bits >> 32);
+        UnpackedTallies { satisfying, failing }
+    }
+
+    /// Increments one of the tallies, depending on whether `condition` is
+    /// `true` (satisfying) or `false` (failing).
+    fn tally(&self, condition: bool) {
+        let increment = if condition { 1 } else { 1u64 << 32 };
+        self.0.fetch_add(increment, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Returns whether the specified percent (in `0..=100`) of alignments
+    /// satisfy the given condition. If fewer than `min_total` alignments are
+    /// tallied, then `false` is returned by default.
+    fn percent_meets_condition(&self, percent: u64, min_total: u64) -> bool {
+        assert!(percent <= 100);
+
+        let UnpackedTallies { satisfying, failing } = self.unpack();
+        let total = satisfying + failing;
+
+        total >= min_total && satisfying * 100 >= total * percent
+    }
+}
+
+/// A collection of non-blocking thread-safe tallies for use in adaptively
+/// determining the proper alignment algorithm to use.
+///
+/// The tallies use [`AlignmentTally`] ([`AtomicU64`] with two tallies packed
+/// into each atomic) to prevent possible skew in the update order.
+#[derive(Debug)]
+struct AlignmentTallies {
+    /// Tallies for the number of alignments fitting within the capacity of an
+    /// `i8`.
+    scores_fitting_i8:   AlignmentTally,
+    /// Tallies for the number of queries of length at most 300.
+    queries_at_most_300: AlignmentTally,
+    /// The length of the first reference sequence.
+    first_ref_len:       usize,
+}
+
+impl AlignmentTallies {
+    /// Initializes new tallies with everything starting at 0 (and stores the
+    /// length of the first reference).
+    fn new<const S: usize>(references: &References<'_, S>) -> Self {
+        Self {
+            scores_fitting_i8:   AlignmentTally::default(),
+            queries_at_most_300: AlignmentTally::default(),
+            first_ref_len:       references.0.first().map_or(0, |reference| reference.forward.sequence.len()),
+        }
+    }
+
+    /// Tallies the characteristics about an alignment.
+    fn tally_alignment<const S: usize>(&self, alignment: &AlignmentAndSeqs, query: &FastX, matrix: &WeightMatrix<i8, S>) {
+        if let Some(mapping) = &alignment.mapping {
+            self.scores_fitting_i8
+                .tally(mapping.inner.score <= max_score_for_int_type::<i8, i8, S>(matrix));
+        }
+
+        self.queries_at_most_300.tally(query.sequence.len() <= 300);
+    }
+
+    /// Picks an alignment method to use based on the tallies.
+    fn pick_alignment_method(&self, config: &AlignerConfig) -> AlignmentMethod {
+        let num_passes = config.method.unwrap_or_else(|| {
+            if self.scores_fitting_i8.percent_meets_condition(66, 50) {
+                NumPasses::OnePass
+            } else {
+                NumPasses::ThreePass
+            }
+        });
+
+        let profile_from = config.profile_from.unwrap_or(match num_passes {
+            NumPasses::OnePass => {
+                if self.first_ref_len < 600 {
+                    WhichSequence::Query
+                } else {
+                    WhichSequence::Reference
+                }
+            }
+            NumPasses::ThreePass => WhichSequence::Query,
+        });
+
+        match (num_passes, profile_from) {
+            (NumPasses::OnePass, WhichSequence::Query) => AlignmentMethod::OnePassQueryProfile,
+            (NumPasses::OnePass, WhichSequence::Reference) => AlignmentMethod::OnePassRefProfile,
+            (NumPasses::ThreePass, WhichSequence::Query) => AlignmentMethod::ThreePassQueryProfile,
+            (NumPasses::ThreePass, WhichSequence::Reference) => AlignmentMethod::ThreePassRefProfile,
         }
     }
 }
