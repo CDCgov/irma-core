@@ -271,8 +271,7 @@ fn align_all<'r, const S: usize>(
                 let query = QueryWithProfile::new(&query, weight_matrix, config.gap_open, config.gap_extend)?;
 
                 for reference in &references {
-                    let alignment = query.sw_1pass_query_profile(reference)?;
-                    tallies.tally_alignment(&alignment, query.forward, weight_matrix);
+                    let alignment = query.sw_1pass_query_profile(reference, &tallies, weight_matrix)?;
                     writer.write_alignment(alignment, config)?;
                 }
             }
@@ -280,8 +279,7 @@ fn align_all<'r, const S: usize>(
                 let query = QueryWithRc::new(&query, config.rev_comp);
 
                 for reference in &references.0 {
-                    let alignment = reference.sw_1pass_ref_profile(&query)?;
-                    tallies.tally_alignment(&alignment, query.forward, weight_matrix);
+                    let alignment = reference.sw_1pass_ref_profile(&query, &tallies, weight_matrix)?;
                     writer.write_alignment(alignment, config)?;
                 }
             }
@@ -289,8 +287,7 @@ fn align_all<'r, const S: usize>(
                 let query = QueryWithProfile::new(&query, weight_matrix, config.gap_open, config.gap_extend)?;
 
                 for reference in references.0.iter() {
-                    let alignment = query.sw_3pass_query_profile(reference)?;
-                    tallies.tally_alignment(&alignment, query.forward, weight_matrix);
+                    let alignment = query.sw_3pass_query_profile(reference, &tallies, weight_matrix)?;
                     writer.write_alignment(alignment, config)?;
                 }
             }
@@ -298,8 +295,7 @@ fn align_all<'r, const S: usize>(
                 let query = QueryWithRc::new(&query, config.rev_comp);
 
                 for reference in references.0.iter() {
-                    let alignment = reference.sw_3pass_ref_profile(&query)?;
-                    tallies.tally_alignment(&alignment, query.forward, weight_matrix);
+                    let alignment = reference.sw_3pass_ref_profile(&query, &tallies, weight_matrix)?;
                     writer.write_alignment(alignment, config)?;
                 }
             }
@@ -348,9 +344,7 @@ fn align_best_match<'r, const S: usize>(
                 let query = QueryWithProfile::new(&query, weight_matrix, config.gap_open, config.gap_extend)?;
 
                 let best_alignment = align_best_ref(&references, |reference| {
-                    let alignment = query.sw_1pass_query_profile(reference)?;
-                    tallies.tally_alignment(&alignment, query.forward, weight_matrix);
-                    Ok(alignment)
+                    query.sw_1pass_query_profile(reference, &tallies, weight_matrix)
                 })?;
 
                 writer.write_alignment(best_alignment, config)?;
@@ -359,9 +353,7 @@ fn align_best_match<'r, const S: usize>(
                 let query = QueryWithRc::new(&query, config.rev_comp);
 
                 let best_alignment = align_best_ref(&references, |reference| {
-                    let alignment = reference.sw_1pass_ref_profile(&query)?;
-                    tallies.tally_alignment(&alignment, query.forward, weight_matrix);
-                    Ok(alignment)
+                    reference.sw_1pass_ref_profile(&query, &tallies, weight_matrix)
                 })?;
 
                 writer.write_alignment(best_alignment, config)?;
@@ -370,9 +362,7 @@ fn align_best_match<'r, const S: usize>(
                 let query = QueryWithProfile::new(&query, weight_matrix, config.gap_open, config.gap_extend)?;
 
                 let best_alignment = align_best_ref(&references, |reference| {
-                    let alignment = query.sw_3pass_query_profile(reference)?;
-                    tallies.tally_alignment(&alignment, query.forward, weight_matrix);
-                    Ok(alignment)
+                    query.sw_3pass_query_profile(reference, &tallies, weight_matrix)
                 })?;
 
                 writer.write_alignment(best_alignment, config)?;
@@ -381,9 +371,7 @@ fn align_best_match<'r, const S: usize>(
                 let query = QueryWithRc::new(&query, config.rev_comp);
 
                 let best_alignment = align_best_ref(&references, |reference| {
-                    let alignment = reference.sw_3pass_ref_profile(&query)?;
-                    tallies.tally_alignment(&alignment, query.forward, weight_matrix);
-                    Ok(alignment)
+                    reference.sw_3pass_ref_profile(&query, &tallies, weight_matrix)
                 })?;
 
                 writer.write_alignment(best_alignment, config)?;
@@ -497,7 +485,8 @@ impl<'q, const S: usize> QueryWithProfile<'q, S> {
     }
 
     /// Aligns the query profile against the provided reference using the 1-pass
-    /// algorithm.
+    /// algorithm. This also tallies the alignment characteristics for the
+    /// forward alignment, and reverse complement if applicable.
     ///
     /// This is a higher-level abstraction around [`AlignerMethods::sw_1pass`]
     /// that handles the reverse complement alignment (if `--rev-comp` is used)
@@ -508,8 +497,10 @@ impl<'q, const S: usize> QueryWithProfile<'q, S> {
     /// If the alignment fails (due to overflow), context with the query and
     /// reference header is added. If it was the reverse complement alignment
     /// that failed, context is also added mentioning this.
-    pub fn sw_1pass_query_profile<'r>(&'q self, reference: &Reference<'r, S>) -> std::io::Result<AlignmentAndSeqs<'q, 'r>> {
-        let mapping = align_maybe_rc(SeqSrc::Reference(&reference.forward.sequence), &reference.reverse, |seq| {
+    pub fn sw_1pass_query_profile<'r>(
+        &'q self, reference: &Reference<'r, S>, tallies: &AlignmentTallies, matrix: &WeightMatrix<'static, i8, S>,
+    ) -> std::io::Result<AlignmentAndSeqs<'q, 'r>> {
+        let alignments = align_maybe_rc(SeqSrc::Reference(&reference.forward.sequence), &reference.reverse, |seq| {
             self.profile.sw_1pass(seq)
         })
         .with_context(format!(
@@ -517,15 +508,20 @@ impl<'q, const S: usize> QueryWithProfile<'q, S> {
             q_header=self.forward.header, r_header=reference.forward.name
         ))?;
 
+        let query_len = self.forward.sequence.len();
+        tallies.tally_alignment(&alignments.primary, query_len, matrix);
+        tallies.tally_alignment(&alignments.secondary, query_len, matrix);
+
         Ok(AlignmentAndSeqs {
-            mapping,
-            query: self.forward,
+            mapping:   alignments.primary,
+            query:     self.forward,
             reference: reference.forward,
         })
     }
 
     /// Aligns the query profile against the provided reference using the 3-pass
-    /// algorithm.
+    /// algorithm. This also tallies the alignment characteristics for the
+    /// forward alignment, and reverse complement if applicable.
     ///
     /// This is a higher-level abstraction around [`AlignerMethods::sw_3pass`]
     /// that handles the reverse complement alignment (if `--rev-comp` is used)
@@ -536,17 +532,23 @@ impl<'q, const S: usize> QueryWithProfile<'q, S> {
     /// If the alignment fails (due to overflow), context with the query and
     /// reference header is added. If it was the reverse complement alignment
     /// that failed, context is also added mentioning this.
-    pub fn sw_3pass_query_profile<'r>(&'q self, reference: &Reference<'r, S>) -> std::io::Result<AlignmentAndSeqs<'q, 'r>> {
-        let mapping = align_maybe_rc(SeqSrc::Reference(&reference.forward.sequence), &reference.reverse, |seq| {
+    pub fn sw_3pass_query_profile<'r>(
+        &'q self, reference: &Reference<'r, S>, tallies: &AlignmentTallies, matrix: &WeightMatrix<'static, i8, S>,
+    ) -> std::io::Result<AlignmentAndSeqs<'q, 'r>> {
+        let alignments = align_maybe_rc(SeqSrc::Reference(&reference.forward.sequence), &reference.reverse, |seq| {
             self.profile.sw_3pass(seq)
         }).with_context(format!(
             "Failed to align the sequences with the following headers:\n    | Query: {q_header}\n    | Reference: {r_header}",
             q_header=self.forward.header, r_header=reference.forward.name
         ))?;
 
+        let query_len = self.forward.sequence.len();
+        tallies.tally_alignment(&alignments.primary, query_len, matrix);
+        tallies.tally_alignment(&alignments.secondary, query_len, matrix);
+
         Ok(AlignmentAndSeqs {
-            mapping,
-            query: self.forward,
+            mapping:   alignments.primary,
+            query:     self.forward,
             reference: reference.forward,
         })
     }
@@ -612,7 +614,8 @@ impl<'r, const S: usize> Reference<'r, S> {
     }
 
     /// Aligns the reference profile against the provided query using the 1-pass
-    /// algorithm.
+    /// algorithm. This also tallies the alignment characteristics for the
+    /// forward alignment, and reverse complement if applicable.
     ///
     /// This is a higher-level abstraction around [`AlignerMethods::sw_1pass`]
     /// that handles the reverse complement alignment (if `--rev-comp` is used)
@@ -623,23 +626,30 @@ impl<'r, const S: usize> Reference<'r, S> {
     /// If the alignment fails (due to overflow), context with the query and
     /// reference header is added. If it was the reverse complement alignment
     /// that failed, context is also added mentioning this.
-    pub fn sw_1pass_ref_profile<'q>(&self, query: &QueryWithRc<'q, S>) -> std::io::Result<AlignmentAndSeqs<'q, 'r>> {
-        let mapping = align_maybe_rc(SeqSrc::Query(&query.forward.sequence), &query.reverse, |seq| {
+    pub fn sw_1pass_ref_profile<'q>(
+        &self, query: &QueryWithRc<'q, S>, tallies: &AlignmentTallies, matrix: &WeightMatrix<'static, i8, S>,
+    ) -> std::io::Result<AlignmentAndSeqs<'q, 'r>> {
+        let alignments = align_maybe_rc(SeqSrc::Query(&query.forward.sequence), &query.reverse, |seq| {
             self.profile.sw_1pass(seq)
         }).with_context(format!(
             "Failed to align the sequences with the following headers:\n    | Query: {q_header}\n    | Reference: {r_header}",
             q_header=query.forward.header, r_header=self.forward.name
         ))?;
 
+        let query_len = query.forward.sequence.len();
+        tallies.tally_alignment(&alignments.primary, query_len, matrix);
+        tallies.tally_alignment(&alignments.secondary, query_len, matrix);
+
         Ok(AlignmentAndSeqs {
-            mapping,
-            query: query.forward,
+            mapping:   alignments.primary,
+            query:     query.forward,
             reference: self.forward,
         })
     }
 
     /// Aligns the reference profile against the provided query using the 3-pass
-    /// algorithm.
+    /// algorithm. This also tallies the alignment characteristics for the
+    /// forward alignment, and reverse complement if applicable.
     ///
     /// This is a higher-level abstraction around [`AlignerMethods::sw_3pass`]
     /// that handles the reverse complement alignment (if `--rev-comp` is used)
@@ -650,17 +660,23 @@ impl<'r, const S: usize> Reference<'r, S> {
     /// If the alignment fails (due to overflow), context with the query and
     /// reference header is added. If it was the reverse complement alignment
     /// that failed, context is also added mentioning this.
-    pub fn sw_3pass_ref_profile<'q>(&self, query: &QueryWithRc<'q, S>) -> std::io::Result<AlignmentAndSeqs<'q, 'r>> {
-        let mapping = align_maybe_rc(SeqSrc::Query(&query.forward.sequence), &query.reverse, |seq| {
+    pub fn sw_3pass_ref_profile<'q>(
+        &self, query: &QueryWithRc<'q, S>, tallies: &AlignmentTallies, matrix: &WeightMatrix<'static, i8, S>,
+    ) -> std::io::Result<AlignmentAndSeqs<'q, 'r>> {
+        let alignments = align_maybe_rc(SeqSrc::Query(&query.forward.sequence), &query.reverse, |seq| {
             self.profile.sw_3pass(seq)
         }).with_context(format!(
             "Failed to align the sequences with the following headers:\n    | Query: {q_header}\n    | Reference: {r_header}",
             q_header=query.forward.header, r_header=self.forward.name
         ))?;
 
+        let query_len = query.forward.sequence.len();
+        tallies.tally_alignment(&alignments.primary, query_len, matrix);
+        tallies.tally_alignment(&alignments.secondary, query_len, matrix);
+
         Ok(AlignmentAndSeqs {
-            mapping,
-            query: query.forward,
+            mapping:   alignments.primary,
+            query:     query.forward,
             reference: self.forward,
         })
     }
@@ -788,6 +804,58 @@ impl<'a, const S: usize> AlignerMethods<'a, S> for SharedProfiles<'a, 32, 16, 8,
     }
 }
 
+/// Alignments against a forward and reverse complement strand.
+pub struct StrandedAlignments {
+    /// The highest scoring of the two alignments, or the forward alignment if
+    /// `--rev-comp` was not passed. `None` means that the alignment is unmapped.
+    primary:   Option<AlignmentAndStrand>,
+    /// The lowest scoring of the two alignments, or `None` if `--rev-comp` was
+    /// not passed. `None` is also used for an unmapped alignment.
+    secondary: Option<AlignmentAndStrand>,
+}
+
+impl StrandedAlignments {
+    /// Combines a forward and reverse complement alignment, using
+    /// `primary_strand` to decide which alignment to put as `primary` and which
+    /// as `secondary`.
+    pub fn new(forward: Option<Alignment<u32>>, reverse: Option<Alignment<u32>>, primary_strand: Strand) -> Self {
+        let forward = forward.map(|inner| AlignmentAndStrand {
+            inner,
+            strand: Strand::Forward,
+        });
+
+        let reverse = reverse.map(|inner| AlignmentAndStrand {
+            inner,
+            strand: Strand::Reverse,
+        });
+
+        match primary_strand {
+            Strand::Forward => Self {
+                primary:   forward,
+                secondary: reverse,
+            },
+            Strand::Reverse => Self {
+                primary:   reverse,
+                secondary: forward,
+            },
+        }
+    }
+
+    /// Creates a new [`StrandedAlignments`] when no reverse complement
+    /// alignment is available (e.g., because `--rev-comp` was not passed).
+    pub fn new_forward(forward: Option<Alignment<u32>>) -> Self {
+        let forward = forward.map(|inner| AlignmentAndStrand {
+            inner,
+            strand: Strand::Forward,
+        });
+
+        Self {
+            primary:   forward,
+            secondary: None,
+        }
+    }
+}
+
 /// Performs an alignment involving `seq`, as well as its reverse complement if
 /// it was precomputed in `seq_rc`.
 ///
@@ -802,7 +870,7 @@ impl<'a, const S: usize> AlignerMethods<'a, S> for SharedProfiles<'a, 32, 16, 8,
 /// Any errors from the forward alignment are propagated without additional
 /// context. For the reverse alignment, errors are added with context specifying
 /// that the reverse complement alignment failed.
-pub fn align_maybe_rc<T, F>(seq: SeqSrc<&T>, seq_rc: &MaybeRevComp, f: F) -> std::io::Result<Option<AlignmentAndStrand>>
+pub fn align_maybe_rc<T, F>(seq: SeqSrc<&T>, seq_rc: &MaybeRevComp, f: F) -> std::io::Result<StrandedAlignments>
 where
     T: AsRef<[u8]> + ?Sized,
     F: Fn(SeqSrc<&[u8]>) -> std::io::Result<Option<Alignment<u32>>>, {
@@ -810,29 +878,23 @@ where
 
     let alignment = if let Some(seq_rc) = &seq_rc.0 {
         let seq_rc = seq.map(|_| seq_rc.as_slice());
-        let alignment_rc = f(seq_rc).with_context("Failed to perform the reverse complement alignment")?;
+        let mut alignment_rc = f(seq_rc).with_context("Failed to perform the reverse complement alignment")?;
 
-        if alignment_rc > alignment_forward {
-            alignment_rc.map(|mut alignment| {
-                if seq.is_reference() {
-                    alignment.make_reverse();
-                }
-                AlignmentAndStrand {
-                    inner:  alignment,
-                    strand: Strand::Reverse,
-                }
-            })
+        let primary_strand = if alignment_rc > alignment_forward {
+            if seq.is_reference()
+                && let Some(alignment) = alignment_rc.as_mut()
+            {
+                alignment.make_reverse();
+            }
+
+            Strand::Reverse
         } else {
-            alignment_forward.map(|alignment| AlignmentAndStrand {
-                inner:  alignment,
-                strand: Strand::Forward,
-            })
-        }
+            Strand::Forward
+        };
+
+        StrandedAlignments::new(alignment_forward, alignment_rc, primary_strand)
     } else {
-        alignment_forward.map(|alignment| AlignmentAndStrand {
-            inner:  alignment,
-            strand: Strand::Forward,
-        })
+        StrandedAlignments::new_forward(alignment_forward)
     };
 
     Ok(alignment)
@@ -999,7 +1061,7 @@ impl AlignmentTally {
 /// The tallies use [`AlignmentTally`] ([`AtomicU64`] with two tallies packed
 /// into each atomic) to prevent possible skew in the update order.
 #[derive(Debug)]
-struct AlignmentTallies {
+pub struct AlignmentTallies {
     /// Tallies for the number of alignments fitting within the capacity of an
     /// `i8`.
     scores_fitting_i8:   AlignmentTally,
@@ -1021,13 +1083,17 @@ impl AlignmentTallies {
     }
 
     /// Tallies the characteristics about an alignment.
-    fn tally_alignment<const S: usize>(&self, alignment: &AlignmentAndSeqs, query: &FastX, matrix: &WeightMatrix<i8, S>) {
-        if let Some(mapping) = &alignment.mapping {
+    fn tally_alignment<const S: usize>(
+        &self, alignment: &Option<AlignmentAndStrand>, query_len: usize, matrix: &WeightMatrix<i8, S>,
+    ) {
+        if let Some(alignment) = &alignment {
             self.scores_fitting_i8
-                .tally(mapping.inner.score <= max_score_for_int_type::<i8, i8, S>(matrix));
+                .tally(alignment.inner.score <= max_score_for_int_type::<i8, i8, S>(matrix));
+        } else {
+            self.scores_fitting_i8.tally(true);
         }
 
-        self.queries_at_most_300.tally(query.sequence.len() <= 300);
+        self.queries_at_most_300.tally(query_len <= 300);
     }
 
     /// Picks an alignment method to use based on the tallies.
