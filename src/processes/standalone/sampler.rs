@@ -7,7 +7,7 @@ use crate::{
     utils::paired_reads::{DeinterleavedPairedReads, DeinterleavedPairedReadsExt, ZipPairedReadsExt},
 };
 use clap::Args;
-use rand::SeedableRng;
+use rand::{SeedableRng, make_rng};
 use rand_xoshiro::Xoshiro256StarStar;
 use std::{
     io::{BufRead, BufReader, Read, Write},
@@ -341,7 +341,7 @@ fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, 
     let rng = if let Some(seed) = &args.rng_seed {
         Xoshiro256StarStar::seed_from_u64(*seed)
     } else {
-        Xoshiro256StarStar::from_os_rng()
+        make_rng()
     };
 
     check_distinct_files(
