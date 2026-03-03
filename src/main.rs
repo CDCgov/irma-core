@@ -1,7 +1,9 @@
 #![allow(unreachable_patterns)]
 #![feature(portable_simd, try_trait_v2)]
 
-use crate::processes::{aligner::*, merge_sam_pairs::*, num_procs::*, preprocess::*, trimmer::*, xflate::*, xleave::*};
+use crate::processes::{
+    aligner::*, merge_sam_pairs::*, num_procs::*, phase::*, preprocess::*, trimmer::*, xflate::*, xleave::*,
+};
 use clap::{Parser, Subcommand};
 use processes::sampler::{SamplerArgs, sampler_process};
 use zoe::data::err::OrFail;
@@ -25,6 +27,10 @@ enum Commands {
     /// Deflates FastQ files to deduplicated Fasta files, or reinflates
     /// deduplicated Fasta files to FastQ files
     Xflate(XflateArgs),
+    /// Reads in the variants table and associated distance matrice for a gene.
+    /// Assigns a phase number to each variant using single-linkage
+    /// agglomerative clustering and writes the results to the variants table.
+    Phase(PhaseArgs),
     /// Provides the physical or logical cores of a CPU portably.
     NumProcs(NumProcsArgs),
     #[command(
@@ -44,7 +50,6 @@ enum Commands {
 
 fn main() {
     let args = Cli::parse();
-
     match args.command {
         Commands::Preprocess(cmd_args) => preprocess_process(cmd_args).unwrap_or_die("subcommand 'preprocess'"),
         Commands::MergeSAM(cmd_args) => merge_sam_pairs_process(cmd_args).unwrap_or_die("subcommand 'merge-sam'"),
@@ -54,6 +59,7 @@ fn main() {
         Commands::NumProcs(cmd_args) => num_procs_process(cmd_args).unwrap_or_die("subcommand 'num-procs'"),
         Commands::Xleave(cmd_args) => xleave_process(cmd_args).unwrap_or_die("subcommand 'xleave'"),
         Commands::Aligner(cmd_args) => aligner_process(cmd_args).unwrap_or_die("subcommand 'aligner'"),
+        Commands::Phase(cmd_args) => phase_process(cmd_args).unwrap_or_die("subcommand 'phase'"),
         _ => {
             eprintln!("IRMA-CORE: unrecognized command {:?}", args.command);
             std::process::exit(1)

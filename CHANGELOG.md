@@ -11,21 +11,30 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 
 - Adds `verbose` flag to `sampler` for printing total number of reads in
   original input and number of downsampled records to `stderr`
-- Adds more detailed error messages with more context, including file paths for many IO errors
+- Adds `phase` process for phase clustering assignment and labeling of genes
+- Adds more detailed error messages with more context, including file paths for
+  many IO errors
 
 ### Fixes
 
-- Adds requirement in `sampler` arguments to provide either a `--subsample-target` or a `--percent-target`, fixing `unreachable` error when neither is provided
-- Fixes a bug where leading whitespace in a record file can cause the program to stall (in `sampler` and `aligner`)
-- Allows repeated input/output files from processes if they are device files (e.g., `/dev/null`)
-- `merge-sam` now respects the seed set in the environmental variable `IRMA_SEED`
-- Fixes a bug where not all paired headers were being checked in `preprocess`, `sampler`, `trimmer`, and `xleave`
+- Adds requirement in `sampler` arguments to provide either a
+  `--subsample-target` or a `--percent-target`, fixing `unreachable` error when
+  neither is provided
+- Fixes a bug where leading whitespace in a record file can cause the program to
+  stall (in `sampler` and `aligner`)
+- Allows repeated input/output files from processes if they are device files
+  (e.g., `/dev/null`)
+- `merge-sam` now respects the seed set in the environmental variable
+  `IRMA_SEED`
+- Fixes a bug where not all paired headers were being checked in `preprocess`,
+  `sampler`, `trimmer`, and `xleave`
 
 ## [0.8.1] - 2025-12-02
 
 ### Fixes
 
-- `aligner` with `--rev-comp` and `--best-match` now produces the correct positions and CIGAR strings
+- `aligner` with `--rev-comp` and `--best-match` now produces the correct
+  positions and CIGAR strings
 
 ## [0.8.0] - 2025-11-21
 
@@ -36,7 +45,8 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 
 ### Changed
 
-- The `trimmer` process now can perform deinterleaving, as well as widow filtering with interleaved inputs and outputs
+- The `trimmer` process now can perform deinterleaving, as well as widow
+  filtering with interleaved inputs and outputs
 
 ## [0.7.0] - 2025-09-17
 
@@ -82,20 +92,22 @@ randomly downsampling FastQ or FASTA files. Deinterleaving is also supported.
 
 ### Fixes
 
-- `mergeSAMpairs`: updated Zoe dependency (in v0.0.19, using v0.0.20) fixes hard clipping in merged reads. Reader
-  error messages are also improved generally.
+- `mergeSAMpairs`: updated Zoe dependency (in v0.0.19, using v0.0.20) fixes hard
+  clipping in merged reads. Reader error messages are also improved generally.
 
 ## [0.5.1] - 2025-06-03
 
 ### Fixes
 
-- Fixes a bug where `--polyg-trim` would trim the sequence but not the quality scores.
+- Fixes a bug where `--polyg-trim` would trim the sequence but not the quality
+  scores.
 
 ## [0.5.0] - 2025-05-30
 
 ### Added
 
-- `preprocess` (formerly `qc-trim-deflate`) now supports zipped inputs (`fastq.gz` files).
+- `preprocess` (formerly `qc-trim-deflate`) now supports zipped inputs
+  (`fastq.gz` files).
 
 ### Changed
 
@@ -130,7 +142,8 @@ randomly downsampling FastQ or FASTA files. Deinterleaving is also supported.
 
 ### Added
 
-- The `trimmer` process now supports compressed `fastq.gz` files for both input and output.
+- The `trimmer` process now supports compressed `fastq.gz` files for both input
+  and output.
 - Adds `flate2` crate as a dependency for handling `.gz` files
 
 ### Changed
@@ -141,7 +154,9 @@ randomly downsampling FastQ or FASTA files. Deinterleaving is also supported.
 
 ### Added
 
-- `trimmer` now supports `-f, --filter-widows` for filtering widowed/orphaned reads in a paired-end context, with support for two input and two output `fastq` files.
+- `trimmer` now supports `-f, --filter-widows` for filtering widowed/orphaned
+  reads in a paired-end context, with support for two input and two output
+  `fastq` files.
 - Github actions added to generate downloadable releases
 
 ### Changed
@@ -180,12 +195,15 @@ randomly downsampling FastQ or FASTA files. Deinterleaving is also supported.
 
 ## [0.2.0] - 2024-10-30
 
-- **Added**: Updates the new `qc-trim-deflate` (name subject to change) process with various fixes and improvements.
-- **Changed**: Slims down and corrects raw read counts in the the fastq-converter process.
+- **Added**: Updates the new `qc-trim-deflate` (name subject to change) process
+  with various fixes and improvements.
+- **Changed**: Slims down and corrects raw read counts in the the
+  fastq-converter process.
 
 ## [0.1.6] - 2024-10-11
 
-- **Added**: xflate and qc-trim-deflate processes (initial sketch) and rewritten the flow for the fastq-converter process.
+- **Added**: xflate and qc-trim-deflate processes (initial sketch) and rewritten
+  the flow for the fastq-converter process.
 
 ## [0.1.5] - 2024-09-04
 
