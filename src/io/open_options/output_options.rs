@@ -16,7 +16,7 @@ use std::{
 /// - Interpreting the paths in multiple ways, such as [`File`] and
 ///   [`WriteFileZipStdout`]
 /// - Automatically adding context including the path and record type (if
-///   applicable) to any errors
+///   applicable) to any errors while creating the file or writing to the file
 /// - Altering the capacity of the [`BufWriter`]
 ///
 /// To use this, use the following steps:
@@ -43,14 +43,6 @@ use std::{
 ///    added to any errors.
 ///
 /// See the uses of this in IRMA-core for examples.
-///
-/// When using [`FastXReader`], this builder will return an
-/// `IterWithContext<FastXReader<...>>`, which works as an iterator but does not
-/// facilitate matching on the FASTQ and FASTA variants. To dispatch based on
-/// these variants, call [`dispatch`].
-///
-/// [`FastXReader`]: crate::io::fastx::FastXReader
-/// [`dispatch`]: crate::io::IterWithContext::dispatch
 pub struct OutputOptions<'a, W> {
     /// Any context needed to properly display error context.
     context: OutputContext<'a>,

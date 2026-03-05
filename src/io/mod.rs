@@ -1,6 +1,6 @@
 use std::{
     fmt::Display,
-    io::{Read, Write},
+    io::{BufRead, Read, Write},
     path::Path,
 };
 use zoe::{
@@ -338,6 +338,31 @@ where
 
     fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
         Ok(self.reader.read_exact(buf).with_context(&self.description)?)
+    }
+}
+
+impl<R> BufRead for ReaderWithContext<R>
+where
+    R: BufRead,
+{
+    fn fill_buf(&mut self) -> std::io::Result<&[u8]> {
+        Ok(self.reader.fill_buf().with_context(&self.description)?)
+    }
+
+    fn consume(&mut self, amount: usize) {
+        self.reader.consume(amount);
+    }
+
+    fn read_until(&mut self, byte: u8, buf: &mut Vec<u8>) -> std::io::Result<usize> {
+        Ok(self.reader.read_until(byte, buf).with_context(&self.description)?)
+    }
+
+    fn skip_until(&mut self, byte: u8) -> std::io::Result<usize> {
+        Ok(self.reader.skip_until(byte).with_context(&self.description)?)
+    }
+
+    fn read_line(&mut self, buf: &mut String) -> std::io::Result<usize> {
+        Ok(self.reader.read_line(buf).with_context(&self.description)?)
     }
 }
 

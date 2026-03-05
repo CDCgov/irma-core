@@ -22,7 +22,7 @@ use zoe::{
 /// - Parsing the inputs into [`FastQReader`], [`FastaReader`], [`FastXReader`],
 ///   or [`SAMReader`]
 /// - Automatically adding context including the path and record type (if
-///   applicable) to any errors
+///   applicable) to any errors while opening the file or reading from the file
 /// - Automatically adding context including the path and record type to each
 ///   item of the fallible iterator (for [`FastQReader`], [`FastaReader`], etc.)
 ///
@@ -60,6 +60,24 @@ use zoe::{
 ///    added to any errors.
 ///
 /// See the uses of this in IRMA-core for examples.
+///
+/// Some tips for using this effectively:
+///
+/// - When using [`FastXReader`], this builder will return an
+///   `IterWithContext<FastXReader<...>>`, which works as an iterator but does
+///   not facilitate matching on the FASTQ and FASTA variants. To dispatch based
+///   on these variants, call [`dispatch`].
+/// - The final reader or iterator returned has context fully added, for errors
+///   when opening, iterating, or reading. Hence, it is good to avoid adding
+///   redundant context. For example, when using this to open a file and then
+///   perform some type of custom parsing on it, it is best to encapsulate the
+///   parsing logic in a separate function (e.g., with traits [`FromStr`] or
+///   [`TryFrom`]). The errors within the parsing function should include
+///   descriptions of the parsing error, and path context can be added when the
+///   parsing function is called.
+///
+/// [`FromStr`]: std::str::FromStr
+/// [`dispatch`]: crate::io::IterWithContext::dispatch
 pub struct InputOptions<'a, R> {
     /// Any context needed to properly display error context.
     context: InputContext<'a>,
@@ -483,9 +501,9 @@ where
     /// called and the error originated during parsing. Any failed reads from
     /// the reader will also have similar context due to the
     /// [`ReaderWithContext`] wrapper.
-    fn open_readable(self) -> std::io::Result<ReaderWithContext<R>> {
+    fn open_readable(self) -> std::io::Result<ReaderWithContext<BufReader<R>>> {
         match self.input {
-            Ok(reader) => Ok(InputContext::add_reader_context(reader, self.context.input1)),
+            Ok(reader) => Ok(InputContext::add_reader_context(BufReader::new(reader), self.context.input1)),
             Err(e) => Err(self.context.add_context(e).into()),
         }
     }
@@ -570,8 +588,8 @@ impl InputOptions<'_, File> {
     /// IO errors when opening the file are propagated. Context is added that
     /// includes the path. Any failed reads from the reader will also have
     /// similar context due to the [`ReaderWithContext`] wrapper.
-    pub fn open(self) -> std::io::Result<BufReader<ReaderWithContext<File>>> {
-        self.open_readable().map(BufReader::new)
+    pub fn open(self) -> std::io::Result<ReaderWithContext<BufReader<File>>> {
+        self.open_readable()
     }
 }
 
@@ -584,8 +602,8 @@ impl InputOptions<'_, ReadFileZip> {
     /// includes the path. Any failed reads from the reader will also have
     /// similar context due to the [`ReaderWithContext`] wrapper.
     #[allow(dead_code)]
-    pub fn open(self) -> std::io::Result<BufReader<ReaderWithContext<ReadFileZip>>> {
-        self.open_readable().map(BufReader::new)
+    pub fn open(self) -> std::io::Result<ReaderWithContext<BufReader<ReadFileZip>>> {
+        self.open_readable()
     }
 }
 
@@ -599,8 +617,8 @@ impl InputOptions<'_, ReadFileZipPipe> {
     /// reader will also have similar context due to the [`ReaderWithContext`]
     /// wrapper.
     #[allow(dead_code)]
-    pub fn open(self) -> std::io::Result<BufReader<ReaderWithContext<ReadFileZipPipe>>> {
-        self.open_readable().map(BufReader::new)
+    pub fn open(self) -> std::io::Result<ReaderWithContext<BufReader<ReadFileZipPipe>>> {
+        self.open_readable()
     }
 }
 
@@ -614,8 +632,8 @@ impl InputOptions<'_, ReadFileStdin> {
     /// reader will also have similar context due to the [`ReaderWithContext`]
     /// wrapper.
     #[allow(dead_code)]
-    pub fn open(self) -> std::io::Result<BufReader<ReaderWithContext<ReadFileStdin>>> {
-        self.open_readable().map(BufReader::new)
+    pub fn open(self) -> std::io::Result<ReaderWithContext<BufReader<ReadFileStdin>>> {
+        self.open_readable()
     }
 }
 
