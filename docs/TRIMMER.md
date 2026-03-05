@@ -35,7 +35,7 @@ Every step in the process is optional, but if multiple operations are selected, 
 
 ### Example Chained Command
 
-The following will perform poly-g trimming, followed by barcode trimming, primer trimming, and then hard trimming on every sequence in the FASTQ file.
+The following will perform poly-g trimming, followed by barcode trimming, primer trimming, and then hard trimming on every sequence in the FASTQ file. Diagnostic output on the number of reads processed and trimmed will be written to `stderr`.
 
 ```bash
 irma-core trimmer input.fastq \
@@ -44,6 +44,7 @@ irma-core trimmer input.fastq \
     --barcode-trim CACAAAGACACCGACAACTTTCTT \
     --primer-trim primers.fasta --p-kmer-length 17 \
     --hard-trim 10
+    --verbose
 ```
 
 Details about each trimming operation and their arguments are given below.
@@ -228,3 +229,33 @@ IRMA-core will filter reads from the output that have fewer than the set `--min-
 | ------------------------------- | -------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `--min-length` (`-n`)           | 1        | ≥ 1               | Sequences shorter than this length, post-trimming, will be filtered from output.                                                     |
 | `--mask` (`-m`)                 | False    | Boolean           | Rather than trimming matched bases, they can instead be masked to the letter `N`. This flag is applied to *all* trimming operations. |
+
+## Verbose
+
+An optional flag of `--verbose` or `-v` can be used to print diagnostics to `stderr`. Using the following arguments:
+
+```
+trimmer input_R1.fastq input_R2.fastq --primer-trim primers.fasta --p-kmer-length 17 -1 test_out.fastq --h-left 10 --polyg-trim 5 --min-length 15 --verbose
+```
+
+Gives the following diagnostic output:
+
+```
+IRMA-core trimmer processed reads from two paired inputs and wrote to one interleaved output with filtering of widowed reads
+Input:                  1582156 reads
+PolyG trimmed:            21953 reads (1.39%) with a PolyG threshold of 5 bases
+Primer trimmed:              28 reads (0.00%) using primer set "consensus.fasta"
+Hard trimmed:           1581292 reads (99.95%) with an amount of 10 bases on the left and 0 bases on the right
+Total trimmed:          1582123 reads (100.00%)
+Length filtered:           1022 reads (0.06%) for being shorter than the minimum post-trimming length of 15
+Widow filtered:            1022 reads (0.06%) for their paired read being shorter than the minimum post-trimming length of 15
+```
+
+### Counts for widow filtering
+
+It is important to note that in most cases where paired reads are being trimmed,
+first the left read will be trimmed and checked for length filtering, followed
+by the second. If the first read does not meet the length threshold, the second
+read will not be trimmed, and its respective trimming operations will therefore
+not be counted. Thus, in cases where widow filtering is enabled, the various
+trimmed counts may be lower than expected.

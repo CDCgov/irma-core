@@ -386,7 +386,7 @@ fn trim_filter_tally<'a>(
     }
 
     let mut _counts = TrimmedCounts::default();
-    let clipped = trim_read(read.as_view_mut(), false, &options.clipping_args, &mut _counts);
+    let clipped = trim_read(read.as_view_mut(), false, &options.clipping_args, &mut _counts, false);
 
     metadata.observed_max_clipped_read_len = metadata.observed_max_clipped_read_len.max(clipped.sequence.len());
     if (options.enforce_clipped_length && clipped.sequence.len() < options.min_length) || clipped.sequence.is_empty() {

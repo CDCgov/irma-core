@@ -19,5 +19,6 @@
     "editor.formatOnSave": true,
     "files.watcherExclude": {
         "**/target": true
-    }
+    },
+    "rust-analyzer.checkOnSave": true
 }

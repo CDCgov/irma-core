@@ -121,10 +121,6 @@ pub struct ClippingArgs {
     /// Hard trim range for only the right end of the sequence. Overrides
     /// hard-trim
     pub h_right: Option<usize>,
-
-    #[arg(short = 'v', long)]
-    /// Prints the number of records trimmed for each method to stderr
-    verbose: bool,
 }
 
 /// Enum for trimming end options
@@ -262,7 +258,6 @@ pub struct ParsedClippingArgs {
     pub polyg_right:      Option<usize>,
     pub hard_left:        usize,
     pub hard_right:       usize,
-    pub verbose:          bool,
 }
 
 /// Parses all arguments related to clipping.
@@ -296,7 +291,6 @@ pub fn parse_clipping_args(args: ClippingArgs) -> std::io::Result<ParsedClipping
         hard_trim,
         h_left,
         h_right,
-        verbose,
     } = args;
 
     let adapters = adapter_trim.map(|adapter| get_forward_reverse_sequence(adapter, preserve_bases));
@@ -390,7 +384,6 @@ pub fn parse_clipping_args(args: ClippingArgs) -> std::io::Result<ParsedClipping
         polyg_right,
         hard_left,
         hard_right,
-        verbose,
     };
 
     Ok(parsed_args)
