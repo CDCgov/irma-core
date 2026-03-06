@@ -103,10 +103,17 @@ pub fn preprocess_process(args: PreprocessArgs) -> Result<(), std::io::Error> {
     Ok(())
 }
 
+/// The type preprocess uses for input, along with the input path for error
+/// context.
+struct Reader {
+    path: PathBuf,
+    iter: IterWithContext<FastQReader<ReadFileZipPipe>>,
+}
+
 struct ParsedPreprocessIoArgs {
     table_writer: BufWriter<WriterWithContext<File>>,
-    reader1:      IterWithContext<FastQReader<ReadFileZipPipe>>,
-    reader2:      Option<IterWithContext<FastQReader<ReadFileZipPipe>>>,
+    reader1:      Reader,
+    reader2:      Option<Reader>,
     log_writer:   Option<BufWriter<WriterWithContext<File>>>,
     log_file:     Option<PathBuf>,
 }
@@ -147,6 +154,12 @@ fn parse_preprocess_args(args: PreprocessArgs) -> std::io::Result<ParsedPreproce
 
     let RecordReaders { reader1, reader2 } = readers;
 
+    let reader1 = Reader {
+        path: fastq_input,
+        iter: reader1,
+    };
+    let reader2 = fastq_input2.zip(reader2).map(|(path, iter)| Reader { path, iter });
+
     let log_writer = match log_file {
         Some(ref file_path) => Some(OutputOptions::new_from_path(file_path).use_file().open()?),
         None => None,
@@ -185,11 +198,20 @@ fn parse_preprocess_args(args: PreprocessArgs) -> std::io::Result<ParsedPreproce
 fn trim_and_deflate(
     options: &ParsedPreprocessOptions, io_args: &mut ParsedPreprocessIoArgs,
 ) -> std::io::Result<(DeflatedSequences, FastQMetadata)> {
-    let reader1 = &mut io_args.reader1;
+    let Reader {
+        path: input_path1,
+        iter: reader1,
+    } = &mut io_args.reader1;
+
     let mut deflated = DeflatedSequences::with_hasher(get_hasher());
     let mut metadata = FastQMetadata::default();
 
     if let Some(reader2) = &mut io_args.reader2 {
+        let Reader {
+            path: input_path2,
+            iter: reader2,
+        } = reader2;
+
         if options.filter_widows {
             let result = reader1.by_ref().zip_paired_reads(reader2.by_ref()).try_for_each(|pair| {
                 preprocess_pair(pair?, &mut metadata, &mut deflated, options);
@@ -200,9 +222,10 @@ fn trim_and_deflate(
                 Ok(()) => {}
                 Err(ZipPairedReadsError::IoError(e)) => return Err(e),
                 Err(ZipPairedReadsError::MismatchedHeaders([r1, r2])) => {
-                    let err = ZipPairedReadsError::MismatchedHeaders([r1.as_view(), r2.as_view()]);
+                    let err = ZipPairedReadsError::MismatchedHeaders([r1.as_view(), r2.as_view()])
+                        .add_path_context(input_path1, input_path2);
                     eprintln!(
-                        "{MODULE} WARNING! {err} `--filter-widows or -f` is being disabled for the remainder of the processing. Consider rerunning with corrected inputs."
+                        "{MODULE} WARNING! {err}\n\n`--filter-widows` or `-f` is being disabled for the remainder of the processing. Consider rerunning with corrected inputs."
                     );
 
                     std::iter::once(Ok(r1)).chain(reader1).try_for_each(|read| {
@@ -216,14 +239,22 @@ fn trim_and_deflate(
                     })?;
                 }
                 Err(ZipPairedReadsError::ExtraFirstRead(r1)) => {
-                    eprintln!("{}", extra_read_warning());
+                    eprintln!(
+                        "{MODULE} WARNING! An extra read was found in file: '{input_path1}'\n  → Unexpected read found with header: {header1}\n\n`--filter-widows` or `-f` is being disabled for the remainder of the processing. Consider rerunning with corrected inputs.",
+                        input_path1 = input_path1.display(),
+                        header1 = r1.header
+                    );
                     std::iter::once(Ok(r1)).chain(reader1).try_for_each(|read| {
                         preprocess_seq(&mut read?, ReadSide::R1, &mut metadata, &mut deflated, options);
                         std::io::Result::Ok(())
                     })?;
                 }
                 Err(ZipPairedReadsError::ExtraSecondRead(r2)) => {
-                    eprintln!("{}", extra_read_warning());
+                    eprintln!(
+                        "{MODULE} WARNING! An extra read was found in file: '{input_path2}'\n  → Unexpected read found with header: {header2}\n\n`--filter-widows` or `-f` is being disabled for the remainder of the processing. Consider rerunning with corrected inputs.",
+                        input_path2 = input_path2.display(),
+                        header2 = r2.header
+                    );
                     std::iter::once(Ok(r2)).chain(reader2).try_for_each(|read| {
                         preprocess_seq(&mut read?, ReadSide::R2, &mut metadata, &mut deflated, options);
                         std::io::Result::Ok(())
@@ -364,14 +395,6 @@ fn diagnose_none_passing(metadata: &FastQMetadata, paired_reads: bool, options: 
             metadata.observed_max_read_len, options.min_length
         );
     }
-}
-
-#[inline]
-#[must_use]
-fn extra_read_warning() -> String {
-    format!(
-        "{MODULE} WARNING! Extra unpaired read(s) found at end of first FASTQ file. `--filter-widows or -f` is being disabled for the remainder of the processing. Consider rerunning with corrected inputs."
-    )
 }
 
 /// Trims a read and tallies its metadata. `Some` is returned if it passes all
