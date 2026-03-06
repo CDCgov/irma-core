@@ -34,7 +34,7 @@ enum Commands {
     /// Provides the physical or logical cores of a CPU portably.
     NumProcs(NumProcsArgs),
     #[command(
-        long_about = "Trims FASTQ files for genomic analysis with support for barcodes, adapters, primers, and hard trimming.\
+        long_about = "Trims FASTQ files for genomic analysis with support for barcodes, adapters, primers, and hard trimming. \
          Barcode and adapter trimming are mutually exclusive. \
          If multiple trim operations are selected, trimming will proceed in barcode/adapter > primer > hard trim order."
     )]

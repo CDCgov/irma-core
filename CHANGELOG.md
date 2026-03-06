@@ -13,7 +13,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 
 ### Changed
 
-- Adds more context to paired read errors in `sampler` and `xleave`
+- Adds more context to paired read errors in `sampler`, `xleave`, and `trimmer`
 
 ## [0.9.0] - 2026-03-06
 
