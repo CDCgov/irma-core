@@ -5,12 +5,14 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 [Semantic Versioning]. For IRMA vs IRMA-core compatibility, please see the
 [version matrix](VERSION_MATRIX.md).
 
-## [0.9.0] - TBD
+## [0.9.0] - 2026-03-06
 
 ### Added
 
 - Adds `verbose` flag to `sampler` for printing total number of reads in
   original input and number of downsampled records to `stderr`
+- Adds `verbose` flag to `trimmer` for printing diagnostic output on number of
+  reads trimmed to `stderr`
 - Adds `phase` process for phase clustering assignment and labeling of genes
 - Adds more detailed error messages with more context, including file paths for
   many IO errors

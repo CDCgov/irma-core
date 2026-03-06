@@ -251,7 +251,7 @@ dependencies = [
 
 [[package]]
 name = "irma-core"
-version = "0.9.0-dev"
+version = "0.9.0"
 dependencies = [
  "clap",
  "flate2",
@@ -375,9 +375,9 @@ dependencies = [
 
 [[package]]
 name = "quote"
-version = "1.0.44"
+version = "1.0.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21b2ebcf727b7760c461f091f9f0f539b77b8e87f2fd88131e7f1b433b3cece4"
+checksum = "41f2619966050689382d2b44f664f4bc593e129785a36d6ee376ddf37259b924"
 dependencies = [
  "proc-macro2",
 ]
@@ -691,8 +691,9 @@ checksum = "b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa"
 
 [[package]]
 name = "zoe"
-version = "0.0.26-dev"
-source = "git+https://github.com/CDCgov/zoe.git#5e9e3c34362391c560a680bd06efc0d6b5200787"
+version = "0.0.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "582d48345db386b690b571d21262520367ba22f3e167759b6f9af71a9e716d67"
 dependencies = [
  "itoa",
  "multiversion",
