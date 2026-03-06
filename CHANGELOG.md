@@ -11,6 +11,10 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 
 - Fixes error in `aligner` tally diagnostics when reverse complement is not enabled
 
+### Changed
+
+- Adds more context to paired read errors in `sampler`
+
 ## [0.9.0] - 2026-03-06
 
 ### Added

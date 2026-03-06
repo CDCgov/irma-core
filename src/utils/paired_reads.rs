@@ -3,10 +3,14 @@ use std::{
     fmt::{Debug, Display},
     io::{Error as IOError, ErrorKind},
     marker::PhantomData,
+    path::Path,
     simd::Simd,
 };
 use zoe::{
-    data::{err::GetCode, records::HeaderReadable},
+    data::{
+        err::{GetCode, WithErrorContext},
+        records::HeaderReadable,
+    },
     unwrap_or_return_some_err,
 };
 
@@ -166,6 +170,57 @@ pub enum ZipPairedReadsError<A> {
     ExtraFirstRead(A),
     /// An extra read in the second iterator
     ExtraSecondRead(A),
+}
+
+impl<A> ZipReadsError<A>
+where
+    A: HeaderReadable,
+{
+    /// Maps the error to include messages and context with the provided paths.
+    pub fn add_path_context(self, path1: &Path, path2: &Path) -> std::io::Error {
+        match self {
+            ZipReadsError::IoError(e) => e,
+            ZipReadsError::ExtraFirstRead(r1) => {
+                std::io::Error::other(format!("Unexpected read found with header: {header1}", header1 = r1.header()))
+                    .with_file_context("An extra read was found in file", path1)
+                    .into()
+            }
+            ZipReadsError::ExtraSecondRead(r2) => {
+                std::io::Error::other(format!("Unexpected read found with header: {header2}", header2 = r2.header()))
+                    .with_file_context("An extra read was found in file", path2)
+                    .into()
+            }
+        }
+    }
+}
+
+impl<A> ZipPairedReadsError<A>
+where
+    A: HeaderReadable,
+{
+    /// Maps the error to include messages and context with the provided paths.
+    pub fn add_path_context(self, path1: &Path, path2: &Path) -> std::io::Error {
+        match self {
+            ZipPairedReadsError::IoError(e) => e,
+            ZipPairedReadsError::MismatchedHeaders([r1, r2]) => std::io::Error::other(format!(
+                "Did not find corresponding paired reads in {path1} and {path2}.\n\nHeader 1: {header1}\nHeader 2: {header2}",
+                path1 = path1.display(),
+                path2 = path2.display(),
+                header1 = r1.header(),
+                header2 = r2.header(),
+            )),
+            ZipPairedReadsError::ExtraFirstRead(r1) => {
+                std::io::Error::other(format!("Unexpected read found with header: {header1}", header1 = r1.header()))
+                    .with_file_context("An extra read was found in file", path1)
+                    .into()
+            }
+            ZipPairedReadsError::ExtraSecondRead(r2) => {
+                std::io::Error::other(format!("Unexpected read found with header: {header2}", header2 = r2.header()))
+                    .with_file_context("An extra read was found in file", path2)
+                    .into()
+            }
+        }
+    }
 }
 
 impl<A> From<std::io::Error> for ZipReadsError<A> {

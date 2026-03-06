@@ -12,8 +12,9 @@ use clap::Args;
 use rand::{SeedableRng, make_rng};
 use rand_xoshiro::Xoshiro256StarStar;
 use std::{
+    fmt::Debug,
     io::{BufRead, Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 use zoe::{
     data::records::HeaderReadable,
@@ -89,7 +90,7 @@ pub fn sampler_process(args: SamplerArgs) -> Result<(), std::io::Error> {
     let (io_args, rng, target, verbose) = parse_sampler_args(args)?;
 
     // Get the population sequence count from one of the files if possible
-    let mut seq_count = get_paired_seq_count(io_args.filepath1, io_args.filepath2, io_args.reader1.inner_iter())?;
+    let mut seq_count = get_paired_seq_count(&io_args)?;
 
     let is_single = io_args.reader2.is_none() && matches!(io_args.writer, RecordWriters::SingleEnd(_));
 
@@ -106,24 +107,41 @@ pub fn sampler_process(args: SamplerArgs) -> Result<(), std::io::Error> {
         (SamplingTarget::Percent(percent), None) => SamplingTarget::Percent(percent),
     };
 
-    let (total_original, total_downsampled) = match (io_args.reader1.dispatch(), io_args.reader2.map(|x| x.dispatch())) {
-        (DispatchFastX::Fastq(reader), None) => sample_single_input(reader, io_args.writer, target, seq_count, rng)?,
-        (DispatchFastX::Fastq(reader1), Some(DispatchFastX::Fastq(reader2))) => {
-            sample_paired_input(reader1, reader2, io_args.writer, target, seq_count, rng)?
+    let Reader {
+        path: input_path1,
+        iter: reader1,
+    } = io_args.reader1;
+
+    let (total_original, total_downsampled) = if let Some(reader2) = io_args.reader2 {
+        let Reader {
+            path: input_path2,
+            iter: reader2,
+        } = reader2;
+
+        let input_paths = [input_path1, input_path2];
+
+        match (reader1.dispatch(), reader2.dispatch()) {
+            (DispatchFastX::Fastq(reader1), DispatchFastX::Fastq(reader2)) => {
+                sample_paired_input(reader1, reader2, io_args.writer, target, seq_count, rng, input_paths)?
+            }
+            (DispatchFastX::Fasta(reader1), DispatchFastX::Fasta(reader2)) => {
+                sample_paired_input(reader1, reader2, io_args.writer, target, seq_count, rng, input_paths)?
+            }
+            (DispatchFastX::Fastq(_), DispatchFastX::Fasta(_)) => {
+                return Err(std::io::Error::other(
+                    "Paired read inputs must be both FASTQ or both FASTA. Found FASTQ for first input and FASTA for second input.",
+                ));
+            }
+            (DispatchFastX::Fasta(_), DispatchFastX::Fastq(_)) => {
+                return Err(std::io::Error::other(
+                    "Paired read inputs must be both FASTQ or both FASTA. Found FASTA for first input and FASTQ for second input.",
+                ));
+            }
         }
-        (DispatchFastX::Fasta(reader), None) => sample_single_input(reader, io_args.writer, target, seq_count, rng)?,
-        (DispatchFastX::Fasta(reader1), Some(DispatchFastX::Fasta(reader2))) => {
-            sample_paired_input(reader1, reader2, io_args.writer, target, seq_count, rng)?
-        }
-        (DispatchFastX::Fastq(_), Some(DispatchFastX::Fasta(_))) => {
-            return Err(std::io::Error::other(
-                "Paired read inputs must be both FASTQ or both FASTA. Found FASTQ for first input and FASTA for second input.",
-            ));
-        }
-        (DispatchFastX::Fasta(_), Some(DispatchFastX::Fastq(_))) => {
-            return Err(std::io::Error::other(
-                "Paired read inputs must be both FASTQ or both FASTA. Found FASTA for first input and FASTQ for second input.",
-            ));
+    } else {
+        match reader1.dispatch() {
+            DispatchFastX::Fastq(reader) => sample_single_input(reader, io_args.writer, target, seq_count, rng)?,
+            DispatchFastX::Fasta(reader) => sample_single_input(reader, io_args.writer, target, seq_count, rng)?,
         }
     };
 
@@ -188,13 +206,19 @@ where
 /// Each pair of reads counts once.
 fn sample_paired_input<R1, R2, W, A>(
     reader1: R1, reader2: R2, writer: RecordWriters<W>, target: SamplingTarget, seq_count: Option<usize>,
-    rng: Xoshiro256StarStar,
+    rng: Xoshiro256StarStar, input_paths: [PathBuf; 2],
 ) -> std::io::Result<(usize, usize)>
 where
     R1: Iterator<Item = std::io::Result<A>>,
     R2: Iterator<Item = std::io::Result<A>>,
     W: Write,
-    A: HeaderReadable + WriteRecord<W>, {
+    A: HeaderReadable + WriteRecord<W> + Debug + Sync + Send + 'static, {
+    // Zip the paired reads, and add context including the paths to any zipping
+    // errors
+    let iterator = reader1
+        .zip_paired_reads(reader2)
+        .map(|res| res.map_err(|e| e.add_path_context(&input_paths[0], &input_paths[1])));
+
     // Don't perform sampling if target is higher than population sequence count
     if let SamplingTarget::Count(target_count) = target
         && let Some(seq_count) = seq_count
@@ -203,12 +227,10 @@ where
         eprintln!(
             "Sampler Warning: Target sample size ({target_count}) was greater than population size ({seq_count}); no downsampling has occurred.",
         );
-        reader1.zip_paired_reads(reader2).write_records(writer)?;
+        iterator.write_records(writer)?;
         return Ok((seq_count, seq_count));
     }
 
-    // Determine the proper iterator type for the inputs, then dispatch
-    let iterator = reader1.zip_paired_reads(reader2);
     sample_and_write_results(iterator, writer, target, seq_count, rng)
 }
 
@@ -308,27 +330,41 @@ where
     Ok((total_original, total_downsampled))
 }
 
-fn get_paired_seq_count<R: Read>(
-    fastq_path1: Option<PathBuf>, fastq_path2: Option<PathBuf>, reader1: &FastXReader<R>,
-) -> std::io::Result<Option<usize>> {
-    if let Some(path) = fastq_path1 {
-        Ok(Some(get_seq_count(&path, reader1)?))
-    } else if let Some(path) = fastq_path2 {
-        Ok(Some(get_seq_count(&path, reader1)?))
+/// Gets the number of input sequences, using whichever paired input exists, is
+/// a file, and is not zipped.
+///
+/// If neither meets these conditions, `None` is returned.
+fn get_paired_seq_count(io_args: &IOArgs) -> std::io::Result<Option<usize>> {
+    let IOArgs {
+        reader1,
+        reader2,
+        writer: _,
+    } = &io_args;
+
+    if reader1.path.is_file() && !is_gz(&reader1.path) {
+        Ok(Some(get_seq_count(&reader1.path, reader1.iter.inner_iter())?))
+    } else if let Some(reader2) = reader2
+        && reader2.path.is_file()
+        && !is_gz(&reader2.path)
+    {
+        Ok(Some(get_seq_count(&reader2.path, reader2.iter.inner_iter())?))
     } else {
         Ok(None)
     }
 }
 
+/// The type sampler uses for input, along with the input path for error
+/// context.
+struct Reader {
+    path: PathBuf,
+    iter: IterWithContext<FastXReader<ReadFileZipPipe>>,
+}
+
+/// The IO arguments used by sampler, including up to two readers and writers.
 struct IOArgs {
-    /// This is only `Some` if the path corresponds to a file and is not zipped
-    filepath1: Option<PathBuf>,
-    /// This is only `Some` if paired ends are used, the path corresponds to a
-    /// non-zipped file
-    filepath2: Option<PathBuf>,
-    reader1:   IterWithContext<FastXReader<ReadFileZipPipe>>,
-    reader2:   Option<IterWithContext<FastXReader<ReadFileZipPipe>>>,
-    writer:    RecordWriters<WriteFileZipStdout>,
+    reader1: Reader,
+    reader2: Option<Reader>,
+    writer:  RecordWriters<WriteFileZipStdout>,
 }
 
 /// The target number of sequences to sample
@@ -364,23 +400,13 @@ fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, 
 
     let RecordReaders { reader1, reader2 } = readers;
 
-    let filepath1 = if args.input_file.is_file() && !is_gz(&args.input_file) {
-        Some(args.input_file)
-    } else {
-        None
+    let reader1 = Reader {
+        path: args.input_file,
+        iter: reader1,
     };
-    let filepath2 = if let Some(path) = args.input_file2
-        && path.is_file()
-        && !is_gz(&path)
-    {
-        Some(path)
-    } else {
-        None
-    };
+    let reader2 = args.input_file2.zip(reader2).map(|(path, iter)| Reader { path, iter });
 
     let io_args = IOArgs {
-        filepath1,
-        filepath2,
         reader1,
         reader2,
         writer,
@@ -395,8 +421,13 @@ fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, 
     Ok((io_args, rng, target, args.verbose))
 }
 
-fn get_seq_count<R: Read>(fastq: &PathBuf, reader: &FastXReader<R>) -> std::io::Result<usize> {
-    let input = InputOptions::new_from_path(fastq).use_file().open()?;
+/// Gets the count of the number of records in `input_file`.
+///
+/// This is achieved by counting the number of lines, and dividing it by the
+/// proper amount (2 for FASTA, and 4 for FASTQ). The input file must exist, be
+/// a file, and not be zipped.
+fn get_seq_count<R: Read>(input_file: &Path, reader: &FastXReader<R>) -> std::io::Result<usize> {
+    let input = InputOptions::new_from_path(input_file).use_file().open()?;
     let line_count = input.lines().process_results(|iter| iter.count())?;
     match reader {
         FastXReader::Fasta(_) => Ok(line_count / 2),
