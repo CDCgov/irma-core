@@ -6,7 +6,7 @@ use crate::{
         RecordWriters, SequenceWriter, WriteFileZipStdout, WriteRecord, WriteRecordCompatibleItem, WriteRecords,
         check_distinct_files, is_gz,
     },
-    utils::paired_reads::{DeinterleavedPairedReads, DeinterleavedPairedReadsExt, ZipPairedReadsExt},
+    utils::paired_reads::{DeinterleavedPairedReadsExt, ZipPairedReadsExt},
 };
 use clap::Args;
 use rand::{SeedableRng, make_rng};
@@ -140,8 +140,12 @@ pub fn sampler_process(args: SamplerArgs) -> Result<(), std::io::Error> {
         }
     } else {
         match reader1.dispatch() {
-            DispatchFastX::Fastq(reader) => sample_single_input(reader, io_args.writer, target, seq_count, rng)?,
-            DispatchFastX::Fasta(reader) => sample_single_input(reader, io_args.writer, target, seq_count, rng)?,
+            DispatchFastX::Fastq(reader) => {
+                sample_single_input(reader, io_args.writer, target, seq_count, rng, &input_path1)?
+            }
+            DispatchFastX::Fasta(reader) => {
+                sample_single_input(reader, io_args.writer, target, seq_count, rng, &input_path1)?
+            }
         }
     };
 
@@ -163,6 +167,7 @@ pub fn sampler_process(args: SamplerArgs) -> Result<(), std::io::Error> {
 /// reads, each pair counts once.
 fn sample_single_input<R1, W, A>(
     reader: R1, writer: RecordWriters<W>, target: SamplingTarget, seq_count: Option<usize>, rng: Xoshiro256StarStar,
+    input_path1: &Path,
 ) -> std::io::Result<(usize, usize)>
 where
     R1: Iterator<Item = std::io::Result<A>>,
@@ -182,19 +187,22 @@ where
                 reader.write_records(writer)?;
             }
             RecordWriters::PairedEnd(writer) => {
-                reader.deinterleave().write_records(writer)?;
+                reader
+                    .deinterleave()
+                    .map(|res| res.map_err(|e| e.add_path_context(input_path1)))
+                    .write_records(writer)?;
             }
         }
         return Ok((seq_count, seq_count));
     }
 
     match writer {
-        RecordWriters::SingleEnd(writer) => {
-            let iterator = reader;
-            sample_and_write_results(iterator, writer, target, seq_count, rng)
-        }
+        RecordWriters::SingleEnd(writer) => sample_and_write_results(reader, writer, target, seq_count, rng),
         RecordWriters::PairedEnd(writer) => {
-            let iterator: DeinterleavedPairedReads<R1, A> = reader.deinterleave();
+            let iterator = reader
+                .deinterleave()
+                .map(|res| res.map_err(|e| e.add_path_context(input_path1)));
+
             sample_and_write_results(iterator, writer, target, seq_count, rng)
         }
     }
