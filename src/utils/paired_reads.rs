@@ -177,6 +177,8 @@ where
     A: HeaderReadable,
 {
     /// Maps the error to include messages and context with the provided paths.
+    ///
+    /// It is assumed that IO errors already have path context included.
     pub fn add_path_context(self, path1: &Path, path2: &Path) -> std::io::Error {
         match self {
             ZipReadsError::IoError(e) => e,
@@ -199,6 +201,8 @@ where
     A: HeaderReadable,
 {
     /// Maps the error to include messages and context with the provided paths.
+    ///
+    /// It is assumed that IO errors already have path context included.
     pub fn add_path_context(self, path1: &Path, path2: &Path) -> std::io::Error {
         match self {
             ZipPairedReadsError::IoError(e) => e,
@@ -539,6 +543,96 @@ where
 {
 }
 
+/// The error type for [`DeinterleavedPairedReads`].
+#[derive(Debug)]
+pub enum DeinterleaveError<A> {
+    /// An IO error from the reader
+    IoError(std::io::Error),
+    /// A mismatch in the header IDs of the paired subsequent reads
+    MismatchedHeaders([A; 2]),
+    /// An odd number of reads in the iterator
+    OddNumberOfReads(A),
+}
+
+impl<A> From<std::io::Error> for DeinterleaveError<A> {
+    #[inline]
+    fn from(value: std::io::Error) -> Self {
+        Self::IoError(value)
+    }
+}
+
+impl<A: HeaderReadable> From<DeinterleaveError<A>> for std::io::Error {
+    #[inline]
+    fn from(value: DeinterleaveError<A>) -> Self {
+        match value {
+            DeinterleaveError::IoError(e) => e,
+            other => std::io::Error::other(other.to_string()),
+        }
+    }
+}
+
+impl<A: HeaderReadable> Display for DeinterleaveError<A> {
+    #[inline]
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            DeinterleaveError::IoError(e) => write!(f, "{e}"),
+            DeinterleaveError::MismatchedHeaders([r1, r2]) => write!(
+                f,
+                "Paired read IDs out of sync:\n\t{h1}\n\t{h2}\n",
+                h1 = r1.header(),
+                h2 = r2.header()
+            ),
+            DeinterleaveError::OddNumberOfReads(r1) => write!(
+                f,
+                "An odd number of reads was found while de-interleaving. See header: {header1}",
+                header1 = r1.header()
+            ),
+        }
+    }
+}
+
+impl<A: HeaderReadable + Debug> Error for DeinterleaveError<A> {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            DeinterleaveError::IoError(e) => e.source(),
+            _ => None,
+        }
+    }
+}
+
+impl<A: HeaderReadable> GetCode for DeinterleaveError<A> {
+    fn get_code(&self) -> i32 {
+        match self {
+            DeinterleaveError::IoError(e) => e.get_code(),
+            _ => 1,
+        }
+    }
+}
+
+impl<A> DeinterleaveError<A>
+where
+    A: HeaderReadable,
+{
+    /// Maps the error to include messages and context with the provided path.
+    ///
+    /// It is assumed that IO errors already have path context included.
+    pub fn add_path_context(self, path: &Path) -> std::io::Error {
+        match self {
+            DeinterleaveError::IoError(e) => e,
+            DeinterleaveError::MismatchedHeaders([r1, r2]) => std::io::Error::other(format!(
+                "Paired read IDs out of sync:\n| Header 1: {header1}\n| Header 2: {header2}",
+                header1 = r1.header(),
+                header2 = r2.header(),
+            ))
+            .with_file_context("Failed to deinterleave the reads in file", path)
+            .into(),
+            e @ DeinterleaveError::OddNumberOfReads(_) => std::io::Error::from(e)
+                .with_file_context("Failed to deinterleave the reads in file", path)
+                .into(),
+        }
+    }
+}
+
 pub struct DeinterleavedPairedReads<I, A>(I)
 where
     I: Iterator<Item = std::io::Result<A>>,
@@ -549,29 +643,21 @@ where
     I: Iterator<Item = std::io::Result<A>>,
     A: HeaderReadable,
 {
-    type Item = std::io::Result<[A; 2]>;
+    type Item = Result<[A; 2], DeinterleaveError<A>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let read1 = unwrap_or_return_some_err!(self.0.next()?);
+        let read1 = unwrap_or_return_some_err!(self.0.next()?.map_err(DeinterleaveError::IoError));
+
         if let Some(read2) = self.0.next() {
-            let read2 = unwrap_or_return_some_err!(read2);
+            let read2 = unwrap_or_return_some_err!(read2.map_err(DeinterleaveError::IoError));
+
             if check_paired_headers(&read1, &read2).is_ok() {
                 Some(Ok([read1, read2]))
             } else {
-                Some(Err(IOError::new(
-                    ErrorKind::InvalidInput,
-                    format!(
-                        "Paired read IDs out of sync:\n\t{h1}\n\t{h2}\n",
-                        h1 = read1.header(),
-                        h2 = read2.header()
-                    ),
-                )))
+                Some(Err(DeinterleaveError::MismatchedHeaders([read1, read2])))
             }
         } else {
-            Some(Err(std::io::Error::other(format!(
-                "An odd number of reads was found while de-interleaving: {header1}",
-                header1 = read1.header()
-            ))))
+            Some(Err(DeinterleaveError::OddNumberOfReads(read1)))
         }
     }
 }

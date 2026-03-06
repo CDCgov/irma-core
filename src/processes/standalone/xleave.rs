@@ -1,15 +1,11 @@
 //! Interleaves or de-interleaves paired FastQ or FASTA files.
 
 use crate::{
-    io::{
-        DispatchFastX, InputOptions, OutputOptions, RecordWriters, WriteFileZipStdout, WriteRecord, WriteRecords,
-        check_distinct_files,
-    },
+    io::{DispatchFastX, InputOptions, OutputOptions, RecordWriters, WriteRecords, check_distinct_files},
     utils::paired_reads::{DeinterleavedPairedReadsExt, ZipPairedReadsExt},
 };
 use clap::Args;
 use std::path::PathBuf;
-use zoe::data::records::HeaderReadable;
 
 #[derive(Args, Debug)]
 pub struct XleaveArgs {
@@ -46,61 +42,54 @@ pub fn xleave_process(args: XleaveArgs) -> Result<(), std::io::Error> {
         .use_file_zip_or_stdout()
         .open()?;
 
-    match (readers.reader1.dispatch(), readers.reader2.map(|x| x.dispatch())) {
-        (DispatchFastX::Fastq(reader), None) => match writer {
-            RecordWriters::SingleEnd(_) => {
-                return Err(std::io::Error::other(
-                    "One input and one output were provided. No interleaving or de-interleaving can occur.",
-                ));
-            }
-            RecordWriters::PairedEnd(_) => handle_single_input(reader, writer)?,
-        },
-        (DispatchFastX::Fastq(reader1), Some(DispatchFastX::Fastq(reader2))) => match writer {
-            RecordWriters::SingleEnd(_) => reader1.zip_paired_reads(reader2).write_records(writer)?,
-            RecordWriters::PairedEnd(_) => {
-                return Err(std::io::Error::other(
-                    "Two inputs and two outputs were provided. No interleaving or de-interleaving can occur.",
-                ));
-            }
-        },
-        (DispatchFastX::Fasta(reader), None) => match writer {
-            RecordWriters::SingleEnd(_) => {
-                return Err(std::io::Error::other(
-                    "One input and one output were provided. No interleaving or de-interleaving can occur.",
-                ));
-            }
-            RecordWriters::PairedEnd(_) => handle_single_input(reader, writer)?,
-        },
-        (DispatchFastX::Fasta(reader1), Some(DispatchFastX::Fasta(reader2))) => match writer {
-            RecordWriters::SingleEnd(_) => reader1.zip_paired_reads(reader2).write_records(writer)?,
-            RecordWriters::PairedEnd(_) => {
-                return Err(std::io::Error::other(
-                    "Two inputs and two outputs were provided. No interleaving or de-interleaving can occur.",
-                ));
-            }
-        },
-        (DispatchFastX::Fastq(_), Some(DispatchFastX::Fasta(_))) => {
+    let reader1 = readers.reader1;
+    let input_path1 = args.input_file1;
+
+    if let Some((reader2, input_path2)) = readers.reader2.zip(args.input_file2) {
+        let RecordWriters::SingleEnd(writer) = writer else {
             return Err(std::io::Error::other(
-                "Paired read inputs must be both FASTQ or both FASTA. Found FASTQ for first input and FASTA for second input.",
+                "Two inputs and two outputs were provided. No interleaving or de-interleaving can occur.",
             ));
+        };
+
+        match (reader1.dispatch(), reader2.dispatch()) {
+            (DispatchFastX::Fastq(reader1), DispatchFastX::Fastq(reader2)) => reader1
+                .zip_paired_reads(reader2)
+                .map(|res| res.map_err(|e| e.add_path_context(&input_path1, &input_path2)))
+                .write_records(writer)?,
+            (DispatchFastX::Fasta(reader1), DispatchFastX::Fasta(reader2)) => reader1
+                .zip_paired_reads(reader2)
+                .map(|res| res.map_err(|e| e.add_path_context(&input_path1, &input_path2)))
+                .write_records(writer)?,
+            (DispatchFastX::Fastq(_), DispatchFastX::Fasta(_)) => {
+                return Err(std::io::Error::other(
+                    "Paired read inputs must be both FASTQ or both FASTA. Found FASTQ for first input and FASTA for second input.",
+                ));
+            }
+            (DispatchFastX::Fasta(_), DispatchFastX::Fastq(_)) => {
+                return Err(std::io::Error::other(
+                    "Paired read inputs must be both FASTQ or both FASTA. Found FASTA for first input and FASTQ for second input.",
+                ));
+            }
         }
-        (DispatchFastX::Fasta(_), Some(DispatchFastX::Fastq(_))) => {
+    } else {
+        let RecordWriters::PairedEnd(writer) = writer else {
             return Err(std::io::Error::other(
-                "Paired read inputs must be both FASTQ or both FASTA. Found FASTA for first input and FASTQ for second input.",
+                "One input and one output were provided. No interleaving or de-interleaving can occur.",
             ));
+        };
+
+        match reader1.dispatch() {
+            DispatchFastX::Fastq(reader) => reader
+                .deinterleave()
+                .map(|res| res.map_err(|e| e.add_path_context(&input_path1)))
+                .write_records(writer)?,
+            DispatchFastX::Fasta(reader) => reader
+                .deinterleave()
+                .map(|res| res.map_err(|e| e.add_path_context(&input_path1)))
+                .write_records(writer)?,
         }
     }
 
     Ok(())
-}
-
-fn handle_single_input<R1, A>(reader: R1, writer: RecordWriters<WriteFileZipStdout>) -> std::io::Result<()>
-where
-    R1: Iterator<Item = std::io::Result<A>>,
-    A: HeaderReadable + WriteRecord<WriteFileZipStdout>,
-    std::io::Result<A>: WriteRecord<WriteFileZipStdout>, {
-    match writer {
-        RecordWriters::SingleEnd(writer) => reader.write_records(writer),
-        RecordWriters::PairedEnd(writer) => reader.deinterleave().write_records(writer),
-    }
 }
