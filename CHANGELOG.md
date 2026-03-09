@@ -5,6 +5,12 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 [Semantic Versioning]. For IRMA vs IRMA-core compatibility, please see the
 [version matrix](VERSION_MATRIX.md).
 
+## [0.9.1] - TBD
+
+### Fixes
+
+- Fixes error in `aligner` tally diagnostics when reverse complement is not enabled
+
 ## [0.9.0] - 2026-03-06
 
 ### Added
@@ -213,6 +219,7 @@ randomly downsampling FastQ or FASTA files. Deinterleaving is also supported.
 - **Added**: custom inexact matching algorithm from [Zoe]
 
 <!-- Versions -->
+[0.9.1]: https://github.com/CDCgov/irma-core/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/CDCgov/irma-core/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/CDCgov/irma-core/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/CDCgov/irma-core/compare/v0.7.0...v0.8.0

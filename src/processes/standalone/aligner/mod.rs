@@ -510,7 +510,9 @@ impl<'q, const S: usize> QueryWithProfile<'q, S> {
 
         let query_len = self.forward.sequence.len();
         tallies.tally_alignment(&alignments.primary, query_len, matrix);
-        tallies.tally_alignment(&alignments.secondary, query_len, matrix);
+        if reference.rev_comp() {
+            tallies.tally_alignment(&alignments.secondary, query_len, matrix);
+        }
 
         Ok(AlignmentAndSeqs {
             mapping:   alignments.primary,
@@ -544,7 +546,9 @@ impl<'q, const S: usize> QueryWithProfile<'q, S> {
 
         let query_len = self.forward.sequence.len();
         tallies.tally_alignment(&alignments.primary, query_len, matrix);
-        tallies.tally_alignment(&alignments.secondary, query_len, matrix);
+        if reference.rev_comp() {
+            tallies.tally_alignment(&alignments.secondary, query_len, matrix);
+        }
 
         Ok(AlignmentAndSeqs {
             mapping:   alignments.primary,
@@ -573,6 +577,11 @@ impl<'q, const S: usize> QueryWithRc<'q, S> {
         let reverse = MaybeRevComp::new(forward_seq, rev_comp);
 
         Self { forward, reverse }
+    }
+
+    /// Returns whether `--rev-comp` is being used.
+    pub fn rev_comp(&self) -> bool {
+        self.reverse.0.is_some()
     }
 }
 
@@ -613,6 +622,11 @@ impl<'r, const S: usize> Reference<'r, S> {
         })
     }
 
+    /// Returns whether `--rev-comp` is being used.
+    pub fn rev_comp(&self) -> bool {
+        self.reverse.0.is_some()
+    }
+
     /// Aligns the reference profile against the provided query using the 1-pass
     /// algorithm. This also tallies the alignment characteristics for the
     /// forward alignment, and reverse complement if applicable.
@@ -638,7 +652,9 @@ impl<'r, const S: usize> Reference<'r, S> {
 
         let query_len = query.forward.sequence.len();
         tallies.tally_alignment(&alignments.primary, query_len, matrix);
-        tallies.tally_alignment(&alignments.secondary, query_len, matrix);
+        if query.rev_comp() {
+            tallies.tally_alignment(&alignments.secondary, query_len, matrix);
+        }
 
         Ok(AlignmentAndSeqs {
             mapping:   alignments.primary,
@@ -672,7 +688,9 @@ impl<'r, const S: usize> Reference<'r, S> {
 
         let query_len = query.forward.sequence.len();
         tallies.tally_alignment(&alignments.primary, query_len, matrix);
-        tallies.tally_alignment(&alignments.secondary, query_len, matrix);
+        if query.rev_comp() {
+            tallies.tally_alignment(&alignments.secondary, query_len, matrix);
+        }
 
         Ok(AlignmentAndSeqs {
             mapping:   alignments.primary,
@@ -805,6 +823,7 @@ impl<'a, const S: usize> AlignerMethods<'a, S> for SharedProfiles<'a, 32, 16, 8,
 }
 
 /// Alignments against a forward and reverse complement strand.
+#[derive(Debug)]
 pub struct StrandedAlignments {
     /// The highest scoring of the two alignments, or the forward alignment if
     /// `--rev-comp` was not passed. `None` means that the alignment is unmapped.
@@ -937,7 +956,7 @@ where
 }
 
 /// An [`Alignment`] together with the [`Strand`] of the alignment.
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 pub struct AlignmentAndStrand {
     /// The inner alignment, using a score of `u32`.
     pub inner:  Alignment<u32>,
