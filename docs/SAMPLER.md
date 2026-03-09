@@ -19,7 +19,7 @@ Percent targets must be provided as an integer [0-100] and may not provide an ex
 
 Sampler can downsample `FASTQ` and `FASTA` formats. Inputs are provided as positional arguments, with sampler accepting either a single file, or as a pair of paired-read files. The files may also be a stream (e.g., from a process substitution) or a `.gz` compressed file.
 
-For outputs, you can select one output file with `-o` or two output files with `-1` and `-2`. If no output is provided, IRMA-core will output the subsampled data to `stdout`.
+For outputs, you can select one output file with `-o` (`--output`) or two output files with `-1` and `-2` (`--output` and `--output2`). If no output is provided, IRMA-core will output the subsampled data to `stdout`.
 
 *Note:* if only one output is selected (`stdout` or a file) for paired-end inputs, that output will be interleaved.
 
@@ -43,21 +43,21 @@ The following will take a zipped `.fastq.gz` input, perform downsampling to appr
 
 ```bash
 irma-core sampler intput.fastq.gz \
-    --output_file1 sampled.fastq \
+    --output sampled.fastq \
     --percent-target 10
 ```
 
 ## Paired Reads
 
-Some sequencers (including Illumina sequencers) generate reads from both ends of the DNA fragments, resulting in two paired-end read files. To handle these, you can provide an additional paired input file as a positional argument after the first, and/or provide an additional output file with `--output_file2` or `-2`. Paired-end reads will be **downsampled together**, ensuring that pairs get either kept or removed together.
+Some sequencers (including Illumina sequencers) generate reads from both ends of the DNA fragments, resulting in two paired-end read files. To handle these, you can provide an additional paired input file as a positional argument after the first, and/or provide an additional output file with `--output2` or `-2`. Paired-end reads will be **downsampled together**, ensuring that pairs get either kept or removed together.
 
 The following will take paired input, downsample them to 10000 paired sequences, and output two zipped files (each file will contain 10000 sequences).
 
 ```bash
 irma-core sampler \
     input_R1.fastq input_R2.fastq \
-    --output-file1 sampled_R1.fastq.gz \
-    --output-file2 sampled_R2.fastq.gz \
+    --output sampled_R1.fastq.gz \
+    --output2 sampled_R2.fastq.gz \
     --subsample-target 10000
 ```
 

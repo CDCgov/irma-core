@@ -34,10 +34,10 @@ pub struct PreprocessArgs {
     table_file: PathBuf,
 
     /// Single-ended FASTQ or the R1 file.
-    fastq_input_file1: PathBuf,
+    fastq_input: PathBuf,
 
     /// The R2 paired-end FASTQ file.
-    fastq_input_file2: Option<PathBuf>,
+    fastq_input2: Option<PathBuf>,
 
     #[arg(short = 'L', long, value_hint = ValueHint::FilePath)]
     /// Quality control log path and filename.
@@ -59,7 +59,7 @@ pub struct PreprocessArgs {
     /// The minimum length threshold (-n) is enforced after all trimming.
     enforce_clipped_length: bool,
 
-    #[arg(short = 'f', long, requires = "fastq_input_file2")]
+    #[arg(short = 'f', long, requires = "fastq_input2")]
     /// Filter widowed reads
     filter_widows: bool,
 
@@ -129,8 +129,8 @@ struct ParsedPreprocessArgs {
 fn parse_preprocess_args(args: PreprocessArgs) -> std::io::Result<ParsedPreprocessArgs> {
     let PreprocessArgs {
         table_file,
-        fastq_input_file1,
-        fastq_input_file2,
+        fastq_input,
+        fastq_input2,
         log_file,
         min_read_quality,
         use_median,
@@ -140,7 +140,7 @@ fn parse_preprocess_args(args: PreprocessArgs) -> std::io::Result<ParsedPreproce
         clipping_args,
     } = args;
 
-    let readers = InputOptions::new_from_paths(&fastq_input_file1, fastq_input_file2.as_ref())
+    let readers = InputOptions::new_from_paths(&fastq_input, fastq_input2.as_ref())
         .use_file_or_zip_threaded()
         .parse_fastq()
         .open()?;

@@ -26,20 +26,20 @@ use zoe::{
 #[derive(Args, Debug)]
 pub struct SamplerArgs {
     /// Path to FASTQ, FASTA, or .gz file to be sampled
-    pub input_file1: PathBuf,
+    pub input_file: PathBuf,
 
     /// Path to optional second FASTQ, FASTA, or .gz file to be sampled
     pub input_file2: Option<PathBuf>,
 
-    #[arg(short = '1', short_alias = 'o')]
+    #[arg(short = '1', long, short_alias = 'o', aliases = ["output-file", "output-file1", "output1"])]
     /// Output file path for sampled reads. Sampled reads print to STDOUT if not
     /// provided. May also use '-o'
-    pub output_file1: Option<PathBuf>,
+    pub output: Option<PathBuf>,
 
-    #[arg(short = '2', requires = "output_file1")]
+    #[arg(short = '2', long, requires = "output", alias = "output-file2")]
     /// Output path for a second sampled file if using paired-end reads. If this
     /// argument is omitted, output is interleaved
-    pub output_file2: Option<PathBuf>,
+    pub output2: Option<PathBuf>,
 
     // this is for requiring either percent or subsample target, but not both
     #[command(flatten)]
@@ -347,25 +347,25 @@ fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, 
     };
 
     check_distinct_files(
-        &args.input_file1,
+        &args.input_file,
         args.input_file2.as_ref(),
-        args.output_file1.as_ref(),
-        args.output_file2.as_ref(),
+        args.output.as_ref(),
+        args.output2.as_ref(),
     )?;
 
-    let readers = InputOptions::new_from_paths(&args.input_file1, args.input_file2.as_ref())
+    let readers = InputOptions::new_from_paths(&args.input_file, args.input_file2.as_ref())
         .use_file_or_zip_threaded()
         .parse_fastx()
         .open()?;
 
-    let writer = OutputOptions::new_from_opt_paths(args.output_file1.as_ref(), args.output_file2.as_ref())
+    let writer = OutputOptions::new_from_opt_paths(args.output.as_ref(), args.output2.as_ref())
         .use_file_zip_or_stdout()
         .open()?;
 
     let RecordReaders { reader1, reader2 } = readers;
 
-    let filepath1 = if args.input_file1.is_file() && !is_gz(&args.input_file1) {
-        Some(args.input_file1)
+    let filepath1 = if args.input_file.is_file() && !is_gz(&args.input_file) {
+        Some(args.input_file)
     } else {
         None
     };

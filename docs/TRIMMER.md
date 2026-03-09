@@ -39,7 +39,7 @@ The following will perform poly-g trimming, followed by barcode trimming, primer
 
 ```bash
 irma-core trimmer input.fastq \
-    --fastq-output trimmed.fastq \
+    --output trimmed.fastq \
     --polyg-trim 10 \
     --barcode-trim CACAAAGACACCGACAACTTTCTT \
     --primer-trim primers.fasta --p-kmer-length 17 \
@@ -55,8 +55,8 @@ Details about each trimming operation and their arguments are given below.
 
 | Parameter                       | Default  | Kind              | Description                                                                                                                          |
 | ------------------------------- | -------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `--fastq-output` (`-1` or `-o`) | `STDOUT` | Filepath          | Path to the output file for trimmed FASTQ. If not provided, the output will print to STDOUT.                                         |
-| `--fastq-output2` (`-2`)        | `None`   | Optional Filepath | Optional path to secondary output file for paired FASTQ. If this argument is omitted, output is interleaved.
+| `--output` (`-1` or `-o`) | `STDOUT` | Filepath          | Path to the output file for trimmed FASTQ. If not provided, the output will print to STDOUT.                                         |
+| `--output2` (`-2`)        | `None`   | Optional Filepath | Optional path to secondary output file for paired FASTQ. If this argument is omitted, output is interleaved.
 
 Below is a table describing `trimmer`'s behavior for different IO args:
 
@@ -77,7 +77,7 @@ The following will take a zipped `.fastq.gz` input, perform hard trimming, and o
 
 ```bash
 irma-core trimmer input.fastq.gz \
-    --fastq-output trimmed.fastq \
+    --output trimmed.fastq \
     --hard-trim 10
 ```
 

@@ -10,7 +10,7 @@ This is a small, standalone process for interleaving two paired-end FastQ/FASTA 
 
 `xleave` can handle FastQ and FASTA formats. Inputs are provided as positional arguments, with `xleave` accepting either a single file, or a pair of paired-end files. The files may also be a stream (e.g., from a process substitution) or a `.gz` compressed file.
 
-For outputs, you can select one output file with `-o` or output files with `-1` and `-2`. If no output is provided, IRMA-core will output the interleaved data to `stdout`. Note that `stdout` can only be used for single, interleaved output.
+For outputs, you can select one output file with `-o` (`--output`) or two output files with `-1` and `-2` (`--output` and `--output2`). If no output is provided, IRMA-core will output the interleaved data to `stdout`. Note that `stdout` can only be used for single, interleaved output.
 
 The following will take a zipped `.fastq.gz` input and de-interleave it into two files.
 

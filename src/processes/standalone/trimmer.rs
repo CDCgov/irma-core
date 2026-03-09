@@ -19,20 +19,20 @@ use zoe::prelude::*;
 #[derive(Args, Debug)]
 pub struct TrimmerArgs {
     /// Path to .fastq or .fastq.gz file to be trimmed
-    fastq_input_file: PathBuf,
+    fastq_input: PathBuf,
 
     /// Path to optional second .fastq or .fastq.gz file to be trimmed
-    fastq_input_file2: Option<PathBuf>,
+    fastq_input2: Option<PathBuf>,
 
-    #[arg(short = '1', short_alias = 'o', long = "fastq-output")]
+    #[arg(short = '1', long, short_alias = 'o', aliases = ["output-file", "output-file1", "output1", "fastq-output", "fastq-output1"])]
     /// Output filepath for trimmed reads. Trimmed reads print to STDOUT if not
     /// provided. May also use '-o'.
-    fastq_output_file: Option<PathBuf>,
+    output: Option<PathBuf>,
 
-    #[arg(short = '2', long = "fastq-output2")]
+    #[arg(short = '2', long, aliases = ["output-file2", "output2", "fastq-output2"])]
     /// Output path for secondary trimmed file if using paired reads. If this
     /// argument is omitted, output is interleaved.
-    fastq_output_file2: Option<PathBuf>,
+    output2: Option<PathBuf>,
 
     #[arg(short = 'm', long)]
     /// Perform masking with 'N' instead of clipping. Default behavior is
@@ -302,10 +302,10 @@ struct ParsedTrimmerOptions {
 /// additional information.
 fn parse_trimmer_args(args: TrimmerArgs) -> std::io::Result<ParsedTrimmerArgs> {
     let TrimmerArgs {
-        fastq_input_file,
-        fastq_input_file2,
-        fastq_output_file,
-        fastq_output_file2,
+        fastq_input,
+        fastq_input2,
+        output,
+        output2,
         mask,
         filter_widows,
         min_length,
@@ -313,19 +313,14 @@ fn parse_trimmer_args(args: TrimmerArgs) -> std::io::Result<ParsedTrimmerArgs> {
         verbose,
     } = args;
 
-    check_distinct_files(
-        &fastq_input_file,
-        fastq_input_file2.as_ref(),
-        fastq_output_file.as_ref(),
-        fastq_output_file2.as_ref(),
-    )?;
+    check_distinct_files(&fastq_input, fastq_input2.as_ref(), output.as_ref(), output2.as_ref())?;
 
-    let readers = InputOptions::new_from_paths(&fastq_input_file, fastq_input_file2.as_ref())
+    let readers = InputOptions::new_from_paths(&fastq_input, fastq_input2.as_ref())
         .use_file_or_zip_threaded()
         .parse_fastq()
         .open()?;
 
-    let writer = OutputOptions::new_from_opt_paths(fastq_output_file.as_ref(), fastq_output_file2.as_ref())
+    let writer = OutputOptions::new_from_opt_paths(output.as_ref(), output2.as_ref())
         .use_file_zip_or_stdout()
         .open()?;
 
