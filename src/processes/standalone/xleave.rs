@@ -1,3 +1,5 @@
+//! Interleaves or de-interleaves paired FastQ or FASTA files.
+
 use crate::{
     io::{
         DispatchFastX, InputOptions, OutputOptions, RecordWriters, WriteFileZipStdout, WriteRecord, WriteRecords,

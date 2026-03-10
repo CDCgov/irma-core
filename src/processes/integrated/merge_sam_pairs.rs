@@ -1,6 +1,5 @@
-// Description:      Merges Illumina paired-end reads with parsimonious error
-//                   correction and detection.
-//
+//! Merges Illumina paired-end reads with parsimonious error correction and
+//! detection.
 
 use clap::Args;
 use std::collections::HashMap;
@@ -17,7 +16,8 @@ pub struct MergeSAMArgs {
     /// Reference file used to generate the SAM.
     fasta_reference: PathBuf,
 
-    /// SAM file to merge R1 and R2 pairs via alignment and parsimonious correction.
+    /// SAM file to merge R1 and R2 pairs via alignment and parsimonious
+    /// correction.
     sam_file: PathBuf,
 
     /// Output directory and prefix for merged SAM data.

@@ -20,9 +20,10 @@
 | Process      | Description                                                                                                        | Usage                         |
 | ------------ | ------------------------------------------------------------------------------------------------------------------ | ----------------------------- |
 | `preprocess` | Performs all-in-one FastQ quality control, trimming, and deflation to XFL and FASTA formats. Similar to `trimmer`. | `irma-core preprocess --help` |
-| `merge-sam`† | Merges Illumina paired-end reads with parsimonious error correction and detection                                  | `irma-core merge-sam --help`  |
-| `xflate`†    | Deflates FastQ files to deduplicated Fasta files, or reinflates deduplicated Fasta files to FastQ files.           | `irma-core xflate --help`     |
-| `num-procs`  | Provides the physical or logical cores of a CPU portably.                                                          | `irma-core num-procs --help`  |
+| `merge-sam`† | Merges Illumina paired-end reads with parsimonious error correction and detection                                  | `irma-core merge-sam --help` |
+| `xflate`†    | Deflates FastQ files to deduplicated Fasta files, or reinflates deduplicated Fasta files to FastQ files.           | `irma-core xflate --help` |
+| `phase`†     | Reads in the variants table and associated distance matrix for a gene. Assigns a phase number to each variant using single-linkage agglomerative clustering and writes the results to the variants table.                                                              | `irma-core phase --help` |
+| `num-procs`  | Provides the physical or logical cores of a CPU portably.                                                          | `irma-core num-procs --help` |
 
 For compatibility notes between IRMA-core and IRMA, see the [version matrix](docs/VERSION_MATRIX.md).
 

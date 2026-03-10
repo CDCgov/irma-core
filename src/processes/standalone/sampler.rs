@@ -1,3 +1,5 @@
+//! Randomly downsamples FastQ or FASTA files. Deinterleaving supported.
+
 use crate::{
     io::{
         DispatchFastX, FastXReader, InputOptions, IterWithContext, OutputOptions, ReadFileZipPipe, RecordReaders,

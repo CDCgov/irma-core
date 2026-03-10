@@ -1,3 +1,5 @@
+//! Reads FastQ files and trims with various options.
+
 use crate::{
     args::clipping::{ClippingArgs, ParsedClippingArgs, parse_clipping_args},
     io::{
@@ -235,7 +237,7 @@ pub enum PairedIoStrategy {
 
 impl fmt::Display for PairedIoStrategy {
     /// Display output for the different possible IO combinations, to be used in
-    /// [`write_counts`].
+    /// [`write_counts`](TrimmedCounts::write_counts).
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             PairedIoStrategy::OneInOneOutFilter => write!(

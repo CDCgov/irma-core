@@ -1,3 +1,5 @@
+//! Provides the physical or logical cores of a CPU portably.
+
 use clap::{ArgGroup, Args};
 use num_cpus;
 use std::env;

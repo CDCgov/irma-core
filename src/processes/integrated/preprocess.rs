@@ -1,6 +1,6 @@
-// Description:      Read FastQ files, applies QC filtering (quality and
-//                   length), adapter/primer/barcode trimming, and deflates into
-//                   a custom XFL format + FASTA format.
+//! Reads FastQ files, applies QC filtering (quality and length),
+//! adapter/primer/barcode trimming, and deflates into a custom XFL format +
+//! FASTA format.
 
 use crate::{
     args::clipping::{ClippingArgs, ParsedClippingArgs, parse_clipping_args},

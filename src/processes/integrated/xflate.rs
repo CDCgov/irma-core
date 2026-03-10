@@ -1,5 +1,5 @@
-// Description:     Read FastQ files and deflates into a custom XFL format,
-//                  converting to FASTA as well. Also can re-inflate back to FASTQ.
+//! Reads FastQ files and deflates into a custom XFL format, converting to FASTA
+//! as well. Also can re-inflate back to FASTQ.
 
 use crate::{
     io::{InputOptions, OutputOptions},

@@ -27,7 +27,7 @@ enum Commands {
     /// Deflates FastQ files to deduplicated Fasta files, or reinflates
     /// deduplicated Fasta files to FastQ files
     Xflate(XflateArgs),
-    /// Reads in the variants table and associated distance matrice for a gene.
+    /// Reads in the variants table and associated distance matrix for a gene.
     /// Assigns a phase number to each variant using single-linkage
     /// agglomerative clustering and writes the results to the variants table.
     Phase(PhaseArgs),
@@ -44,7 +44,7 @@ enum Commands {
     Sampler(SamplerArgs),
     /// Interleaves or De-interleaves paired FastQ or FASTA files.
     Xleave(XleaveArgs),
-    /// Perform sequence alignment,
+    /// Performs sequence alignment.
     Aligner(AlignerArgs),
 }
 

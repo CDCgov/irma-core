@@ -13,7 +13,8 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
   original input and number of downsampled records to `stderr`
 - Adds `verbose` flag to `trimmer` for printing diagnostic output on number of
   reads trimmed to `stderr`
-- Adds `phase` process for phase clustering assignment and labeling of genes
+- Adds `phase` process for phase clustering assignment and labeling of single
+  nucleotide variants of genes
 - Adds more detailed error messages with more context, including file paths for
   many IO errors
 
