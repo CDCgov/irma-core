@@ -14,7 +14,7 @@ use crate::io::{InputOptions, OutputOptions};
 use clap::Args;
 use kodama::{Method, linkage};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, hash_map::Entry},
     fmt::Display,
     io::{BufRead, Write},
     path::PathBuf,
@@ -326,7 +326,15 @@ impl VariantsMatrix {
             "Failed to parse variant position as integer. Found: \"{position_str}\""
         ))?;
 
-        self.tag_index.insert((position, min_allele), row_ind);
+        match self.tag_index.entry((position, min_allele)) {
+            Entry::Vacant(entry) => entry.insert(row_ind),
+            Entry::Occupied(_) => {
+                return Err(std::io::Error::other(format!(
+                    "Duplicate variant position and minority allele \"{tag}\" found."
+                )));
+            }
+        };
+
         Ok(())
     }
 
