@@ -73,19 +73,28 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
             }
         };
 
-        // bowtie is order based
-        if let Some((mol_name_id, read_side)) = get_molecular_id_side(&row.qname, '0') {
-            let new_pair = read_side.into_indexpair(index);
-
-            pairs
-                .entry(mol_name_id.to_string())
-                .and_modify(|old_pair| old_pair.merge(&new_pair))
-                .or_insert(new_pair);
-        } else {
-            pairs
-                .entry(row.qname.clone())
-                .and_modify(|r1| r1.merge(&IndexPair::new_r2(index)))
-                .or_insert(IndexPair::new_r1(index));
+        match get_molecular_id_side(&row.qname, '0') {
+            Some((mol_name_id, read_side @ ('1' | '2'))) => {
+                let new_pair = read_side.into_indexpair(index);
+                pairs
+                    .entry(mol_name_id.to_string())
+                    .and_modify(|old_pair| old_pair.merge(&new_pair))
+                    .or_insert(new_pair);
+            }
+            // If the header is parseable but does not encode an explicit read
+            // side, fall back to order-based pairing instead of panicking.
+            Some((mol_name_id, _)) => {
+                pairs
+                    .entry(mol_name_id.to_string())
+                    .and_modify(|pair| pair.merge(&IndexPair::new_r2(index)))
+                    .or_insert(IndexPair::new_r1(index));
+            }
+            None => {
+                pairs
+                    .entry(row.qname.clone())
+                    .and_modify(|pair| pair.merge(&IndexPair::new_r2(index)))
+                    .or_insert(IndexPair::new_r1(index));
+            }
         }
 
         sam_data.push(row);

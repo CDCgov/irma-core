@@ -31,7 +31,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 - An error for a non-ascii byte is no longer encountered in `ReadTransforms::fix_header` (within `irma-records` public API)
 - DPKG metadata is no longer incorrectly deleted for container images (bug
   exposed in v0.9.1)
-
+- `merge_sam` no longer panics on SRA qnames that are parseable but lack an explicit read side
 
 ## [0.10.0] - 2026-06-05
 
