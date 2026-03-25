@@ -286,8 +286,8 @@ fn trim_and_deflate(
 /// number of read patterns is returned.
 fn output_deflated_sequences(
     metadata_by_sequence: DeflatedSequences, mut table_writer: impl Write,
-) -> Result<usize, std::io::Error> {
-    let mut stdout_writer = BufWriter::new(std::io::stdout());
+) -> std::io::Result<usize> {
+    let mut stdout_writer = OutputOptions::new_stdout().open()?;
 
     let mut read_pattern_number = 0;
     for (sequence, metadata) in metadata_by_sequence {

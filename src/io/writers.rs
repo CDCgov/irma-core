@@ -12,7 +12,7 @@ define_whichever! {
     /// used for all variants, and all variants are wrapped in
     /// [`WriterWithContext`] to add context to write errors.
     #[derive(Debug)]
-    pub(crate) enum  WriteFileZipStdout {
+    pub(crate) enum WriteFileZipStdout {
         /// A writer for a regular uncompressed file.
         File(WriterWithContext<BufWriter<File>>),
         /// A writer for a gzip compressed file.
