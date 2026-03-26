@@ -221,9 +221,15 @@ fn trim_and_deflate(
             match result {
                 Ok(()) => {}
                 Err(ZipPairedReadsError::IoError(e)) => return Err(e),
-                Err(ZipPairedReadsError::MismatchedHeaders([r1, r2])) => {
-                    let err = ZipPairedReadsError::MismatchedHeaders([r1.as_view(), r2.as_view()])
-                        .add_path_context(input_path1, input_path2);
+                Err(ZipPairedReadsError::BadHeaders {
+                    records: [r1, r2],
+                    source,
+                }) => {
+                    let err = ZipPairedReadsError::BadHeaders {
+                        records: [r1.as_view(), r2.as_view()],
+                        source,
+                    }
+                    .add_path_context(input_path1, input_path2);
                     eprintln!(
                         "{MODULE} WARNING! {err}\n\n`--filter-widows` or `-f` is being disabled for the remainder of the processing. Consider rerunning with corrected inputs."
                     );

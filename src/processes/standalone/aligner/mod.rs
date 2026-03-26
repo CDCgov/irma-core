@@ -18,9 +18,6 @@ use crate::aligner::writers::{AlignmentWriterThreaded, ThreadedWriteError};
 #[cfg(not(feature = "dev_no_rayon"))]
 use rayon::iter::{ParallelBridge, ParallelIterator};
 
-#[cfg(feature = "dev_no_rayon")]
-use std::io::Write;
-
 mod arg_parsing;
 mod writers;
 

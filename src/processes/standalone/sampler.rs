@@ -172,7 +172,7 @@ fn sample_single_input<R1, W, A>(
 where
     R1: Iterator<Item = std::io::Result<A>>,
     W: Write,
-    A: HeaderReadable + WriteRecord<W>,
+    A: HeaderReadable + WriteRecord<W> + Debug + Sync + Send + 'static,
     std::io::Result<A>: WriteRecord<W>, {
     // Don't perform sampling if target is higher than population sequence count
     if let SamplingTarget::Count(target_count) = target

@@ -1,7 +1,6 @@
 use std::{
     error::Error,
     fmt::{Debug, Display},
-    io::{Error as IOError, ErrorKind},
     marker::PhantomData,
     path::Path,
     simd::Simd,
@@ -81,26 +80,50 @@ pub fn get_molecular_id_side(s: &str, default_side: char) -> Option<(&str, char)
 
 /// Returns whether two reads have matching molecular IDs. Errors if the read
 /// ID's don't match or can't be parsed.
-pub fn check_paired_headers<A: HeaderReadable, B: HeaderReadable>(read1: &A, read2: &B) -> Result<(), std::io::Error> {
-    if let Some((id1, _)) = get_molecular_id_side(read1.header(), '0')
-        && let Some((id2, _)) = get_molecular_id_side(read2.header(), '0')
-    {
-        if id1 == id2 {
-            Ok(())
-        } else {
-            Err(IOError::new(
-                ErrorKind::InvalidInput,
-                format!(
-                    "Paired read IDs out of sync:\n\t{h1}\n\t{h2}\n",
-                    h1 = read1.header(),
-                    h2 = read2.header()
-                ),
-            ))
-        }
+pub fn check_paired_headers<A: HeaderReadable, B: HeaderReadable>(read1: &A, read2: &B) -> Result<(), PairedHeaderError> {
+    let Some((id1, _)) = get_molecular_id_side(read1.header(), '0') else {
+        return Err(PairedHeaderError::ParsingErrorFirst);
+    };
+
+    let Some((id2, _)) = get_molecular_id_side(read2.header(), '1') else {
+        return Err(PairedHeaderError::ParsingErrorSecond);
+    };
+
+    if id1 == id2 {
+        Ok(())
     } else {
-        Err(IOError::new(ErrorKind::InvalidInput, "Could not parse the read IDs."))
+        Err(PairedHeaderError::Mismatch)
     }
 }
+
+/// An error arising from paired headers which were incorrect (either poorly
+/// formatted or mismatching).
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub enum PairedHeaderError {
+    /// The first header failed to be parsed.
+    ParsingErrorFirst,
+    /// The second header failed to be parsed.
+    ParsingErrorSecond,
+    /// There was a mismatch between the headers.
+    Mismatch,
+}
+
+impl Display for PairedHeaderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PairedHeaderError::ParsingErrorFirst => {
+                write!(f, "Failed to parse the first header")
+            }
+            PairedHeaderError::ParsingErrorSecond => {
+                write!(f, "Failed to parse the second header")
+            }
+            PairedHeaderError::Mismatch => write!(f, "Mismatching IDs found!"),
+        }
+    }
+}
+
+impl Error for PairedHeaderError {}
+impl GetCode for PairedHeaderError {}
 
 /// An enum representing the read side for paired or unpaired reads.
 #[derive(Copy, Clone)]
@@ -164,8 +187,8 @@ pub enum ZipReadsError<A> {
 pub enum ZipPairedReadsError<A> {
     /// An IO error from one of the readers
     IoError(std::io::Error),
-    /// A mismatch in the header IDs of the paired reads
-    MismatchedHeaders([A; 2]),
+    /// Errors with the headers, such as failure to parse or being mismatched
+    BadHeaders { records: [A; 2], source: PairedHeaderError },
     /// An extra read in the first iterator
     ExtraFirstRead(A),
     /// An extra read in the second iterator
@@ -206,13 +229,16 @@ where
     pub fn add_path_context(self, path1: &Path, path2: &Path) -> std::io::Error {
         match self {
             ZipPairedReadsError::IoError(e) => e,
-            ZipPairedReadsError::MismatchedHeaders([r1, r2]) => std::io::Error::other(format!(
-                "Did not find corresponding paired reads in {path1} and {path2}.\n\nHeader 1: {header1}\nHeader 2: {header2}",
+            ZipPairedReadsError::BadHeaders {
+                records: [r1, r2],
+                source,
+            } => source.with_context(format!(
+                "Did not find corresponding paired reads in {path1} and {path2}.\n    | Header 1: {header1}\n    | Header 2: {header2}",
                 path1 = path1.display(),
                 path2 = path2.display(),
                 header1 = r1.header(),
                 header2 = r2.header(),
-            )),
+            )).into(),
             ZipPairedReadsError::ExtraFirstRead(r1) => {
                 std::io::Error::other(format!("Unexpected read found with header: {header1}", header1 = r1.header()))
                     .with_path_context("An extra read was found in file", path1)
@@ -251,12 +277,15 @@ impl<A: HeaderReadable> From<ZipReadsError<A>> for std::io::Error {
     }
 }
 
-impl<A: HeaderReadable> From<ZipPairedReadsError<A>> for std::io::Error {
+impl<A> From<ZipPairedReadsError<A>> for std::io::Error
+where
+    A: HeaderReadable + Debug + Sync + Send + 'static,
+{
     #[inline]
     fn from(value: ZipPairedReadsError<A>) -> Self {
         match value {
             ZipPairedReadsError::IoError(e) => e,
-            other => std::io::Error::other(other.to_string()),
+            other => std::io::Error::other(other),
         }
     }
 }
@@ -338,10 +367,13 @@ impl ZipReadsCheckingLevel for CheckedHeaders {
 
     #[inline]
     fn zip_pair<A: HeaderReadable>(r1: A, r2: A) -> Result<[A; 2], ZipPairedReadsError<A>> {
-        if check_paired_headers(&r1, &r2).is_ok() {
-            Ok([r1, r2])
+        if let Err(source) = check_paired_headers(&r1, &r2) {
+            Err(ZipPairedReadsError::BadHeaders {
+                records: [r1, r2],
+                source,
+            })
         } else {
-            Err(ZipPairedReadsError::MismatchedHeaders([r1, r2]))
+            Ok([r1, r2])
         }
     }
 }
@@ -370,9 +402,9 @@ impl<A: HeaderReadable> Display for ZipPairedReadsError<A> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             ZipPairedReadsError::IoError(e) => write!(f, "{e}"),
-            ZipPairedReadsError::MismatchedHeaders([r1, r2]) => write!(
+            ZipPairedReadsError::BadHeaders { records: [r1, r2], .. } => write!(
                 f,
-                "Paired read IDs out of sync:\n\t{h1}\n\t{h2}\n",
+                "Paired read IDs out of sync:\n    | Header 1: {h1}\n    | Header 2: {h2}",
                 h1 = r1.header(),
                 h2 = r2.header()
             ),
@@ -412,6 +444,7 @@ impl<A: HeaderReadable + Debug> Error for ZipPairedReadsError<A> {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             ZipPairedReadsError::IoError(e) => e.source(),
+            ZipPairedReadsError::BadHeaders { source, .. } => Some(source),
             _ => None,
         }
     }
@@ -421,6 +454,7 @@ impl<A: HeaderReadable> GetCode for ZipPairedReadsError<A> {
     fn get_code(&self) -> i32 {
         match self {
             ZipPairedReadsError::IoError(e) => e.get_code(),
+            ZipPairedReadsError::BadHeaders { source, .. } => source.get_code(),
             _ => 1,
         }
     }
@@ -548,8 +582,9 @@ where
 pub enum DeinterleaveError<A> {
     /// An IO error from the reader
     IoError(std::io::Error),
-    /// A mismatch in the header IDs of the paired subsequent reads
-    MismatchedHeaders([A; 2]),
+    /// Errors with the headers of subsequent reads, such as failure to parse or
+    /// being mismatched
+    BadHeaders { records: [A; 2], source: PairedHeaderError },
     /// An odd number of reads in the iterator
     OddNumberOfReads(A),
 }
@@ -561,12 +596,15 @@ impl<A> From<std::io::Error> for DeinterleaveError<A> {
     }
 }
 
-impl<A: HeaderReadable> From<DeinterleaveError<A>> for std::io::Error {
+impl<A> From<DeinterleaveError<A>> for std::io::Error
+where
+    A: HeaderReadable + Debug + Sync + Send + 'static,
+{
     #[inline]
     fn from(value: DeinterleaveError<A>) -> Self {
         match value {
             DeinterleaveError::IoError(e) => e,
-            other => std::io::Error::other(other.to_string()),
+            other => std::io::Error::other(other),
         }
     }
 }
@@ -576,9 +614,9 @@ impl<A: HeaderReadable> Display for DeinterleaveError<A> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             DeinterleaveError::IoError(e) => write!(f, "{e}"),
-            DeinterleaveError::MismatchedHeaders([r1, r2]) => write!(
+            DeinterleaveError::BadHeaders { records: [r1, r2], .. } => write!(
                 f,
-                "Paired read IDs out of sync:\n\t{h1}\n\t{h2}\n",
+                "Paired read IDs out of sync:\n    | Header 1: {h1}\n    | Header 2: {h2}",
                 h1 = r1.header(),
                 h2 = r2.header()
             ),
@@ -595,6 +633,7 @@ impl<A: HeaderReadable + Debug> Error for DeinterleaveError<A> {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             DeinterleaveError::IoError(e) => e.source(),
+            DeinterleaveError::BadHeaders { source, .. } => Some(source),
             _ => None,
         }
     }
@@ -604,6 +643,7 @@ impl<A: HeaderReadable> GetCode for DeinterleaveError<A> {
     fn get_code(&self) -> i32 {
         match self {
             DeinterleaveError::IoError(e) => e.get_code(),
+            DeinterleaveError::BadHeaders { source, .. } => source.get_code(),
             _ => 1,
         }
     }
@@ -611,7 +651,7 @@ impl<A: HeaderReadable> GetCode for DeinterleaveError<A> {
 
 impl<A> DeinterleaveError<A>
 where
-    A: HeaderReadable,
+    A: HeaderReadable + Debug + Sync + Send + 'static,
 {
     /// Maps the error to include messages and context with the provided path.
     ///
@@ -619,13 +659,17 @@ where
     pub fn add_path_context(self, path: &Path) -> std::io::Error {
         match self {
             DeinterleaveError::IoError(e) => e,
-            DeinterleaveError::MismatchedHeaders([r1, r2]) => std::io::Error::other(format!(
-                "Paired read IDs out of sync:\n| Header 1: {header1}\n| Header 2: {header2}",
-                header1 = r1.header(),
-                header2 = r2.header(),
-            ))
-            .with_path_context("Failed to deinterleave the reads in file", path)
-            .into(),
+            DeinterleaveError::BadHeaders {
+                records: [r1, r2],
+                source,
+            } => source
+                .with_context(format!(
+                    "Paired read IDs out of sync:\n| Header 1: {header1}\n| Header 2: {header2}",
+                    header1 = r1.header(),
+                    header2 = r2.header(),
+                ))
+                .with_path_context("Failed to deinterleave the reads in file", path)
+                .into(),
             e @ DeinterleaveError::OddNumberOfReads(_) => std::io::Error::from(e)
                 .with_path_context("Failed to deinterleave the reads in file", path)
                 .into(),
@@ -651,10 +695,13 @@ where
         if let Some(read2) = self.0.next() {
             let read2 = unwrap_or_return_some_err!(read2.map_err(DeinterleaveError::IoError));
 
-            if check_paired_headers(&read1, &read2).is_ok() {
-                Some(Ok([read1, read2]))
+            if let Err(source) = check_paired_headers(&read1, &read2) {
+                Some(Err(DeinterleaveError::BadHeaders {
+                    records: [read1, read2],
+                    source,
+                }))
             } else {
-                Some(Err(DeinterleaveError::MismatchedHeaders([read1, read2])))
+                Some(Ok([read1, read2]))
             }
         } else {
             Some(Err(DeinterleaveError::OddNumberOfReads(read1)))

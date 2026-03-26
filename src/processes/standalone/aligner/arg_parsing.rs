@@ -78,6 +78,7 @@ pub struct AlignerConfig {
 /// file path as context.
 ///
 /// [`Aa`]: Alphabet::Aa
+#[allow(unused_mut)]
 pub fn parse_aligner_args(args: AlignerArgs) -> std::io::Result<ParsedAlignerArgs> {
     #[cfg(not(feature = "dev-adaptive"))]
     let mut args = args;
