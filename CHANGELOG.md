@@ -10,6 +10,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 ### Fixes
 
 - Fixes error in `aligner` tally diagnostics when reverse complement is not enabled
+- Fixes error in `phase` when trying to read matrix file when no variants are present
 
 ### Changed
 

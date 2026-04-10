@@ -80,7 +80,7 @@ pub fn phase_process(args: PhaseArgs) -> std::io::Result<()> {
     // variant is assigned phase number `1`.
     if let [single_row] = variants_file_table.as_slice() {
         writeln!(variants_file_writer, "{single_row}\t1")?;
-    } else {
+    } else if !variants_file_table.is_empty() {
         let variants_matrix_reader = InputOptions::new_from_path(&args.sqm_file).use_file().open()?;
         // Phase clustering calculation and assignment happens here.
         let variants_matrix = variants_matrix_reader.lines().process_results(|lines| {
