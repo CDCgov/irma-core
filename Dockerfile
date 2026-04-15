@@ -7,10 +7,10 @@ ENV RUSTUP_HOME=/usr/local/rustup \
 RUN yum update -y && yum install -y zip git which gcc && yum clean all
 
 RUN ARCH=$(uname -m) && \
-    if [ "$ARCH" = "aarch64" ]; then  RUSTUP_SHA256="c64b33db2c6b9385817ec0e49a84bcfe018ed6e328fe755c3c809580cc70ce7a"; \
-    elif [ "$ARCH" = "x86_64" ]; then RUSTUP_SHA256="a3339fb004c3d0bb9862ba0bce001861fe5cbde9c10d16591eb3f39ee6cd3e7f"; \
+    if [ "$ARCH" = "aarch64" ]; then  RUSTUP_SHA256="9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385ead08e6feac88fa5792"; \
+    elif [ "$ARCH" = "x86_64" ]; then RUSTUP_SHA256="4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10"; \
     else echo "Unsupported architecture: $ARCH" && exit 1; fi && \
-    RUSTUP_URL="https://static.rust-lang.org/rustup/archive/1.28.1/${ARCH}-unknown-linux-gnu/rustup-init" && \
+    RUSTUP_URL="https://static.rust-lang.org/rustup/archive/1.29.0/${ARCH}-unknown-linux-gnu/rustup-init" && \
     curl --proto '=https' --tlsv1.2 -sSf -o rustup-init "$RUSTUP_URL" && \
     echo "${RUSTUP_SHA256} *rustup-init" | sha256sum -c - && \
     chmod +x rustup-init && \
@@ -24,12 +24,13 @@ ARG irma_core_branch
 
 COPY . .
 
-RUN latest=$(git tag|tail -n1) \
-    && git checkout ${irma_core_branch:-$latest} \
-    && cargo build --profile prod \
-    && cargo test
+RUN if [ -n "$irma_core_branch" ]; then git checkout "$irma_core_branch"; fi
 
-FROM debian:bookworm-slim AS base
+RUN cargo build --profile prod && cargo test
+
+FROM dhi.io/debian-base:bookworm AS base
+
+USER 0
 
 ARG APT_MIRROR_NAME=
 RUN if [ -n "$APT_MIRROR_NAME" ]; then sed -i.bak -E '/security/! s^https?://.+?/(debian|ubuntu)^http://'"$APT_MIRROR_NAME"'/\1^' /etc/apt/sources.list && grep '^deb' /etc/apt/sources.list; fi
@@ -41,7 +42,7 @@ RUN apt-get update --allow-releaseinfo-change --fix-missing \
 
 WORKDIR /app
 COPY  --from=builder /irma-core/docs /app/docs
-COPY   --from=builder \
+COPY  --from=builder \
     /irma-core/target/prod/irma-core \
     /irma-core/Cargo.toml \
     /irma-core/Cargo.lock \
@@ -51,6 +52,8 @@ COPY   --from=builder \
     /irma-core/CONTRIBUTORS.md \
     /irma-core/README.md \
     /app/
+
+USER nonroot
 
 ENV PATH="/app:${PATH}"
 WORKDIR /data

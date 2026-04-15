@@ -14,7 +14,9 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 
 ### Changed
 
-- Adds more context to paired read errors
+- Adds more context to paired read errors in `trimmer`, `xleave`, `preprocess`,
+  and `sampler` processes
+- Hardens Dockerfile using dhi.io (requires login)
 
 ## [0.9.0] - 2026-03-06
 
