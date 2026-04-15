@@ -171,10 +171,10 @@ impl ReadTransforms for FastQ {
         b_restrict_right: Option<usize>,
     ) -> &mut Self {
         let restricted_substring_fn = match hdist {
-            0 => |needle: &[u8], seq: &RangeSearch<'_>| seq.find_substring(needle),
-            1 => |needle: &[u8], seq: &RangeSearch<'_>| seq.find_fuzzy_substring::<1>(needle),
-            2 => |needle: &[u8], seq: &RangeSearch<'_>| seq.find_fuzzy_substring::<2>(needle),
-            3 => |needle: &[u8], seq: &RangeSearch<'_>| seq.find_fuzzy_substring::<3>(needle),
+            0 => |needle: &[u8], seq: &RangeSearch<'_, Nucleotides>| seq.find_substring(needle),
+            1 => |needle: &[u8], seq: &RangeSearch<'_, Nucleotides>| seq.find_fuzzy_substring::<1>(needle),
+            2 => |needle: &[u8], seq: &RangeSearch<'_, Nucleotides>| seq.find_fuzzy_substring::<2>(needle),
+            3 => |needle: &[u8], seq: &RangeSearch<'_, Nucleotides>| seq.find_fuzzy_substring::<3>(needle),
             _ => unreachable!(),
         };
 
@@ -420,10 +420,10 @@ impl ReadTransforms for FastQViewMut<'_> {
         };
 
         let restricted_substring_fn = match hdist {
-            0 => |needle: &[u8], seq: &RangeSearch<'_>| seq.find_substring(needle),
-            1 => |needle: &[u8], seq: &RangeSearch<'_>| seq.find_fuzzy_substring::<1>(needle),
-            2 => |needle: &[u8], seq: &RangeSearch<'_>| seq.find_fuzzy_substring::<2>(needle),
-            3 => |needle: &[u8], seq: &RangeSearch<'_>| seq.find_fuzzy_substring::<3>(needle),
+            0 => |needle: &[u8], seq: &RangeSearch<'_, NucleotidesViewMut>| seq.find_substring(needle),
+            1 => |needle: &[u8], seq: &RangeSearch<'_, NucleotidesViewMut>| seq.find_fuzzy_substring::<1>(needle),
+            2 => |needle: &[u8], seq: &RangeSearch<'_, NucleotidesViewMut>| seq.find_fuzzy_substring::<2>(needle),
+            3 => |needle: &[u8], seq: &RangeSearch<'_, NucleotidesViewMut>| seq.find_fuzzy_substring::<3>(needle),
             _ => unreachable!(),
         };
 

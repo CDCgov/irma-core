@@ -52,7 +52,7 @@ pub fn phase_process(args: PhaseArgs) -> std::io::Result<()> {
             args.variants_file.display()
         )));
     };
-    validate_header(&header).with_file_context("Failed to validate header from variants file", &args.variants_file)?;
+    validate_header(&header).with_path_context("Failed to validate header from variants file", &args.variants_file)?;
 
     let mut variants_file_table = Vec::new();
     for (line_ind, line) in variants_file_lines.enumerate() {
@@ -61,7 +61,7 @@ pub fn phase_process(args: PhaseArgs) -> std::io::Result<()> {
             continue;
         }
 
-        let variants_file_line = VariantsFileLine::try_from(line).with_file_context(
+        let variants_file_line = VariantsFileLine::try_from(line).with_path_context(
             format!(
                 "Failed to parse line number {line_num} from variants file",
                 line_num = line_ind + 2
@@ -85,7 +85,7 @@ pub fn phase_process(args: PhaseArgs) -> std::io::Result<()> {
         // Phase clustering calculation and assignment happens here.
         let variants_matrix = variants_matrix_reader.lines().process_results(|lines| {
             VariantsMatrix::from_sqm_file(lines, args.tree_height, variants_file_table.len())
-                .with_file_context("Cannot parse the .sqm file", &args.sqm_file)
+                .with_path_context("Cannot parse the .sqm file", &args.sqm_file)
         })??;
 
         for line in variants_file_table {

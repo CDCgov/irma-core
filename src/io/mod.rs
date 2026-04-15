@@ -102,11 +102,11 @@ pub trait IterWithErrorContext: Sized {
     /// [`ErrorWithContext`]: zoe::data::err::ErrorWithContext
     fn iter_with_context(self, description: impl Into<String>) -> IterWithContext<Self>;
 
-    /// Convenience function for adding file context to any yielded errors.
+    /// Convenience function for adding path context to any yielded errors.
     ///
-    /// The context will be formatted as `msg: file`. The `msg` field may be
+    /// The context will be formatted as `msg: path`. The `msg` field may be
     /// anything implementing [`Display`].
-    fn iter_with_file_context(self, msg: impl Display, file: impl AsRef<Path>) -> IterWithContext<Self>;
+    fn iter_with_path_context(self, msg: impl Display, file: impl AsRef<Path>) -> IterWithContext<Self>;
 }
 
 impl<I, V, E> IterWithErrorContext for I
@@ -121,7 +121,7 @@ where
         }
     }
 
-    fn iter_with_file_context(self, msg: impl Display, file: impl AsRef<Path>) -> IterWithContext<Self> {
+    fn iter_with_path_context(self, msg: impl Display, file: impl AsRef<Path>) -> IterWithContext<Self> {
         Self::iter_with_context(self, format!("{msg}: '{path}'", path = file.as_ref().display()))
     }
 }
@@ -284,11 +284,11 @@ pub trait WriterWithErrorContext: Sized {
     /// [`ErrorWithContext`]: zoe::data::err::ErrorWithContext
     fn writer_with_context(self, description: impl Into<String>) -> WriterWithContext<Self>;
 
-    /// Convenience function for adding file context to any produced errors.
+    /// Convenience function for adding path context to any produced errors.
     ///
-    /// The context will be formatted as `msg: file`. The `msg` field may be
+    /// The context will be formatted as `msg: path`. The `msg` field may be
     /// anything implementing [`Display`].
-    fn writer_with_file_context(self, msg: impl Display, file: impl AsRef<Path>) -> WriterWithContext<Self>;
+    fn writer_with_path_context(self, msg: impl Display, file: impl AsRef<Path>) -> WriterWithContext<Self>;
 }
 
 impl<W> WriterWithErrorContext for W
@@ -302,7 +302,7 @@ where
         }
     }
 
-    fn writer_with_file_context(self, msg: impl Display, file: impl AsRef<Path>) -> WriterWithContext<Self> {
+    fn writer_with_path_context(self, msg: impl Display, file: impl AsRef<Path>) -> WriterWithContext<Self> {
         Self::writer_with_context(self, format!("{msg}: '{path}'", path = file.as_ref().display()))
     }
 }
@@ -378,11 +378,11 @@ pub trait ReaderWithErrorContext: Sized {
     /// [`ErrorWithContext`]: zoe::data::err::ErrorWithContext
     fn reader_with_context(self, description: impl Into<String>) -> ReaderWithContext<Self>;
 
-    /// Convenience function for adding file context to any produced errors.
+    /// Convenience function for adding path context to any produced errors.
     ///
-    /// The context will be formatted as `msg: file`. The `msg` field may be
+    /// The context will be formatted as `msg: path`. The `msg` field may be
     /// anything implementing [`Display`].
-    fn reader_with_file_context(self, msg: impl Display, file: impl AsRef<Path>) -> ReaderWithContext<Self>;
+    fn reader_with_path_context(self, msg: impl Display, file: impl AsRef<Path>) -> ReaderWithContext<Self>;
 }
 
 impl<R> ReaderWithErrorContext for R
@@ -396,7 +396,7 @@ where
         }
     }
 
-    fn reader_with_file_context(self, msg: impl Display, file: impl AsRef<Path>) -> ReaderWithContext<Self> {
+    fn reader_with_path_context(self, msg: impl Display, file: impl AsRef<Path>) -> ReaderWithContext<Self> {
         Self::reader_with_context(self, format!("{msg}: '{path}'", path = file.as_ref().display()))
     }
 }

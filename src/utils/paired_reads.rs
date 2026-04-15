@@ -184,12 +184,12 @@ where
             ZipReadsError::IoError(e) => e,
             ZipReadsError::ExtraFirstRead(r1) => {
                 std::io::Error::other(format!("Unexpected read found with header: {header1}", header1 = r1.header()))
-                    .with_file_context("An extra read was found in file", path1)
+                    .with_path_context("An extra read was found in file", path1)
                     .into()
             }
             ZipReadsError::ExtraSecondRead(r2) => {
                 std::io::Error::other(format!("Unexpected read found with header: {header2}", header2 = r2.header()))
-                    .with_file_context("An extra read was found in file", path2)
+                    .with_path_context("An extra read was found in file", path2)
                     .into()
             }
         }
@@ -215,12 +215,12 @@ where
             )),
             ZipPairedReadsError::ExtraFirstRead(r1) => {
                 std::io::Error::other(format!("Unexpected read found with header: {header1}", header1 = r1.header()))
-                    .with_file_context("An extra read was found in file", path1)
+                    .with_path_context("An extra read was found in file", path1)
                     .into()
             }
             ZipPairedReadsError::ExtraSecondRead(r2) => {
                 std::io::Error::other(format!("Unexpected read found with header: {header2}", header2 = r2.header()))
-                    .with_file_context("An extra read was found in file", path2)
+                    .with_path_context("An extra read was found in file", path2)
                     .into()
             }
         }
@@ -624,10 +624,10 @@ where
                 header1 = r1.header(),
                 header2 = r2.header(),
             ))
-            .with_file_context("Failed to deinterleave the reads in file", path)
+            .with_path_context("Failed to deinterleave the reads in file", path)
             .into(),
             e @ DeinterleaveError::OddNumberOfReads(_) => std::io::Error::from(e)
-                .with_file_context("Failed to deinterleave the reads in file", path)
+                .with_path_context("Failed to deinterleave the reads in file", path)
                 .into(),
         }
     }

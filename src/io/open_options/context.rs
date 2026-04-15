@@ -185,19 +185,19 @@ impl InputContext<'_> {
     /// This is a helper method for [`InputContext::add_context`].
     fn add_context_helper(e: std::io::Error, reader: Option<ReaderType>, input: InputType) -> ErrorWithContext {
         match (reader, input) {
-            (None, InputType::File(path)) => e.with_file_context("Failed to open file", path),
+            (None, InputType::File(path)) => e.with_path_context("Failed to open file", path),
             (None, InputType::Stdin) => e.with_context("Failed to read from stdin"),
             (Some(ReaderType::FastQ), InputType::File(path)) => {
-                e.with_file_context("Failed to read FASTQ records from file", path)
+                e.with_path_context("Failed to read FASTQ records from file", path)
             }
             (Some(ReaderType::Fasta), InputType::File(path)) => {
-                e.with_file_context("Failed to read FASTA records from file", path)
+                e.with_path_context("Failed to read FASTA records from file", path)
             }
             (Some(ReaderType::FastX), InputType::File(path)) => {
-                e.with_file_context("Failed to read records from file", path)
+                e.with_path_context("Failed to read records from file", path)
             }
             (Some(ReaderType::Sam), InputType::File(path)) => {
-                e.with_file_context("Failed to read SAM records from file", path)
+                e.with_path_context("Failed to read SAM records from file", path)
             }
             (Some(ReaderType::FastQ), InputType::Stdin) => e.with_context("Failed to read FASTQ records from stdin"),
             (Some(ReaderType::Fasta), InputType::Stdin) => e.with_context("Failed to read FASTA records from stdin"),
@@ -216,17 +216,17 @@ impl InputContext<'_> {
     where
         I: IterWithErrorContext, {
         match (reader, input) {
-            (None, InputType::File(path)) => iter.iter_with_file_context("Invalid record in file", path),
+            (None, InputType::File(path)) => iter.iter_with_path_context("Invalid record in file", path),
             (None, InputType::Stdin) => iter.iter_with_context("Invalid record in stdin"),
             (Some(ReaderType::FastQ), InputType::File(path)) => {
-                iter.iter_with_file_context("Invalid FASTQ record in file", path)
+                iter.iter_with_path_context("Invalid FASTQ record in file", path)
             }
             (Some(ReaderType::Fasta), InputType::File(path)) => {
-                iter.iter_with_file_context("Invalid FASTA record in file", path)
+                iter.iter_with_path_context("Invalid FASTA record in file", path)
             }
-            (Some(ReaderType::FastX), InputType::File(path)) => iter.iter_with_file_context("Invalid record in file", path),
+            (Some(ReaderType::FastX), InputType::File(path)) => iter.iter_with_path_context("Invalid record in file", path),
             (Some(ReaderType::Sam), InputType::File(path)) => {
-                iter.iter_with_file_context("Invalid SAM record in file", path)
+                iter.iter_with_path_context("Invalid SAM record in file", path)
             }
             (Some(ReaderType::FastQ), InputType::Stdin) => iter.iter_with_context("Invalid FASTQ record from stdin"),
             (Some(ReaderType::Fasta), InputType::Stdin) => iter.iter_with_context("Invalid FASTA record from stdin"),
@@ -257,7 +257,7 @@ impl InputContext<'_> {
     where
         R: Read, {
         match input {
-            InputType::File(path) => reader.reader_with_file_context("Failed to read from file", path),
+            InputType::File(path) => reader.reader_with_path_context("Failed to read from path", path),
             InputType::Stdin => reader.reader_with_context("Failed to read from stdin"),
         }
     }
@@ -326,7 +326,7 @@ impl OutputContext<'_> {
     /// This is a helper method for [`OutputContext::add_context`].
     fn add_context_helper(e: std::io::Error, output: OutputType) -> ErrorWithContext {
         match output {
-            OutputType::File(path) => e.with_file_context("Failed to open file for writing", path),
+            OutputType::File(path) => e.with_path_context("Failed to open file for writing", path),
             OutputType::Stdout => e.with_context("Failed to write to stdout"),
         }
     }
@@ -337,7 +337,7 @@ impl OutputContext<'_> {
     where
         W: Write, {
         match output {
-            OutputType::File(path) => writer.writer_with_file_context("Failed to write to file", path),
+            OutputType::File(path) => writer.writer_with_path_context("Failed to write to file", path),
             OutputType::Stdout => writer.writer_with_context("Failed to write to stdout"),
         }
     }

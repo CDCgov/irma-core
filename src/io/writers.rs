@@ -42,10 +42,10 @@ impl WriteFileZipStdout {
                 let writer = if is_gz(&path) {
                     Self::Zipped(
                         GzEncoder::new(bufwriter, Compression::default())
-                            .writer_with_file_context("Failed to write to zipped file", path),
+                            .writer_with_path_context("Failed to write to zipped file", path),
                     )
                 } else {
-                    Self::File(bufwriter.writer_with_file_context("Failed to write to file", path))
+                    Self::File(bufwriter.writer_with_path_context("Failed to write to file", path))
                 };
 
                 Ok(writer)
@@ -67,10 +67,10 @@ impl WriteFileZipStdout {
                 let writer = if is_gz(&path) {
                     Self::Zipped(
                         GzEncoder::new(bufwriter, Compression::default())
-                            .writer_with_file_context("Failed to write to zipped file", path),
+                            .writer_with_path_context("Failed to write to zipped file", path),
                     )
                 } else {
-                    Self::File(bufwriter.writer_with_file_context("Failed to write to file", path))
+                    Self::File(bufwriter.writer_with_path_context("Failed to write to file", path))
                 };
 
                 Ok(writer)

@@ -215,7 +215,7 @@ fn get_forward_reverse_sequence(mut adapter: Nucleotides, preserve_seq: bool) ->
 fn prepare_primer_kmers(
     primer_path: &PathBuf, kmer_length: usize, fuzzy_kmer: bool,
 ) -> std::io::Result<ThreeBitKmerSet<MAX_KMER_LENGTH, SeedableRandomState>> {
-    let mut fasta_primer_reader = FastaReader::from_filename(primer_path)?;
+    let mut fasta_primer_reader = FastaReader::from_path(primer_path)?;
 
     let mut unique_kmers =
         ThreeBitKmerSet::<MAX_KMER_LENGTH, _>::with_hasher(kmer_length, get_hasher()).expect("Expected valid kmer length");
@@ -304,7 +304,7 @@ pub fn parse_clipping_args(args: ClippingArgs) -> std::io::Result<ParsedClipping
                 p_kmer_length.expect("A kmer length must be provided for primer trimming"),
                 p_fuzzy,
             )
-            .with_file_context("Failed to read the primer file", primer_path)?,
+            .with_path_context("Failed to read the primer file", primer_path)?,
         )
     } else {
         None
