@@ -7,6 +7,10 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 
 ## [0.9.2] - TBD
 
+### Changed
+
+- Bare metal releases for macOS + Intel compile with x86-64-v3 (avx2) explicitly
+
 ### Fixes
 
 - Fixes error message when an ID for paired read headers fail to be parsed
