@@ -36,6 +36,7 @@ jobs:
           gh release create "${{ github.ref_name }}" \
           --title "IRMA-core ${{ github.ref_name }}" \
           --notes-file "$RUNNER_TEMP/release_notes.md" \
+          --draft \
           $latest
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -172,7 +173,7 @@ jobs:
     name: Create Integrated Package
     needs:
       [build-mac-artifacts, build-release-image-and-rhel8-artifacts]
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
     permissions:
       contents: write
 
@@ -200,5 +201,13 @@ jobs:
         shell: bash
         run: |
           gh release upload "${{ github.ref_name }}" ${{ env.RELEASE_BIN }}-integrated-${{ github.ref_name }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish Release
+        if: github.ref_name != 'test'
+        shell: bash
+        run: |
+          gh release edit "${{ github.ref_name }}" --draft=false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

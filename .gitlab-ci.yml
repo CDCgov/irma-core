@@ -17,6 +17,7 @@ irma-build:
     paths:
       - .cargo
       - target
+    expire_in: 12 hours
 
 irma-test:
   stage: test
@@ -48,3 +49,4 @@ pages:
   artifacts:
     paths:
       - public
+    expire_in: 12 hours
