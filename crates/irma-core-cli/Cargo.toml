@@ -1,0 +1,38 @@
+[package]
+name = "irma-core-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+categories.workspace = true
+keywords.workspace = true
+
+description = "A tool to aid virus sequencing and accelerating IRMA."
+
+[[bin]]
+name = "irma-core"
+path = "main.rs"
+
+[dependencies]
+zoe = { workspace = true }
+foldhash = { workspace = true }
+
+irma-records = { path = "../irma-records" }
+
+clap = { version = "4", features = ["derive"] }
+num_cpus = "1"
+rand_xoshiro = "0.8"
+rand = { version = "0.10", default-features = false, features = ["sys_rng"] }
+rayon = { version = "1" }
+kodama = "0.3"
+
+[features]
+# An optional feature for disabling rayon parallelization in aligner
+dev_no_rayon = []
+
+# An optional feature enabling the adaptive algorithm
+dev-adaptive = []

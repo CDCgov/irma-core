@@ -1,0 +1,145 @@
+use crate::io::{WriterWithContext, WriterWithErrorContext, is_gz};
+use flate2::{Compression, write::GzEncoder};
+use std::{
+    fs::File,
+    io::{BufWriter, Stdout, Write, stdout},
+    path::Path,
+};
+use zoe::define_whichever;
+
+define_whichever! {
+    /// An enum for the different acceptable output types. A [`BufWriter`] is
+    /// used for all variants, and all variants are wrapped in
+    /// [`WriterWithContext`] to add context to write errors.
+    #[derive(Debug)]
+    pub enum WriteFileZipStdout {
+        /// A writer for a regular uncompressed file.
+        File(WriterWithContext<BufWriter<File>>),
+        /// A writer for a gzip compressed file.
+        Zipped(WriterWithContext<GzEncoder<BufWriter<File>>>),
+        /// A writer for uncompressed data to stdout.
+        Stdout(WriterWithContext<BufWriter<Stdout>>),
+    }
+
+    impl Write for WriteFileZipStdout {}
+}
+
+impl WriteFileZipStdout {
+    /// Creates a new [`WriteFileZipStdout`] from an optional filename. If a
+    /// path is not provided, [`WriteFileZipStdout::Stdout`] is used.
+    ///
+    /// ## Errors
+    ///
+    /// If a path is provided, any IO errors when creating the file are
+    /// propagated. If no path is provided, this method is infallible. Any
+    /// failed writes will have context added including the path if available.
+    pub fn create(path: Option<impl AsRef<Path>>) -> std::io::Result<Self> {
+        match path {
+            Some(path) => {
+                let file = File::create(&path)?;
+                let bufwriter = BufWriter::new(file);
+
+                let writer = if is_gz(&path) {
+                    Self::Zipped(
+                        GzEncoder::new(bufwriter, Compression::default())
+                            .writer_with_path_context("Failed to write to zipped file", path),
+                    )
+                } else {
+                    Self::File(bufwriter.writer_with_path_context("Failed to write to file", path))
+                };
+
+                Ok(writer)
+            }
+            None => Ok(WriteFileZipStdout::Stdout(
+                BufWriter::new(stdout()).writer_with_context("Failed to write to stdout"),
+            )),
+        }
+    }
+
+    /// Similar to [`WriteFileZipStdout::create`], but uses a specified
+    /// `capacity` for the underlying [`BufWriter`].
+    pub fn with_capacity(capacity: usize, path: Option<impl AsRef<Path>>) -> std::io::Result<Self> {
+        match path {
+            Some(path) => {
+                let file = File::create(&path)?;
+                let bufwriter = BufWriter::with_capacity(capacity, file);
+
+                let writer = if is_gz(&path) {
+                    Self::Zipped(
+                        GzEncoder::new(bufwriter, Compression::default())
+                            .writer_with_path_context("Failed to write to zipped file", path),
+                    )
+                } else {
+                    Self::File(bufwriter.writer_with_path_context("Failed to write to file", path))
+                };
+
+                Ok(writer)
+            }
+            None => Ok(WriteFileZipStdout::Stdout(
+                BufWriter::with_capacity(capacity, stdout()).writer_with_context("Failed to write to stdout"),
+            )),
+        }
+    }
+}
+
+/// A struct containing two writers for paired reads: one for left reads and one
+/// for the right.
+///
+/// This is compatible with the [`WriteRecord`] trait, so that two-tuples and
+/// length-two arrays of records can be written to [`PairedWriters`].
+///
+/// [`WriteRecord`]: crate::io::WriteRecord
+pub struct PairedWriters<W> {
+    pub writer1: W,
+    pub writer2: W,
+}
+
+impl<W> PairedWriters<W> {
+    /// Creates a new [`PairedWriters`] from two writers.
+    #[inline]
+    pub fn new(writer1: W, writer2: W) -> Self {
+        Self { writer1, writer2 }
+    }
+}
+
+impl<W: Write> PairedWriters<W> {
+    /// Flushes the two stored writers.
+    #[inline]
+    pub fn flush(&mut self) -> std::io::Result<()> {
+        self.writer1.flush()?;
+        self.writer2.flush()
+    }
+}
+
+/// An enum for holding either a single writer (single reads) or
+/// [`PairedWriters`] (for paired reads).
+///
+/// This is compatible with the [`WriteRecords`] trait, so that given an
+/// iterator of reads, they can be written to either two writer if present, or
+/// written to one and interleaved. This involves a single match statement, and
+/// so does not incur significant overhead. This is *not* compatible with the
+/// [`WriteRecord`] trait, since performing a match on each write would be
+/// inefficient.
+///
+/// [`WriteRecord`]: crate::io::WriteRecord
+/// [`WriteRecords`]: crate::io::WriteRecords
+pub enum RecordWriters<W> {
+    /// A single writer for single end reads.
+    SingleEnd(W),
+    /// A pair of writers for paired reads.
+    PairedEnd(PairedWriters<W>),
+}
+
+impl<W> RecordWriters<W> {
+    /// Creates a new [`RecordWriters`] object to represent either a single
+    /// writer (single reads) or two writers (paired reads).
+    ///
+    /// This is used for parsing clap arguments.
+    #[inline]
+    pub fn new(writer1: W, writer2: Option<W>) -> Self {
+        match writer2 {
+            Some(writer2) => Self::PairedEnd(PairedWriters::new(writer1, writer2)),
+            None => Self::SingleEnd(writer1),
+        }
+    }
+}

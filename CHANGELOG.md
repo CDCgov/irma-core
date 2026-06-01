@@ -5,7 +5,12 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 [Semantic Versioning]. For IRMA vs IRMA-core compatibility, please see the
 [version matrix](VERSION_MATRIX.md).
 
-## [0.9.2] - TBD
+## [0.10.0] - TBD
+
+### Added
+
+- IRMA-core has been refactored into a workspace and now allows git-based
+  consumption of some functionality via an initial `irma-records` crate
 
 ### Changed
 
@@ -236,7 +241,7 @@ randomly downsampling FastQ or FASTA files. Deinterleaving is also supported.
 - **Added**: custom inexact matching algorithm from [Zoe]
 
 <!-- Versions -->
-[0.9.2]: https://github.com/CDCgov/irma-core/compare/v0.9.1...v0.9.2
+[0.10.0]: https://github.com/CDCgov/irma-core/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/CDCgov/irma-core/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/CDCgov/irma-core/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/CDCgov/irma-core/compare/v0.8.0...v0.8.1

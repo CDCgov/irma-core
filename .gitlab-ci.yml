@@ -28,7 +28,7 @@ irma-test:
   script:
     - perl .github/scripts/check_versions_changelog.pl
     - cargo test
-    - cargo doc --no-deps --document-private-items
+    - cargo doc --no-deps --document-private-items --workspace
   artifacts:
     paths:
       - target/doc
@@ -45,7 +45,7 @@ pages:
     - irma-test
   script:
     - mv target/doc public/
-    - echo "<meta http-equiv=\"refresh\" content=\"0; url=irma_core\">" > public/index.html
+    - echo "<meta http-equiv=\"refresh\" content=\"0; url=irma_core/index.html\">" > public/index.html
   artifacts:
     paths:
       - public

@@ -2,10 +2,12 @@
 
 This matrix can help with tracking which version of IRMA-core shipped with which version of [IRMA]. Using IRMA's pre-packaged [releases](https://github.com/CDCgov/irma/releases) is preferred.
 
-| IRMA version | IRMA-core version | Notes                                                                                              |
-| ------------ | ----------------- | -------------------------------------------------------------------------------------------------- |
-| v1.3.1       | 0.6.2             | Better errors, zipped reader used in `preprocess`; `sampler` functionality exists but not exposed. |
-| v1.3.0       | 0.5.1             | Unified preprocessing + mandatory IRMA-core; `trimmer` functionality exists but not exposed.       |
+| IRMA version    | IRMA-core version | Notes                                                                                              |
+| --------------- | ----------------- | -------------------------------------------------------------------------------------------------- |
+| v1.3.4          | 0.10.0            | Fix bug with tabs in FASTQ headers                                                                 |
+| v1.3.2 - v1.3.3 | 0.9.1             | Integrates a new `phase` process; exposes experimental `aligner` for `ASSEM_PROG`                  |
+| v1.3.1          | 0.6.2             | Better errors, zipped reader used in `preprocess`; `sampler` functionality exists but not exposed. |
+| v1.3.0          | 0.5.1             | Unified preprocessing + mandatory IRMA-core; `trimmer` functionality exists but not exposed.       |
 
 ## Legacy tagging
 

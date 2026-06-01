@@ -1,0 +1,199 @@
+//! Merges Illumina paired-end reads with parsimonious error correction and
+//! detection.
+
+use clap::Args;
+use irma_records::{
+    hashing::get_hasher,
+    io::{InputOptions, OutputOptions},
+    paired::get_molecular_id_side,
+    sam::{PairedMergeStats, SamMergeablePairs},
+};
+use std::{collections::HashMap, io::Write, path::PathBuf};
+use zoe::data::sam::*;
+
+#[derive(Args, Debug)]
+pub struct MergeSAMArgs {
+    /// Reference file used to generate the SAM.
+    fasta_reference: PathBuf,
+
+    /// SAM file to merge R1 and R2 pairs via alignment and parsimonious
+    /// correction.
+    sam_file: PathBuf,
+
+    /// Output directory and prefix for merged SAM data.
+    output_prefix: PathBuf,
+
+    #[arg(short = 'S', long)]
+    /// Serialize output observations for downstream analysis.
+    store_stats: bool,
+
+    #[arg(short = 'B', long)]
+    /// SAM is in bowtie format.
+    bowtie_format: bool,
+}
+
+pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error> {
+    let mut ref_reader = InputOptions::new_from_path(&args.fasta_reference)
+        .use_file()
+        .parse_fasta()
+        .open()?;
+
+    let reference = ref_reader.next().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("No valid fasta data in file: {file}", file = args.fasta_reference.display()),
+        )
+    })??;
+
+    const ONE_MB: usize = 2usize.pow(20);
+    let merged_sam_file = args.output_prefix.with_extension("sam");
+
+    let mut sam_writer = OutputOptions::new_from_path(&merged_sam_file)
+        .with_capacity(ONE_MB)
+        .use_file()
+        .open()?;
+
+    let mut sam_data: Vec<SamData> = Vec::new();
+    let mut pairs: HashMap<String, IndexPair, _> = HashMap::with_hasher(get_hasher());
+    let mut index = 0;
+
+    let sam_records = InputOptions::new_from_path(&args.sam_file).use_file().parse_sam().open()?;
+
+    for sam_row in sam_records {
+        let row = match sam_row? {
+            SamRow::Data(d) => {
+                if d.rname != reference.name {
+                    continue;
+                }
+                d
+            }
+            SamRow::Header(h) => {
+                writeln!(sam_writer, "{h}")?;
+                continue;
+            }
+        };
+
+        // bowtie is order based
+        if let Some((mol_name_id, read_side)) = get_molecular_id_side(&row.qname, '0') {
+            let new_pair = read_side.into_indexpair(index);
+
+            pairs
+                .entry(mol_name_id.to_string())
+                .and_modify(|old_pair| old_pair.merge(&new_pair))
+                .or_insert(new_pair);
+        } else {
+            pairs
+                .entry(row.qname.clone())
+                .and_modify(|r1| r1.merge(&IndexPair::new_r2(index)))
+                .or_insert(IndexPair::new_r1(index));
+        }
+
+        sam_data.push(row);
+        index += 1;
+    }
+
+    // Store statistics: Observations, deletion minor variants, true SNV, false
+    // SNV, insertion observations, insertion discrepancy.
+    let mut paired_merging_stats = PairedMergeStats::default();
+
+    for pair in pairs.values() {
+        match (pair.r1, pair.r2) {
+            (Some(pair_index1), Some(pair_index2)) => {
+                let (s, stats) = sam_data[pair_index1].merge_pair_using_reference(
+                    &sam_data[pair_index2],
+                    &reference.sequence,
+                    args.bowtie_format,
+                );
+                paired_merging_stats += stats;
+
+                writeln!(sam_writer, "{s}")?;
+            }
+            (Some(index), None) | (None, Some(index)) => {
+                writeln!(sam_writer, "{}", sam_data[index])?;
+            }
+            _ => continue,
+        }
+    }
+
+    if args.store_stats {
+        let paired_stats_file = args.output_prefix.with_extension("stats");
+
+        let mut w = OutputOptions::new_from_path(&paired_stats_file).use_file().open()?;
+
+        let PairedMergeStats {
+            observations,
+            true_variations,
+            variant_errors,
+            deletion_errors,
+            insert_obs,
+            insert_errors,
+        } = paired_merging_stats;
+
+        writeln!(
+            &mut w,
+            "{name}\tobs\t{observations}\n\
+             {name}\ttmv\t{true_variations}\n\
+             {name}\tfmv\t{variant_errors}\n\
+             {name}\tdmv\t{deletion_errors}\n\
+             {name}\tinsObs\t{insert_obs}\n\
+             {name}\tinsErr\t{insert_errors}",
+            name = reference.name
+        )?;
+
+        w.flush()?;
+    }
+
+    sam_writer.flush()
+}
+
+#[derive(Debug)]
+struct IndexPair {
+    r1: Option<usize>,
+    r2: Option<usize>,
+}
+
+impl IndexPair {
+    fn merge(&mut self, other: &IndexPair) {
+        if let (None, Some(p)) = (self.r1, other.r1) {
+            self.r1 = Some(p);
+        }
+
+        if let (None, Some(p)) = (self.r2, other.r2) {
+            self.r2 = Some(p);
+        }
+    }
+
+    fn new_r1(index: usize) -> Self {
+        Self {
+            r1: Some(index),
+            r2: None,
+        }
+    }
+
+    fn new_r2(index: usize) -> Self {
+        Self {
+            r1: None,
+            r2: Some(index),
+        }
+    }
+}
+
+trait IntoIndexPair {
+    fn into_indexpair(self, index: usize) -> IndexPair;
+}
+
+impl IntoIndexPair for char {
+    fn into_indexpair(self, index: usize) -> IndexPair {
+        match self {
+            '1' => IndexPair {
+                r1: Some(index),
+                r2: None,
+            },
+            '2' => IndexPair {
+                r1: None,
+                r2: Some(index),
+            },
+            _ => panic!("Unexpected value for SAM pair side for read-pair merging: {self}"),
+        }
+    }
+}

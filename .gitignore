@@ -1,7 +1,8 @@
 /target
 *gz
-*fastq
+*.fastq
 *.log
 *test*/
 snip.pl
 /debug
+.DS_Store

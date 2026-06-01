@@ -10,7 +10,7 @@ my $changelog = <$fh>;
 close $fh or croak "Can't close CHANGELOG.md: $OS_ERROR";
 
 local $RS = "\n";
-my $toml_version = ( split '#', qx(cargo pkgid) )[1];
+my $toml_version = ( split '#', qx(cargo pkgid -p irma-core-cli) )[1];
 chomp($toml_version);
 
 if ( $changelog =~ /^## \[(.*?)\] - (\S+?)$/sm ) {

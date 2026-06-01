@@ -20,15 +20,19 @@
 | Process      | Description                                                                                                        | Usage                         |
 | ------------ | ------------------------------------------------------------------------------------------------------------------ | ----------------------------- |
 | `preprocess` | Performs all-in-one FastQ quality control, trimming, and deflation to XFL and FASTA formats. Similar to `trimmer`. | `irma-core preprocess --help` |
-| `merge-sam`† | Merges Illumina paired-end reads with parsimonious error correction and detection                                  | `irma-core merge-sam --help` |
-| `xflate`†    | Deflates FastQ files to deduplicated Fasta files, or reinflates deduplicated Fasta files to FastQ files.           | `irma-core xflate --help` |
-| `phase`†     | Reads in the variants table and associated distance matrix for a gene. Assigns a phase number to each variant using single-linkage agglomerative clustering and writes the results to the variants table.                                                              | `irma-core phase --help` |
-| `num-procs`  | Provides the physical or logical cores of a CPU portably.                                                          | `irma-core num-procs --help` |
+| `merge-sam`† | Merges Illumina paired-end reads with parsimonious error correction and detection                                  | `irma-core merge-sam --help`  |
+| `xflate`†    | Deflates FastQ files to deduplicated Fasta files, or reinflates deduplicated Fasta files to FastQ files.           | `irma-core xflate --help`     |
+| `phase`†     | Assigns a phase number to variants based on single-linkage agglomerative clustering of association measures.       | `irma-core phase --help`      |
+| `num-procs`  | Provides the physical or logical cores of a CPU portably.                                                          | `irma-core num-procs --help`  |
 
 For compatibility notes between IRMA-core and IRMA, see the [version matrix](docs/VERSION_MATRIX.md).
 
   *† May be combined into a future process, deprecated and removed.*\
   *ø Deprecated, will be removed.*
+
+## Workspace Organization and SemVer
+
+IRMA-core is organized as a tightly-coupled workspace using a shared versioning system. While we do expose some library crate(s) for convenience in other internal projects, our SemVer policy prioritizes CLI / output file breakage for the binary crate over API breakage in library crates. This policy may be changed in the future based on our needs, but all crates should be treated as unstable dependencies with no imminent plans for [crates.io](https://crates.io) submission. If you do wish to pin to one of the library crates, please first [read developer documentation](https://cdcgov.github.io/irma-core).
 
 ## FAQ
 
@@ -44,14 +48,14 @@ git clone https://github.com/CDCgov/irma-core
 cd irma-core
 cargo +nightly b -r
 
-# Install here:
+# Installed here:
 ls -l target/release/irma-core
 ```
 
-For RHEL 8 compatible Linux distributions, you can also re-build IRMA-core using the [latest builder image](docs/BUILDER-README.md):
+For RHEL 8 compatible Linux distributions, you can either re-build IRMA-core from the included [`Dockerfile`](https://github.com/CDCgov/irma-core/blob/main/Dockerfile) or pull our latest pre-built image:
 
 ```bash
-docker pull ghcr.io/your-org/irma-core/builder:latest
+docker pull ghcr.io/cdcgov/irma-core:latest
 ```
 
 ### How should this application be cited?
