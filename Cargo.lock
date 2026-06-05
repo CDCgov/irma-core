@@ -251,7 +251,7 @@ dependencies = [
 
 [[package]]
 name = "irma-core-cli"
-version = "0.10.0-dev"
+version = "0.10.0"
 dependencies = [
  "clap",
  "foldhash 0.2.0",
@@ -266,7 +266,7 @@ dependencies = [
 
 [[package]]
 name = "irma-records"
-version = "0.10.0-dev"
+version = "0.10.0"
 dependencies = [
  "flate2",
  "foldhash 0.2.0",

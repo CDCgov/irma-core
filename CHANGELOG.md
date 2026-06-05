@@ -5,7 +5,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 [Semantic Versioning]. For IRMA vs IRMA-core compatibility, please see the
 [version matrix](VERSION_MATRIX.md).
 
-## [0.10.0] - TBD
+## [0.10.0] - 2026-06-05
 
 ### Added
 
@@ -19,6 +19,8 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 ### Fixes
 
 - Fixes error message when an ID for paired read headers fail to be parsed
+- Fixes a bug in `xflate` and `preprocess` where tab characters corrupt
+  deduplication formatting
 
 ## [0.9.1] - 2026-04-15
 

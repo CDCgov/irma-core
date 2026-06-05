@@ -113,7 +113,12 @@ fn deflate(table_file: &Path, fastq_files: &Vec<PathBuf>) -> Result<(), std::io:
         write!(stdout_writer, ">{CLUSTER_PREFIX}{i}%{cluster_size}\n{sequence}\n")?;
 
         write!(table_writer, "{CLUSTER_PREFIX}{i}%{cluster_size}")?;
-        for (header, quality_scores) in metadata {
+        for (mut header, quality_scores) in metadata {
+            crate::shared::replace_tabs_with_spaces(&mut header);
+
+            // Validity: both `header` and `quality_scores` are tab free, the
+            // header by sanitization and quality scores by construction
+            // (graphic ASCII)
             write!(table_writer, "\t{header}\t{quality_scores}")?;
         }
         writeln!(table_writer)?;

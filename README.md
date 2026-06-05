@@ -32,7 +32,7 @@ For compatibility notes between IRMA-core and IRMA, see the [version matrix](doc
 
 ## Workspace Organization and SemVer
 
-IRMA-core is organized as a tightly-coupled workspace using a shared versioning system. While we do expose some library crate(s) for convenience in other internal projects, our SemVer policy prioritizes CLI / output file breakage for the binary crate over API breakage in library crates. This policy may be changed in the future based on our needs, but all crates should be treated as unstable dependencies with no imminent plans for [crates.io](https://crates.io) submission. If you do wish to pin to one of the library crates, please first [read developer documentation](https://cdcgov.github.io/irma-core).
+IRMA-core is organized as a tightly-coupled workspace using a shared versioning system. While we do expose some library crate(s) for convenience in other internal projects, our SemVer policy prioritizes CLI / output file breakage for the binary crate over API breakage in library crates. This policy may be changed in the future based on our needs, but all crates should be treated as unstable dependencies with no imminent plans for [crates.io](https://crates.io) submission. If you do wish to pin to one of the library crates, please first [read the developer documentation](https://cdcgov.github.io/irma-core).
 
 ## FAQ
 
