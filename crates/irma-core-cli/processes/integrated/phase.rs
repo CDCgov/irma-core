@@ -3,12 +3,9 @@
 //! Reads in the variants table and associated distance matrix for a gene.
 //! Assigns a phase number to each variant by creating a single-linkage
 //! agglomerative clustering tree from the distance matrix and cutting the
-//! branches at a specified height to provide phase groups. If minor variants
-//! are phased, they will belong to the same group and have the same phase
-//! number. If variants are not in-phase, they will have different phase
-//! numbers. If no variants are phased, each minor variant will have its own
-//! unique phase number. Phase numbers are added to the variants table written
-//! at the end of an IRMA assembly.
+//! branches at a specified height to provide phase groups. The variants table
+//! is rewritten with a trailing `Phase` column. If there is a single variant,
+//! it is assigned phase number `1` without reading the matrix.
 
 use clap::Args;
 use irma_records::io::{InputOptions, OutputOptions};
@@ -83,13 +80,16 @@ pub fn phase_process(args: PhaseArgs) -> std::io::Result<()> {
     } else if !variants_file_table.is_empty() {
         let variants_matrix_reader = InputOptions::new_from_path(&args.sqm_file).use_file().open()?;
         // Phase clustering calculation and assignment happens here.
-        let variants_matrix = variants_matrix_reader.lines().process_results(|lines| {
-            VariantsMatrix::from_sqm_file(lines, args.tree_height, variants_file_table.len())
+        let variant_phases = variants_matrix_reader.lines().process_results(|lines| {
+            VariantPhases::from_sqm_file(lines, args.tree_height, variants_file_table.len())
                 .with_path_context("Cannot parse the .sqm file", &args.sqm_file)
         })??;
 
         for line in variants_file_table {
-            let Some(&var_mat_ind) = variants_matrix.tag_index.get(&(line.position, line.minority_allele)) else {
+            let Some(&phase_num) = variant_phases.phase_by_tag.get(&VariantTag {
+                position:   line.position,
+                min_allele: line.minority_allele,
+            }) else {
                 return Err(std::io::Error::other(format!(
                     "Cannot find variant position \"{position}\" with minority allele \"{min_allele}\" in file: '{sqm_file}'",
                     position = line.position,
@@ -97,7 +97,6 @@ pub fn phase_process(args: PhaseArgs) -> std::io::Result<()> {
                     sqm_file = args.sqm_file.display()
                 )));
             };
-            let phase_num = variants_matrix.phase_group[var_mat_ind];
 
             writeln!(variants_file_writer, "{line}\t{phase_num}")?
         }
@@ -117,9 +116,9 @@ fn validate_height(tree_height: &str) -> Result<f64, String> {
 
 /// Validates the header in the `<gene>-variants.txt` file.
 ///
-/// Helps validate the same column location assumptions when parsing lines in
-/// [`VariantsFileLine`] for the variants file table. Returns an error early if
-/// any of the assumptions are false.
+/// Ensures the `Position` and `Minority_Allele` columns are present at the
+/// locations expected by [`VariantsFileLine`], and rejects input that already
+/// contains a `Phase` column.
 fn validate_header(input_header: &str) -> std::io::Result<()> {
     let header_vec = input_header.split('\t').collect::<Vec<_>>();
 
@@ -145,7 +144,7 @@ fn validate_header(input_header: &str) -> std::io::Result<()> {
     }
 }
 
-/// A structure that holds the information from one line of the `variants_file`.
+/// A row from the `variants_file`, preserving the original line for output.
 struct VariantsFileLine {
     line:            String,
     position:        usize,
@@ -199,22 +198,14 @@ impl Display for VariantsFileLine {
     }
 }
 
-/// A structure that holds the information from the square matrix `sqm_file`.
-struct VariantsMatrix {
-    /// Distance matrix between variants in condensed format. Stores the values
-    /// of the upper triangle of the matrix above the diagonal in a vector.
-    condensed_matrix:   Vec<f64>,
-    number_of_variants: usize,
-    /// A map from the variant position and minority allele (tag) to the variant
-    /// index.
-    tag_index:          HashMap<(usize, u8), usize>,
-    /// The phase group of each variant.
-    phase_group:        Vec<usize>,
+/// Final phase assignment indexed by variant position and minority allele.
+struct VariantPhases {
+    phase_by_tag: HashMap<VariantTag, usize>,
 }
 
-impl VariantsMatrix {
-    /// Reads each line of the `sqm_file` and parses the values into the
-    /// variants matrix.
+impl VariantPhases {
+    /// Reads the `sqm_file`, parses variant tags and upper-triangle distances,
+    /// validates the expected square dimensions, and assigns phase groups.
     fn from_sqm_file<I>(lines: I, tree_height: f64, number_of_variants: usize) -> std::io::Result<Self>
     where
         I: Iterator<Item = String>, {
@@ -222,7 +213,7 @@ impl VariantsMatrix {
             number_of_variants,
             condensed_matrix: Vec::with_capacity((number_of_variants) * (number_of_variants - 1) / 2),
             tag_index: HashMap::with_capacity(number_of_variants),
-            phase_group: vec![0; number_of_variants],
+            variant_tags: Vec::with_capacity(number_of_variants),
         };
 
         let mut row_ind = 0;
@@ -260,12 +251,27 @@ impl VariantsMatrix {
             _ => {}
         }
 
-        variants_matrix.group_by_tree_height(tree_height);
-        Ok(variants_matrix)
+        let phase_group = variants_matrix.group_by_tree_height(tree_height);
+        Ok(variants_matrix.into_variant_phases(phase_group))
     }
+}
 
-    /// Parses the values of a single line in the `sqm_file`, and updates the
-    /// [`VariantsMatrix`] with the values.
+/// Parsed square matrix data used while computing phase assignments.
+struct VariantsMatrix {
+    /// Distance matrix between variants in condensed format. Stores the values
+    /// of the upper triangle of the matrix above the diagonal in a vector.
+    condensed_matrix:   Vec<f64>,
+    number_of_variants: usize,
+    /// A map from the variant position and minority allele (tag) to the variant
+    /// index.
+    tag_index:          HashMap<VariantTag, usize>,
+    /// The variant position and minority allele at each matrix row index.
+    variant_tags:       Vec<VariantTag>,
+}
+
+impl VariantsMatrix {
+    /// Parses the matrix values from one `sqm_file` row into the condensed
+    /// distance matrix.
     ///
     /// This only parses the upper triangular entries of the matrix, ignoring the
     /// diagonal and entries below it.
@@ -301,8 +307,8 @@ impl VariantsMatrix {
         }
     }
 
-    /// Assigns the specified row index to the given variant (represented as a
-    /// tag).
+    /// Records the relationship between an `.sqm` variant tag and its row
+    /// index.
     ///
     /// The tag from the `.sqm` file should be of the form
     /// `<position><minority_allele>` where `<position>` is numeric digits and
@@ -326,8 +332,11 @@ impl VariantsMatrix {
             "Failed to parse variant position as integer. Found: \"{position_str}\""
         ))?;
 
-        match self.tag_index.entry((position, min_allele)) {
-            Entry::Vacant(entry) => entry.insert(row_ind),
+        match self.tag_index.entry(VariantTag { position, min_allele }) {
+            Entry::Vacant(entry) => {
+                entry.insert(row_ind);
+                self.variant_tags.push(VariantTag { position, min_allele });
+            }
             Entry::Occupied(_) => {
                 return Err(std::io::Error::other(format!(
                     "Duplicate variant position and minority allele \"{tag}\" found."
@@ -338,10 +347,9 @@ impl VariantsMatrix {
         Ok(())
     }
 
-    /// Creates a dendrogram and clusters phases according to a given
-    /// dissimilarity threshold. Assigns the resulting phase groups to each
-    /// variant.
-    fn group_by_tree_height(&mut self, tree_height: f64) {
+    /// Creates a dendrogram and clusters variants whose merge dissimilarity is
+    /// at or below the given threshold. Returns phase groups by matrix row.
+    fn group_by_tree_height(&mut self, tree_height: f64) -> Vec<usize> {
         let dendrogram = linkage(&mut self.condensed_matrix, self.number_of_variants, Method::Single);
         let mut tree = UnionFindTree::new(self.number_of_variants);
 
@@ -354,33 +362,77 @@ impl VariantsMatrix {
             tree.union(step.cluster1, step.cluster2, step.size, step_number);
         }
 
-        self.assign_phase_groups(tree);
+        self.assign_phase_groups(tree)
     }
 
-    /// Sorts the phase clusters by size so the largest is labeled `1`, the
-    /// second largest is labeled `2`, etc. Assigns phase clusters to each
-    /// variant.
-    fn assign_phase_groups(&mut self, tree: UnionFindTree) {
-        let mut clusters_ordered = tree.cluster_sizes.iter().collect::<Vec<_>>();
-        clusters_ordered.sort_by_key(|b| std::cmp::Reverse(b.1));
-
-        let mut root_to_phase = HashMap::with_capacity(clusters_ordered.len());
-        for (label, (&root, _)) in clusters_ordered.into_iter().enumerate() {
-            root_to_phase.insert(root, label + 1);
+    /// Labels phase clusters by size (descending), then by the lowest variant
+    /// position, then by the lowest minority allele byte value.
+    fn assign_phase_groups(&self, mut tree: UnionFindTree) -> Vec<usize> {
+        struct ClusterSummary {
+            /// Size of the cluster.
+            size:              usize,
+            /// Smallest variant position within the cluster.
+            min_position:      usize,
+            /// Lowest minority allele byte value.
+            lowest_min_allele: u8,
         }
 
-        // If not part of a cluster, label sequentially.
-        let mut new_phase_number = root_to_phase.len() + 1;
-        for i in 0..self.number_of_variants {
-            match root_to_phase.get(&tree.find(i)) {
-                Some(&phase) => self.phase_group[i] = phase,
-                None => {
-                    self.phase_group[i] = new_phase_number;
-                    new_phase_number += 1;
-                }
-            }
+        let mut clusters_by_root: HashMap<usize, ClusterSummary> = HashMap::with_capacity(self.number_of_variants);
+        for (variant_index, tag) in self.variant_tags.iter().enumerate() {
+            let root = tree.find(variant_index);
+
+            clusters_by_root
+                .entry(root)
+                .and_modify(|cluster| {
+                    cluster.size += 1;
+                    cluster.min_position = cluster.min_position.min(tag.position);
+                    cluster.lowest_min_allele = cluster.lowest_min_allele.min(tag.min_allele);
+                })
+                .or_insert_with(|| ClusterSummary {
+                    size:              1,
+                    min_position:      tag.position,
+                    lowest_min_allele: tag.min_allele,
+                });
+        }
+
+        let mut clusters_ordered = clusters_by_root.into_iter().collect::<Vec<_>>();
+        clusters_ordered.sort_unstable_by_key(|(_, cluster)| {
+            (
+                std::cmp::Reverse(cluster.size),
+                cluster.min_position,
+                // breaks ties for same-size, same-position clusters
+                cluster.lowest_min_allele,
+            )
+        });
+
+        let mut phase_by_root = vec![0; tree.canonical_clusters.len()];
+        for (label, (root, _)) in clusters_ordered.into_iter().enumerate() {
+            phase_by_root[root] = label + 1;
+        }
+
+        let mut phase_group = vec![0; self.number_of_variants];
+        for (variant_index, phase) in phase_group.iter_mut().enumerate() {
+            *phase = phase_by_root[tree.find(variant_index)];
+        }
+
+        phase_group
+    }
+
+    /// Converts row-indexed phase assignments into final tag-indexed lookup.
+    fn into_variant_phases(self, phase_group: Vec<usize>) -> VariantPhases {
+        VariantPhases {
+            phase_by_tag: self.variant_tags.into_iter().zip(phase_group).collect(),
         }
     }
+}
+
+/// Position and minority allele identifier for a variant.
+#[derive(Eq, PartialEq, Hash)]
+struct VariantTag {
+    /// Variant's position.
+    position:   usize,
+    /// Variant's minority allele.
+    min_allele: u8,
 }
 
 /// A union-find tree structure for storing the phase clusters.
@@ -388,8 +440,8 @@ struct UnionFindTree {
     /// Stores the relationship between variants. `0..N` stores the roots of the
     /// variants, `N..2N-1` stores the internal connecting nodes.
     canonical_clusters: Vec<usize>,
-    /// A map from the given variant root to the size of the cluster that root
-    /// belongs to.
+    /// Sizes for roots of merged clusters. Roots absent from this map are
+    /// singleton clusters.
     cluster_sizes:      HashMap<usize, usize>,
     /// Number of outer leaves in the tree.
     number_of_variants: usize,
@@ -404,17 +456,26 @@ impl UnionFindTree {
         }
     }
 
-    /// Takes the index of a variant and returns the index of the canonical
-    /// cluster that variant belongs to.
-    fn find(&self, mut cluster: usize) -> usize {
-        while cluster != self.canonical_clusters[cluster] {
-            cluster = self.canonical_clusters[cluster];
+    /// Returns the canonical root cluster for `cluster`, compressing the path
+    /// on a second pass.
+    fn find(&mut self, cluster: usize) -> usize {
+        let mut root = cluster;
+        while root != self.canonical_clusters[root] {
+            root = self.canonical_clusters[root];
         }
-        cluster
+
+        let mut node = cluster;
+        while node != root {
+            let parent = self.canonical_clusters[node];
+            self.canonical_clusters[node] = root;
+            node = parent;
+        }
+
+        root
     }
 
-    /// Takes two variant clusters and merges them into the same cluster. The
-    /// initially larger cluster becomes the canonical cluster for both.
+    /// Merges two clusters. The larger existing cluster becomes canonical, with
+    /// ties favoring the first cluster.
     fn union(&mut self, cluster1: usize, cluster2: usize, merged_size: usize, step_num: usize) {
         let parent_cluster1 = self.find(cluster1);
         let parent_cluster2 = self.find(cluster2);

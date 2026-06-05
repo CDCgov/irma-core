@@ -5,6 +5,14 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 [Semantic Versioning]. For IRMA vs IRMA-core compatibility, please see the
 [version matrix](VERSION_MATRIX.md).
 
+## [0.10.1-dev] - TBD
+
+### Changed
+
+- Integrated `phase` process now labels variant phase clusters deterministically
+  by cluster size (descending), lowest variant position, then lowest minority
+  allele byte value.
+
 ## [0.10.0] - 2026-06-05
 
 ### Added
@@ -243,6 +251,7 @@ randomly downsampling FastQ or FASTA files. Deinterleaving is also supported.
 - **Added**: custom inexact matching algorithm from [Zoe]
 
 <!-- Versions -->
+[0.10.1-dev]: https://github.com/CDCgov/irma-core/compare/v0.10.0...v0.10.0-dev
 [0.10.0]: https://github.com/CDCgov/irma-core/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/CDCgov/irma-core/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/CDCgov/irma-core/compare/v0.8.1...v0.9.0
