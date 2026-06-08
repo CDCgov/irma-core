@@ -78,22 +78,25 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}
           tags: |
-            type=raw,value=latest-${{ matrix.arch }}
+            type=raw,value=${{ github.ref_name }}-${{ matrix.arch }}
 
       - name: Build and push Docker image
-        id: buildpush
         uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
           push: true
+          provenance: mode=max
+          sbom: generator=docker/scout-sbom-indexer:latest
           tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
 
       - name: Prepare Linux Binary
         shell: bash
         run: |
-          IMAGE_TAG=$(echo "${{ steps.meta.outputs.tags }}" | grep -- '-${{ matrix.arch }}$' | head -n 1)
-          docker create --name temp-container $IMAGE_TAG \
+          IMAGE_TAG=$(echo "${{ env.REGISTRY }}/${{ github.repository }}:${{ github.ref_name }}-${{ matrix.arch }}" | tr '[A-Z]' '[a-z]')
+          docker create --name temp-container "$IMAGE_TAG" \
           && docker cp temp-container:/app/irma-core ./irma-core \
           && docker rm temp-container \
           && tar -czf ${{ env.RELEASE_BIN }}-linux-${{ matrix.arch }}-${{ github.ref_name }}.tar.gz irma-core
@@ -120,18 +123,34 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: index
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}
+          tags: |
+            type=raw,value=${{ github.ref_name }}
+
       - name: Create and push manifests
         shell: bash
+        env:
+          DOCKER_METADATA_OUTPUT_ANNOTATIONS: ${{ steps.meta.outputs.annotations }}
         run: |
           REPO=$(echo "${{ env.REGISTRY }}/${{ github.repository }}" | tr '[A-Z]' '[a-z]')
           VERSION=${REPO}:${{ github.ref_name }}
           LATEST=${REPO}:latest
+          VERSION_X86=${VERSION}-x86_64
+          VERSION_ARM=${VERSION}-aarch64
 
-          docker manifest create $VERSION --amend ${LATEST}-x86_64 --amend ${LATEST}-aarch64 \
-            && docker manifest push $VERSION
+          annotations=()
+          while IFS= read -r annot; do
+            [[ -n "$annot" ]] && annotations+=(--annotation "$annot")
+          done <<< "$DOCKER_METADATA_OUTPUT_ANNOTATIONS"
 
-          docker manifest create $LATEST --amend ${LATEST}-x86_64 --amend ${LATEST}-aarch64 \
-            && docker manifest push $LATEST
+          docker buildx imagetools create "${annotations[@]}" --tag "$VERSION" "$VERSION_X86" "$VERSION_ARM"
+          docker buildx imagetools create --tag "$LATEST" "$VERSION"
 
   build-mac-artifacts:
     name: Build Mac Artifacts
