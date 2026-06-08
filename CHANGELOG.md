@@ -9,8 +9,9 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 
 ### Changed
 
-- Integrated `phase` process now labels variant phase clusters deterministically
-  by cluster size (descending), lowest variant position, then lowest minority
+- Integrated `phase` process now labels variant phase clusters using thresholded
+  connected components. Phase labels are now ordered deterministically by
+  cluster size (descending), lowest variant position, then lowest minority
   allele byte value.
 
 ## [0.10.0] - 2026-06-05

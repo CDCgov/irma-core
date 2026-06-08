@@ -29,8 +29,8 @@ enum Commands {
     /// deduplicated Fasta files to FastQ files
     Xflate(XflateArgs),
     /// Reads in the variants table and associated distance matrix for a gene.
-    /// Assigns a phase number to each variant using single-linkage
-    /// agglomerative clustering and writes the results to the variants table.
+    /// Assigns a phase number to each variant using thresholded connected
+    /// components and writes the results to the variants table.
     Phase(PhaseArgs),
     /// Provides the physical or logical cores of a CPU portably.
     NumProcs(NumProcsArgs),

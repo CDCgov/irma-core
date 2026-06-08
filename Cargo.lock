@@ -256,7 +256,6 @@ dependencies = [
  "clap",
  "foldhash 0.2.0",
  "irma-records",
- "kodama",
  "num_cpus",
  "rand",
  "rand_xoshiro",
@@ -284,12 +283,6 @@ name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
-
-[[package]]
-name = "kodama"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f868feceed4703c842925c14232667c5f29c8059d0354154b2d06ec3bf9daf82"
 
 [[package]]
 name = "leb128fmt"

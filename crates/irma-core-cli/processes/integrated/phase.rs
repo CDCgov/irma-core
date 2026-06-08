@@ -1,15 +1,13 @@
 //! Phase clustering assignment.
 //!
 //! Reads in the variants table and associated distance matrix for a gene.
-//! Assigns a phase number to each variant by creating a single-linkage
-//! agglomerative clustering tree from the distance matrix and cutting the
-//! branches at a specified height to provide phase groups. The variants table
-//! is rewritten with a trailing `Phase` column. If there is a single variant,
-//! it is assigned phase number `1` without reading the matrix.
+//! Assigns a phase number to each variant by clustering variants connected by
+//! distances at or below a specified height. The variants table is rewritten
+//! with a trailing `Phase` column. If there is a single variant, it is assigned
+//! phase number `1` without reading the matrix.
 
 use clap::Args;
 use irma_records::io::{InputOptions, OutputOptions};
-use kodama::{Method, linkage};
 use std::{
     collections::{HashMap, hash_map::Entry},
     fmt::Display,
@@ -211,9 +209,9 @@ impl VariantPhases {
         I: Iterator<Item = String>, {
         let mut variants_matrix = VariantsMatrix {
             number_of_variants,
-            condensed_matrix: Vec::with_capacity((number_of_variants) * (number_of_variants - 1) / 2),
             tag_index: HashMap::with_capacity(number_of_variants),
             variant_tags: Vec::with_capacity(number_of_variants),
+            tree: UnionFindTree::new(number_of_variants),
         };
 
         let mut row_ind = 0;
@@ -235,7 +233,7 @@ impl VariantPhases {
                 line_no = row_ind + 1
             ))?;
             variants_matrix
-                .parse_matrix_row(row_iter, row_ind)
+                .parse_matrix_row(row_iter, row_ind, tree_height)
                 .with_context(format!("Failed to parse matrix row number {row_num}", row_num = row_ind + 1))?;
 
             row_ind += 1;
@@ -251,31 +249,31 @@ impl VariantPhases {
             _ => {}
         }
 
-        let phase_group = variants_matrix.group_by_tree_height(tree_height);
+        let phase_group = variants_matrix.assign_phase_groups();
         Ok(variants_matrix.into_variant_phases(phase_group))
     }
 }
 
 /// Parsed square matrix data used while computing phase assignments.
 struct VariantsMatrix {
-    /// Distance matrix between variants in condensed format. Stores the values
-    /// of the upper triangle of the matrix above the diagonal in a vector.
-    condensed_matrix:   Vec<f64>,
     number_of_variants: usize,
     /// A map from the variant position and minority allele (tag) to the variant
     /// index.
     tag_index:          HashMap<VariantTag, usize>,
     /// The variant position and minority allele at each matrix row index.
     variant_tags:       Vec<VariantTag>,
+    /// Connected components of variants whose pairwise distance is at or below
+    /// the selected tree height.
+    tree:               UnionFindTree,
 }
 
 impl VariantsMatrix {
-    /// Parses the matrix values from one `sqm_file` row into the condensed
-    /// distance matrix.
+    /// Parses the matrix values from one `sqm_file` row and merges variants
+    /// whose pairwise distance is at or below `tree_height`.
     ///
     /// This only parses the upper triangular entries of the matrix, ignoring the
     /// diagonal and entries below it.
-    fn parse_matrix_row(&mut self, row_iter: Split<'_, char>, row_ind: usize) -> std::io::Result<()> {
+    fn parse_matrix_row(&mut self, row_iter: Split<'_, char>, row_ind: usize, tree_height: f64) -> std::io::Result<()> {
         let mut row_len = 0;
 
         for (col_ind, val) in row_iter
@@ -288,7 +286,9 @@ impl VariantsMatrix {
                 col_num = col_ind + 1
             ))?;
 
-            self.condensed_matrix.push(val);
+            if val <= tree_height {
+                self.tree.union(row_ind, col_ind);
+            }
         }
 
         if row_len != self.number_of_variants {
@@ -347,27 +347,9 @@ impl VariantsMatrix {
         Ok(())
     }
 
-    /// Creates a dendrogram and clusters variants whose merge dissimilarity is
-    /// at or below the given threshold. Returns phase groups by matrix row.
-    fn group_by_tree_height(&mut self, tree_height: f64) -> Vec<usize> {
-        let dendrogram = linkage(&mut self.condensed_matrix, self.number_of_variants, Method::Single);
-        let mut tree = UnionFindTree::new(self.number_of_variants);
-
-        for (step_number, step) in dendrogram
-            .steps()
-            .iter()
-            .take_while(|step| step.dissimilarity <= tree_height)
-            .enumerate()
-        {
-            tree.union(step.cluster1, step.cluster2, step.size, step_number);
-        }
-
-        self.assign_phase_groups(tree)
-    }
-
     /// Labels phase clusters by size (descending), then by the lowest variant
     /// position, then by the lowest minority allele byte value.
-    fn assign_phase_groups(&self, mut tree: UnionFindTree) -> Vec<usize> {
+    fn assign_phase_groups(&mut self) -> Vec<usize> {
         struct ClusterSummary {
             /// Size of the cluster.
             size:              usize,
@@ -379,7 +361,7 @@ impl VariantsMatrix {
 
         let mut clusters_by_root: HashMap<usize, ClusterSummary> = HashMap::with_capacity(self.number_of_variants);
         for (variant_index, tag) in self.variant_tags.iter().enumerate() {
-            let root = tree.find(variant_index);
+            let root = self.tree.find(variant_index);
 
             clusters_by_root
                 .entry(root)
@@ -405,14 +387,14 @@ impl VariantsMatrix {
             )
         });
 
-        let mut phase_by_root = vec![0; tree.canonical_clusters.len()];
+        let mut phase_by_root = vec![0; self.tree.parents.len()];
         for (label, (root, _)) in clusters_ordered.into_iter().enumerate() {
             phase_by_root[root] = label + 1;
         }
 
         let mut phase_group = vec![0; self.number_of_variants];
         for (variant_index, phase) in phase_group.iter_mut().enumerate() {
-            *phase = phase_by_root[tree.find(variant_index)];
+            *phase = phase_by_root[self.tree.find(variant_index)];
         }
 
         phase_group
@@ -437,22 +419,17 @@ struct VariantTag {
 
 /// A union-find tree structure for storing the phase clusters.
 struct UnionFindTree {
-    /// Stores the relationship between variants. `0..N` stores the roots of the
-    /// variants, `N..2N-1` stores the internal connecting nodes.
-    canonical_clusters: Vec<usize>,
-    /// Sizes for roots of merged clusters. Roots absent from this map are
-    /// singleton clusters.
-    cluster_sizes:      HashMap<usize, usize>,
-    /// Number of outer leaves in the tree.
-    number_of_variants: usize,
+    /// Parent links for each variant row index.
+    parents: Vec<usize>,
+    /// Component sizes for roots.
+    sizes:   Vec<usize>,
 }
 
 impl UnionFindTree {
     fn new(number_of_variants: usize) -> Self {
         Self {
-            canonical_clusters: (0..2 * number_of_variants - 1).collect::<Vec<_>>(),
-            cluster_sizes: HashMap::new(),
-            number_of_variants,
+            parents: (0..number_of_variants).collect::<Vec<_>>(),
+            sizes:   vec![1; number_of_variants],
         }
     }
 
@@ -460,47 +437,34 @@ impl UnionFindTree {
     /// on a second pass.
     fn find(&mut self, cluster: usize) -> usize {
         let mut root = cluster;
-        while root != self.canonical_clusters[root] {
-            root = self.canonical_clusters[root];
+        while root != self.parents[root] {
+            root = self.parents[root];
         }
 
         let mut node = cluster;
         while node != root {
-            let parent = self.canonical_clusters[node];
-            self.canonical_clusters[node] = root;
+            let parent = self.parents[node];
+            self.parents[node] = root;
             node = parent;
         }
 
         root
     }
 
-    /// Merges two clusters. The larger existing cluster becomes canonical, with
-    /// ties favoring the first cluster.
-    fn union(&mut self, cluster1: usize, cluster2: usize, merged_size: usize, step_num: usize) {
-        let parent_cluster1 = self.find(cluster1);
-        let parent_cluster2 = self.find(cluster2);
+    /// Merges two variants into the same connected component.
+    fn union(&mut self, cluster1: usize, cluster2: usize) {
+        let mut parent_cluster1 = self.find(cluster1);
+        let mut parent_cluster2 = self.find(cluster2);
 
-        let parent_size1 = self.cluster_sizes.get(&parent_cluster1);
-        let parent_size2 = self.cluster_sizes.get(&parent_cluster2);
+        if parent_cluster1 == parent_cluster2 {
+            return;
+        }
 
-        let canonical_cluster = match (parent_size1, parent_size2) {
-            (Some(&size1), Some(&size2)) => {
-                if size1 >= size2 {
-                    self.cluster_sizes.remove(&parent_cluster2);
-                    parent_cluster1
-                } else {
-                    self.cluster_sizes.remove(&parent_cluster1);
-                    parent_cluster2
-                }
-            }
-            (_, Some(_)) => parent_cluster2,
-            _ => parent_cluster1,
-        };
+        if self.sizes[parent_cluster1] < self.sizes[parent_cluster2] {
+            std::mem::swap(&mut parent_cluster1, &mut parent_cluster2);
+        }
 
-        let new_cluster_idx = step_num + self.number_of_variants;
-        self.canonical_clusters[parent_cluster1] = canonical_cluster;
-        self.canonical_clusters[parent_cluster2] = canonical_cluster;
-        self.canonical_clusters[new_cluster_idx] = canonical_cluster;
-        self.cluster_sizes.insert(canonical_cluster, merged_size);
+        self.parents[parent_cluster2] = parent_cluster1;
+        self.sizes[parent_cluster1] += self.sizes[parent_cluster2];
     }
 }
