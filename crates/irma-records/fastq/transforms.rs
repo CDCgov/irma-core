@@ -1,3 +1,5 @@
+//! Code supporting the [`ReadTransforms`] trait for editing FASTQ reads.
+
 use foldhash::fast::SeedableRandomState;
 use zoe::{
     data::fastq::FastQ,
@@ -29,10 +31,55 @@ pub(crate) fn fix_sra_format(header: &mut String, read_side: char) {
     }
 }
 
+/// An extension trait for FASTQ data supporting editing of the reads. This
+/// includes hard clipping, masking, adapter or barcode removal, primer
+/// handling, poly-G cleanup, canonical base recoding, and read-quality
+/// summaries.
+///
+/// This trait support both clipping (removing trimmed bases) and masking
+/// (replacing them with `N`). Several methods allow the behavior to be toggled
+/// at runtime with a `masking` boolean argument.
+///
+/// This is implemented for both [`FastQ`] and [`FastQViewMut`]. The behaviors
+/// are described below:
+///
+/// - [`FastQ`] with clipping: Trimmed bases are removed from the reads. This
+///   may experience performance penalties when performed on the left, since it
+///   requires shifting all other bases in the underlying [`Vec`]s.
+/// - [`FastQ`] with masking: Masked bases are replaced with `N`. Subsequent
+///   trimming/masking operations will be unaware of the previous operation. For
+///   example, calling hard masking twice in a row with the same parameter would
+///   mask the same range twice. Another example is that the `restrict_left`
+///   argument in [`process_left_primer`] will _include_ masked bases.
+/// - [`FastQViewMut`] with clipping: The view is shrunk to only include the
+///   non-clipped bases. The underlying data is not edited.
+/// - [`FastQViewMut`] with masking: The underlying data is edited and the view
+///   is shrunk. This enables subsequent trimming/masking operations to be aware
+///   of the previous operations.
+///
+/// For most cases, [`FastQViewMut`] offers better behavior. For clipping, the
+/// final view can be converted to an owned [`FastQ`] or displayed directly. For
+/// masking, the final view can be ignored and the backing [`FastQ`] will have
+/// the masks represented correctly.
+///
+/// Note that masking does not edit the quality scores.
 pub trait ReadTransforms {
+    /// Hard clips the read by the given number of bases on the left and right
+    /// (removing them from the read).
     fn hard_clip(&mut self, left_bases: usize, right_bases: usize) -> &mut Self;
+
+    /// Masks the given number of bases on the left and right (converting them
+    /// to `N`).
     fn hard_mask(&mut self, left_bases: usize, right_bases: usize) -> &mut Self;
 
+    /// Either performs hard clipping (removing the bases) or masking
+    /// (converting them to `N`).
+    ///
+    /// This calls either [`hard_clip`] or [`hard_mask`] depending on the value
+    /// of `masking`.
+    ///
+    /// [`hard_clip`]: ReadTransforms::hard_clip
+    /// [`hard_mask`]: ReadTransforms::hard_mask
     #[inline]
     fn hard_clip_or_mask(&mut self, left_bases: usize, right_bases: usize, masking: bool) -> &mut Self {
         if masking {
@@ -42,17 +89,63 @@ pub trait ReadTransforms {
         }
     }
 
+    /// Performs trimming/masking of a primer on the left end of the read using
+    /// k-mers.
+    ///
+    /// The allowable primers are decomposed into k-mers and passed as a
+    /// [`KmerSet`]. The first `restrict_left` bases in the read are searched
+    /// for any instances of these k-mers, from right to left. Any bases within
+    /// or left of the first k-mer found are trimmed/masked.
     fn process_left_primer(
         &mut self, restrict_left: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, SeedableRandomState>, masking: bool,
     ) -> &mut Self;
+
+    /// Performs trimming/masking of a primer on the right end of the read using
+    /// k-mers.
+    ///
+    /// The allowable primers are decomposed into k-mers and passed as a
+    /// [`KmerSet`]. The last `restrict_right` bases in the read are searched
+    /// for any instances of these k-mers, from left to right. Any bases within
+    /// or right of the first k-mer found are trimmed/masked.
     fn process_right_primer(
         &mut self, restrict_right: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, SeedableRandomState>, masking: bool,
     ) -> &mut Self;
+
+    /// Performs trimming/masking of a barcode on the left and right end of the
+    /// read using string search.
+    ///
+    /// The barcode to process on the left end is given with `barcode`, and the
+    /// value for the right end is given in `reverse`. The left end is processed
+    /// first, searching from left to right for the first hit. Then, the right
+    /// end is processed, again using left to right search.
+    ///
+    /// The range in which the barcodes are searched can be optionally
+    /// restricted with `b_restrict_left` and `b_restrict_right`. Otherwise, the
+    /// full sequence is searched.
+    ///
+    /// Fuzzing string search is enabled using `hdist`, which enables a given
+    /// number of mismatches (a given hammind distance). This must be 0, 1, 2,
+    /// or 3.
+    ///
+    /// A future version of this function may change the search order, if
+    /// reverse string search algorithms get implemented.
+    ///
+    /// ## Panics
+    ///
+    /// `hdist` must be between 0 and 3.
     fn process_barcode(
         &mut self, barcode: &[u8], reverse: &[u8], hdist: usize, masking: bool, b_restrict_left: Option<usize>,
         b_restrict_right: Option<usize>,
     ) -> &mut Self;
 
+    /// Trims tails of consecutive `G` that are at the exact beginning or end of
+    /// the read.
+    ///
+    /// The minimum number of `G` present to trigger removal is specified in
+    /// `polyg_left` and `polyg_right`, where `None` skips poly-G trimming on
+    /// that side.
+    ///
+    /// If `masking` is set, the `G` bases are converted to `N`.
     #[inline]
     fn process_polyg(&mut self, polyg_left: Option<usize>, polyg_right: Option<usize>, masking: bool) -> &mut Self {
         if let Some(left_threshold) = polyg_left {
@@ -64,14 +157,31 @@ pub trait ReadTransforms {
         self
     }
 
+    /// Trims a tail of consecutive `G` bases that occur at the exact beginning
+    /// of the read. At least `left_threshold` are required for trimming to
+    /// occur.
+    ///
+    /// If `masking` is set, the `G` bases are converted to `N`.
     fn process_left_polyg(&mut self, left_threshold: usize, masking: bool) -> &mut Self;
+
+    /// Trims a tail of consecutive `G` bases that occur at the exact end of the
+    /// read. At least `left_threshold` are required for trimming to occur.
+    ///
+    /// If `masking` is set, the `G` bases are converted to `N`.
     fn process_right_polyg(&mut self, right_threshold: usize, masking: bool) -> &mut Self;
-    #[allow(dead_code)]
+
     fn fix_header(&mut self, read_side: Option<char>) -> &mut Self;
+
     fn clip_exact(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self;
+
     fn clip_exact_or_fuzzy(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self;
+
     fn mask_exact(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self;
+
     fn mask_exact_or_fuzzy(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self;
+
+    /// Recodes all bases/symbols in the read to `ACGTN` in uppercase, if
+    /// `recode` is set.
     fn to_canonical_bases(&mut self, recode: bool) -> &mut Self;
 
     #[inline]
@@ -86,6 +196,10 @@ pub trait ReadTransforms {
         }
     }
 
+    /// Computes the mean or median of the quality scores.
+    ///
+    /// Note that this will include the quality scores of masked bases when
+    /// using [`FastQ`]. If the sequence is empty, `None` is returned.
     fn get_q_center(&self, use_median: bool) -> Option<f32>;
 }
 
