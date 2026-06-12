@@ -175,7 +175,7 @@ impl ReadTransforms for FastQ {
             1 => |needle: &[u8], seq: &RangeSearch<'_, Nucleotides>| seq.find_fuzzy_substring::<1>(needle),
             2 => |needle: &[u8], seq: &RangeSearch<'_, Nucleotides>| seq.find_fuzzy_substring::<2>(needle),
             3 => |needle: &[u8], seq: &RangeSearch<'_, Nucleotides>| seq.find_fuzzy_substring::<3>(needle),
-            _ => unreachable!(),
+            _ => panic!("The value of hdist must be between 0 and 3. Found: {hdist}"),
         };
 
         let substring_fn = match hdist {
@@ -183,7 +183,7 @@ impl ReadTransforms for FastQ {
             1 => |needle: &[u8], seq: &Nucleotides| seq.find_fuzzy_substring::<1>(needle),
             2 => |needle: &[u8], seq: &Nucleotides| seq.find_fuzzy_substring::<2>(needle),
             3 => |needle: &[u8], seq: &Nucleotides| seq.find_fuzzy_substring::<3>(needle),
-            _ => unreachable!(),
+            _ => panic!("The value of hdist must be between 0 and 3. Found: {hdist}"),
         };
 
         let left_barcode_pos = match b_restrict_left {
@@ -416,7 +416,7 @@ impl ReadTransforms for FastQViewMut<'_> {
             1 => |needle: &[u8], seq: &NucleotidesViewMut<'_>| seq.find_fuzzy_substring::<1>(needle),
             2 => |needle: &[u8], seq: &NucleotidesViewMut<'_>| seq.find_fuzzy_substring::<2>(needle),
             3 => |needle: &[u8], seq: &NucleotidesViewMut<'_>| seq.find_fuzzy_substring::<3>(needle),
-            _ => unreachable!(),
+            _ => panic!("The value of hdist must be between 0 and 3. Found: {hdist}"),
         };
 
         let restricted_substring_fn = match hdist {
@@ -424,7 +424,7 @@ impl ReadTransforms for FastQViewMut<'_> {
             1 => |needle: &[u8], seq: &RangeSearch<'_, NucleotidesViewMut>| seq.find_fuzzy_substring::<1>(needle),
             2 => |needle: &[u8], seq: &RangeSearch<'_, NucleotidesViewMut>| seq.find_fuzzy_substring::<2>(needle),
             3 => |needle: &[u8], seq: &RangeSearch<'_, NucleotidesViewMut>| seq.find_fuzzy_substring::<3>(needle),
-            _ => unreachable!(),
+            _ => panic!("The value of hdist must be between 0 and 3. Found: {hdist}"),
         };
 
         let left_barcode_pos = match b_restrict_left {

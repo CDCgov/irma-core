@@ -14,6 +14,10 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
   cluster size (descending), lowest variant position, then lowest minority
   allele byte value.
 
+## Fixed
+
+- An erroneous `unreachable!` has been replaced with a descriptive panic in `process_barcode` (within `irma-records` public API)
+
 ## [0.10.0] - 2026-06-05
 
 ### Added
