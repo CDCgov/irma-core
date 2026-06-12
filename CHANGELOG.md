@@ -17,6 +17,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 ## Fixed
 
 - An erroneous `unreachable!` has been replaced with a descriptive panic in `process_barcode` (within `irma-records` public API)
+- An error for a non-ascii byte is no longer encountered in `ReadTransforms::fix_header` (within `irma-records` public API)
 
 ## [0.10.0] - 2026-06-05
 
