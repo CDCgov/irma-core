@@ -36,7 +36,7 @@ pub(crate) fn fix_sra_format(header: &mut String, read_side: char) {
 /// handling, poly-G cleanup, canonical base recoding, and read-quality
 /// summaries.
 ///
-/// This trait support both clipping (removing trimmed bases) and masking
+/// This trait supports both clipping (removing trimmed bases) and masking
 /// (replacing them with `N`). Several methods allow the behavior to be toggled
 /// at runtime with a `masking` boolean argument.
 ///
