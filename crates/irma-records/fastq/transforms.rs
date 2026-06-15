@@ -63,6 +63,8 @@ pub(crate) fn fix_sra_format(header: &mut String, read_side: char) {
 /// the masks represented correctly.
 ///
 /// Note that masking does not edit the quality scores.
+///
+/// [`process_left_primer`]: ReadTransforms::process_left_primer
 pub trait ReadTransforms {
     /// Hard clips the read by the given number of bases on the left and right
     /// (removing them from the read).
