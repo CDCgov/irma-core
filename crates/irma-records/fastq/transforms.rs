@@ -123,8 +123,8 @@ pub trait ReadTransforms {
     /// restricted with `b_restrict_left` and `b_restrict_right`. Otherwise, the
     /// full sequence is searched.
     ///
-    /// Fuzzing string search is enabled using `hdist`, which enables a given
-    /// number of mismatches (a given hammind distance). This must be 0, 1, 2,
+    /// Fuzzy string search is enabled using `hdist`, which enables a given
+    /// number of mismatches (a given hamming distance). This must be 0, 1, 2,
     /// or 3.
     ///
     /// A future version of this function may change the search order, if
@@ -165,7 +165,7 @@ pub trait ReadTransforms {
     fn process_left_polyg(&mut self, left_threshold: usize, masking: bool) -> &mut Self;
 
     /// Trims a tail of consecutive `G` bases that occur at the exact end of the
-    /// read. At least `left_threshold` are required for trimming to occur.
+    /// read. At least `right_threshold` are required for trimming to occur.
     ///
     /// If `masking` is set, the `G` bases are converted to `N`.
     fn process_right_polyg(&mut self, right_threshold: usize, masking: bool) -> &mut Self;
@@ -196,7 +196,7 @@ pub trait ReadTransforms {
         }
     }
 
-    /// Computes the mean or median of the quality scores.
+    /// Computes the geometric mean or median of the quality scores.
     ///
     /// Note that this will include the quality scores of masked bases when
     /// using [`FastQ`]. If the sequence is empty, `None` is returned.
