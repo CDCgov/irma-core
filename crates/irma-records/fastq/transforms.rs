@@ -26,8 +26,8 @@ pub(crate) fn fix_sra_format(header: &mut String, read_side: char) {
         && id.chars().filter(|&c| c == '.').count() == 1
     {
         let idx = id.len();
-        let string = ['.', read_side].into_iter().collect::<String>();
-        header.insert_str(idx, &string);
+        header.insert(idx, '.');
+        header.insert(idx + 1, read_side);
     }
 }
 
