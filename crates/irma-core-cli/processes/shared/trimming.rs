@@ -17,12 +17,7 @@ pub fn trim_read<'a>(
     update_trimmed_counts_field(&mut counts.poly_g, &fq_view, &mut counts.last_read_len, verbose);
 
     if let Some((ref forward_adapter, ref reverse_adapter)) = args.adapters {
-        fq_view.transform_by_reverse_forward_search(
-            args.a_fuzzy,
-            !mask,
-            reverse_adapter.as_bytes(),
-            forward_adapter.as_bytes(),
-        );
+        fq_view.process_adapter(reverse_adapter.as_bytes(), forward_adapter.as_bytes(), args.a_fuzzy, mask);
         update_trimmed_counts_field(&mut counts.adapter, &fq_view, &mut counts.last_read_len, verbose);
     } else if let Some((barcode, reverse)) = &args.barcodes {
         fq_view.process_barcode(

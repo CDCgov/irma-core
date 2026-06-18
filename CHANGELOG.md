@@ -22,6 +22,8 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 - `use_file_or_zip_threaded` has been removed in favor of a separate `decode_in_thread` method
 - The format of the tallies in `aligner` has been altered when `--tally-diagnostics` is used.
 - Added image signing to CI and updated default image to Trixie
+- Removed helper methods for adapter trimming from `ReadTransforms`, and added
+  `process_adapter` (within `irma-records` public API)
 
 ### Fixes
 

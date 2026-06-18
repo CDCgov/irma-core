@@ -174,29 +174,24 @@ pub trait ReadTransforms {
 
     fn fix_header(&mut self, read_side: Option<char>) -> &mut Self;
 
-    fn clip_exact(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self;
-
-    fn clip_exact_or_fuzzy(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self;
-
-    fn mask_exact(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self;
-
-    fn mask_exact_or_fuzzy(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self;
-
     /// Recodes all bases/symbols in the read to `ACGTN` in uppercase, if
     /// `recode` is set.
     fn to_canonical_bases(&mut self, recode: bool) -> &mut Self;
 
-    #[inline]
-    fn transform_by_reverse_forward_search(
-        &mut self, is_fuzzy: bool, is_clipping: bool, reverse: &[u8], forward: &[u8],
-    ) -> &mut Self {
-        match (is_fuzzy, is_clipping) {
-            (true, true) => self.clip_exact_or_fuzzy(reverse, forward),
-            (true, false) => self.mask_exact_or_fuzzy(reverse, forward),
-            (false, true) => self.clip_exact(reverse, forward),
-            (false, false) => self.mask_exact(reverse, forward),
-        }
-    }
+    // TODO: Improve methodology to use reverse string search where applicable
+    // (so that multiple adapters are handled properly)
+    /// Performs trimming/masking of an adapter using string search.
+    ///
+    /// Both the forward and reverse adapters are given (corresponding to
+    /// whether the read is on the forward or reverse strand). First, `reverse`
+    /// is searched for from left to right and then the same with `forward`. If
+    /// nothing is found and `is_fuzzy` is true, the same is repeated but
+    /// allowing up to one mismatch.
+    ///
+    /// The found region is masked if `masking` is true. Otherwise, if `reverse`
+    /// is located, 3' trimming occurs, and if `forward` is located, 5' trimming
+    /// occurs.
+    fn process_adapter(&mut self, reverse: &[u8], forward: &[u8], allow_fuzzy: bool, masking: bool) -> &mut Self;
 
     /// Computes the geometric mean or median of the quality scores.
     ///
@@ -368,64 +363,44 @@ impl ReadTransforms for FastQ {
     }
 
     #[inline]
-    fn clip_exact(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self {
-        if let Some(r) = self.sequence.find_substring(reverse) {
-            // Chop 3' end of sequence data
-            self.sequence.shorten_to(r.start);
-            self.quality.shorten_to(r.start);
-        } else if let Some(r) = self.sequence.find_substring(forward) {
-            // Remove the 5' and clone back in
-            self.sequence.cut_to_start(r.end);
-            self.quality.cut_to_start(r.end);
-        }
-        self
-    }
+    fn process_adapter(&mut self, reverse: &[u8], forward: &[u8], allow_fuzzy: bool, masking: bool) -> &mut Self {
+        if masking {
+            let mut range = self
+                .sequence
+                .find_substring(reverse)
+                .or_else(|| self.sequence.find_substring(forward));
 
-    #[inline]
-    fn clip_exact_or_fuzzy(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self {
-        if let Some(r) = self.sequence.find_substring(reverse) {
-            // Chop 3' end of sequence data
-            self.sequence.shorten_to(r.start);
-            self.quality.shorten_to(r.start);
-        } else if let Some(r) = self.sequence.find_substring(forward) {
-            // Remove the 5' and clone back in
-            self.sequence.cut_to_start(r.end);
-            self.quality.cut_to_start(r.end);
-        } else if let Some(r) = self.sequence.find_fuzzy_substring::<1>(reverse) {
-            // Chop 3' end of sequence data
-            self.sequence.shorten_to(r.start);
-            self.quality.shorten_to(r.start);
-        } else if let Some(r) = self.sequence.find_fuzzy_substring::<1>(forward) {
-            // Remove the 5' and clone back in
-            self.sequence.cut_to_start(r.end);
-            self.quality.cut_to_start(r.end);
-        }
-        self
-    }
+            if allow_fuzzy {
+                range = range
+                    .or_else(|| self.sequence.find_fuzzy_substring::<1>(reverse))
+                    .or_else(|| self.sequence.find_fuzzy_substring::<1>(forward));
+            }
 
-    #[inline]
-    fn mask_exact(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self {
-        if let Some(r) = self
-            .sequence
-            .find_substring(reverse)
-            .or_else(|| self.sequence.find_substring(forward))
-        {
-            self.sequence.mask_if_exists(r);
+            if let Some(r) = range {
+                self.sequence.mask_if_exists(r);
+            }
+        } else {
+            if let Some(r) = self.sequence.find_substring(reverse) {
+                // Chop 3' end of sequence data
+                self.sequence.shorten_to(r.start);
+                self.quality.shorten_to(r.start);
+            } else if let Some(r) = self.sequence.find_substring(forward) {
+                // Remove the 5' and clone back in
+                self.sequence.cut_to_start(r.end);
+                self.quality.cut_to_start(r.end);
+            } else if allow_fuzzy {
+                if let Some(r) = self.sequence.find_fuzzy_substring::<1>(reverse) {
+                    // Chop 3' end of sequence data
+                    self.sequence.shorten_to(r.start);
+                    self.quality.shorten_to(r.start);
+                } else if let Some(r) = self.sequence.find_fuzzy_substring::<1>(forward) {
+                    // Remove the 5' and clone back in
+                    self.sequence.cut_to_start(r.end);
+                    self.quality.cut_to_start(r.end);
+                }
+            }
         }
-        self
-    }
 
-    #[inline]
-    fn mask_exact_or_fuzzy(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self {
-        if let Some(r) = self
-            .sequence
-            .find_substring(reverse)
-            .or_else(|| self.sequence.find_substring(forward))
-            .or_else(|| self.sequence.find_fuzzy_substring::<1>(reverse))
-            .or_else(|| self.sequence.find_fuzzy_substring::<1>(forward))
-        {
-            self.sequence.mask_if_exists(r);
-        }
         self
     }
 
@@ -598,58 +573,40 @@ impl ReadTransforms for FastQViewMut<'_> {
     }
 
     #[inline]
-    fn clip_exact(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self {
-        if let Some(r) = self.sequence.find_substring(reverse) {
-            // Chop 3' end of sequence data
-            self.restrict(..r.start);
-        } else if let Some(r) = self.sequence.find_substring(forward) {
-            // Remove the 5' end
-            self.restrict(r.end..);
-        }
-        self
-    }
+    fn process_adapter(&mut self, reverse: &[u8], forward: &[u8], allow_fuzzy: bool, masking: bool) -> &mut Self {
+        if masking {
+            let mut range = self
+                .sequence
+                .find_substring(reverse)
+                .or_else(|| self.sequence.find_substring(forward));
 
-    #[inline]
-    fn clip_exact_or_fuzzy(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self {
-        if let Some(r) = self.sequence.find_substring(reverse) {
-            // Chop 3' end of sequence data
-            self.restrict(..r.start);
-        } else if let Some(r) = self.sequence.find_substring(forward) {
-            // Remove the 5' end
-            self.restrict(r.end..);
-        } else if let Some(r) = self.sequence.find_fuzzy_substring::<1>(reverse) {
-            // Chop 3' end of sequence data
-            self.restrict(..r.start);
-        } else if let Some(r) = self.sequence.find_fuzzy_substring::<1>(forward) {
-            // Remove the 5' end
-            self.restrict(r.end..);
-        }
-        self
-    }
+            if allow_fuzzy {
+                range = range
+                    .or_else(|| self.sequence.find_fuzzy_substring::<1>(reverse))
+                    .or_else(|| self.sequence.find_fuzzy_substring::<1>(forward));
+            }
 
-    #[inline]
-    fn mask_exact(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self {
-        if let Some(r) = self
-            .sequence
-            .find_substring(reverse)
-            .or_else(|| self.sequence.find_substring(forward))
-        {
-            self.sequence.mask_if_exists(r);
+            if let Some(r) = range {
+                self.sequence.mask_if_exists(r);
+            }
+        } else {
+            if let Some(r) = self.sequence.find_substring(reverse) {
+                // Chop 3' end of sequence data
+                self.restrict(..r.start);
+            } else if let Some(r) = self.sequence.find_substring(forward) {
+                // Remove the 5' end
+                self.restrict(r.end..);
+            } else if allow_fuzzy {
+                if let Some(r) = self.sequence.find_fuzzy_substring::<1>(reverse) {
+                    // Chop 3' end of sequence data
+                    self.restrict(..r.start);
+                } else if let Some(r) = self.sequence.find_fuzzy_substring::<1>(forward) {
+                    // Remove the 5' end
+                    self.restrict(r.end..);
+                }
+            }
         }
-        self
-    }
 
-    #[inline]
-    fn mask_exact_or_fuzzy(&mut self, reverse: &[u8], forward: &[u8]) -> &mut Self {
-        if let Some(r) = self
-            .sequence
-            .find_substring(reverse)
-            .or_else(|| self.sequence.find_substring(forward))
-            .or_else(|| self.sequence.find_fuzzy_substring::<1>(reverse))
-            .or_else(|| self.sequence.find_fuzzy_substring::<1>(forward))
-        {
-            self.sequence.mask_if_exists(r);
-        }
         self
     }
 
