@@ -20,6 +20,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 - Renamed `GzipReaderPiped` to `GzipReaderInThread` and altered API for it
 - Renamed `ReadFileZipPipe` to `ReadFileZipInThread`
 - `use_file_or_zip_threaded` has been removed in favor of a separate `decode_in_thread` method
+- The format of the tallies in `aligner` has been altered when `--tally-diagnostics` is used.
 
 ## Fixed
 
