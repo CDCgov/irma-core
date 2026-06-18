@@ -21,29 +21,25 @@ use zoe::{data::err::ResultWithErrorContext, define_whichever};
 /// pipe failures are yielded only when EOF is reached (otherwise they may be
 /// ignored). Furthermore, dropping this reader may not necessarily terminate
 /// the thread.
-pub struct GzipReaderPiped {
+pub struct GzipReaderInThread {
     reader: PipeReader,
     thread: Option<JoinHandle<std::io::Result<()>>>,
 }
 
-impl GzipReaderPiped {
-    /// Creates a new [`GzipReaderPiped`] from a type implementing [`Read`].
-    ///
-    /// `readable` should contain
-    /// [gzip](https://www.rfc-editor.org/rfc/rfc1952#page-5) encoded data.
+impl GzipReaderInThread {
+    /// Creates a new [`GzipReaderInThread`] from an existing
+    /// [`MultiGzDecoder`].
     ///
     /// ## Errors
     ///
     /// Any IO errors occurring when forming the pipe are propagated with
     /// context. Errors occurring during decoding appear when reading from the
-    /// [`GzipReaderPiped`].
-    pub fn from_readable<R>(readable: R) -> std::io::Result<Self>
+    /// [`GzipReaderInThread`].
+    pub fn from_decoder<R>(mut decoder: MultiGzDecoder<R>) -> std::io::Result<Self>
     where
         R: Read + Send + 'static, {
         let (reader, mut writer) =
             std::io::pipe().with_context("Failed to intiailize the pipe for decoding the gzip data")?;
-
-        let mut decoder = MultiGzDecoder::new(readable);
 
         let thread = thread::spawn(move || -> std::io::Result<_> {
             // This thread may throw a broken pipe error if the reader is
@@ -59,7 +55,23 @@ impl GzipReaderPiped {
         })
     }
 
-    /// Opens a new [`GzipReaderPiped`] from a path.
+    /// Creates a new [`GzipReaderInThread`] from a type implementing [`Read`].
+    ///
+    /// `readable` should contain
+    /// [gzip](https://www.rfc-editor.org/rfc/rfc1952#page-5) encoded data.
+    ///
+    /// ## Errors
+    ///
+    /// Any IO errors occurring when forming the pipe are propagated with
+    /// context. Errors occurring during decoding appear when reading from the
+    /// [`GzipReaderInThread`].
+    pub fn from_readable<R>(readable: R) -> std::io::Result<Self>
+    where
+        R: Read + Send + 'static, {
+        Self::from_decoder(MultiGzDecoder::new(readable))
+    }
+
+    /// Creates a new [`GzipReaderInThread`] from a path.
     ///
     /// The path should contain
     /// [gzip](https://www.rfc-editor.org/rfc/rfc1952#page-5) encoded data.
@@ -69,15 +81,14 @@ impl GzipReaderPiped {
     /// Any IO errors occurring when opening the file or forming the pipe are
     /// propagated.
     #[inline]
-    #[allow(dead_code)]
-    pub fn open<P>(path: P) -> std::io::Result<Self>
+    pub fn from_path<P>(path: P) -> std::io::Result<Self>
     where
         P: AsRef<Path>, {
         File::open(&path).and_then(Self::from_readable)
     }
 }
 
-impl Read for GzipReaderPiped {
+impl Read for GzipReaderInThread {
     #[inline]
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         let bytes_read = self.reader.read(buf)?;
@@ -170,7 +181,7 @@ define_whichever! {
     /// file, using a separate thread for decoding.
     ///
     /// For the [`Zipped`] variant, this will perform all unzipping eagerly on a
-    /// separate thread. See [`GzipReaderPiped`] for more details. To instead
+    /// separate thread. See [`GzipReaderInThread`] for more details. To instead
     /// perform unzipping lazily on the same thread (e.g., if the entire file
     /// will not be read, or the results will be slurped into memory), use
     /// [`ReadFileZip`].
@@ -180,18 +191,18 @@ define_whichever! {
     ///
     /// [`from_filename`]: FromFilename::from_filename
     /// [`Zipped`]: ReadFileZip::Zipped
-    pub enum ReadFileZipPipe {
+    pub enum ReadFileZipInThread {
         /// A regular uncompressed file.
         File(File),
         /// A gzip compressed file, using eager decoding on a separate thread.
-        Zipped(GzipReaderPiped),
+        Zipped(GzipReaderInThread),
     }
 
-    impl Read for ReadFileZipPipe {}
+    impl Read for ReadFileZipInThread {}
 }
 
-impl ReadFileZipPipe {
-    /// Opens a [`ReadFileZipPipe`] from a path.
+impl ReadFileZipInThread {
+    /// Opens a [`ReadFileZipInThread`] from a path.
     ///
     /// The file is determined to be zipped if it ends in `.gz`.
     ///
@@ -202,9 +213,9 @@ impl ReadFileZipPipe {
         let file = File::open(&path)?;
 
         if is_gz(&path) {
-            Ok(ReadFileZipPipe::Zipped(GzipReaderPiped::from_readable(file)?))
+            Ok(ReadFileZipInThread::Zipped(GzipReaderInThread::from_readable(file)?))
         } else {
-            Ok(ReadFileZipPipe::File(file))
+            Ok(ReadFileZipInThread::File(file))
         }
     }
 }

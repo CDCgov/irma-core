@@ -34,7 +34,8 @@ pub fn xleave_process(args: XleaveArgs) -> Result<(), std::io::Error> {
     )?;
 
     let readers = InputOptions::new_from_paths(&args.input_file1, args.input_file2.as_ref())
-        .use_file_or_zip_threaded()
+        .use_file_or_zip()
+        .decode_in_thread()
         .parse_fastx()
         .open()?;
 

@@ -8,7 +8,7 @@ use clap::Args;
 use core::fmt;
 use irma_records::{
     io::{
-        InputOptions, IterWithContext, OutputOptions, PairedWriters, ReadFileZipPipe, RecordWriters, WriteFileZipStdout,
+        InputOptions, IterWithContext, OutputOptions, PairedWriters, ReadFileZipInThread, RecordWriters, WriteFileZipStdout,
         WriteRecord, check_distinct_files,
     },
     paired::{DeinterleavedPairedReadsExt, ZipPairedReadsExt, ZipReadsError},
@@ -311,7 +311,7 @@ impl fmt::Display for PairedIoStrategy {
 
 /// Parsed arguments for the `trimmer` subprocess
 struct ParsedTrimmerArgs {
-    io_args:       PairedIoArgs<IterWithContext<FastQReader<ReadFileZipPipe>>, WriteFileZipStdout>,
+    io_args:       PairedIoArgs<IterWithContext<FastQReader<ReadFileZipInThread>>, WriteFileZipStdout>,
     strategy:      PairedIoStrategy,
     trimming_args: ParsedTrimmerOptions,
     primer_file:   Option<PathBuf>,
@@ -351,7 +351,8 @@ fn parse_trimmer_args(args: TrimmerArgs) -> std::io::Result<ParsedTrimmerArgs> {
     check_distinct_files(&fastq_input, fastq_input2.as_ref(), output.as_ref(), output2.as_ref())?;
 
     let readers = InputOptions::new_from_paths(&fastq_input, fastq_input2.as_ref())
-        .use_file_or_zip_threaded()
+        .use_file_or_zip()
+        .decode_in_thread()
         .parse_fastq()
         .open()?;
 

@@ -1,6 +1,7 @@
 use crate::io::{
-    FastXReader, InputContext, IterWithContext, IterWithErrorContext, OptionalPaths, PairedErrors, ReadFileStdin,
-    ReadFileZip, ReadFileZipPipe, ReaderType, ReaderWithContext, RecordReaders, open_options::PairedStruct,
+    FastXReader, GzipReaderInThread, InputContext, IterWithContext, IterWithErrorContext, OptionalPaths, PairedErrors,
+    ReadFileStdin, ReadFileZip, ReadFileZipInThread, ReaderType, ReaderWithContext, RecordReaders,
+    open_options::PairedStruct,
 };
 use std::{
     fs::File,
@@ -18,7 +19,7 @@ use zoe::{
 ///
 /// - Handling unpaired or paired inputs
 /// - Interpreting the paths in multiple ways, such as [`File`],
-///   [`ReadFileZip`], [`ReadFileZipPipe`], and [`ReadFileStdin`]
+///   [`ReadFileZip`], [`ReadFileZipInThread`], and [`ReadFileStdin`]
 /// - Parsing the inputs into [`FastQReader`], [`FastaReader`], [`FastXReader`],
 ///   or [`SAMReader`]
 /// - Automatically adding context including the path and record type (if
@@ -31,13 +32,13 @@ use zoe::{
 /// 1. Select the appropriate constructor:
 ///    - [`InputOptions::new_from_path`]: This is used when a single input file
 ///      is being opened from a path, compatible with [`File`], [`ReadFileZip`],
-///      and [`ReadFileZipPipe`].
+///      and [`ReadFileZipInThread`].
 ///    - [`InputOptions::new_from_opt_path`]: This is used when a single input
 ///      file is being opened from an optional path, compatible with
 ///      [`ReadFileStdin`]. If the path is not provided, stdin is used.
 ///    - [`InputOptions::new_from_paths`]: This is used when potentially paired
 ///      input files are being opened. This is compatible with [`File`],
-///      [`ReadFileZip`], and [`ReadFileZipPipe`].
+///      [`ReadFileZip`], and [`ReadFileZipInThread`].
 ///    - [`InputOptions::new_from_opt_paths`]: This is used when potentially
 ///      paired input files are being opened, and the first path is optional.
 ///      This is compatible with [`ReadFileStdin`].
@@ -46,17 +47,19 @@ use zoe::{
 ///    - `use_file`: Interpret the path as a regular file ([`File`])
 ///    - `use_file_or_zip`: Interpret the path as a regular or zipped file
 ///      ([`ReadFileZip`])
-///    - `use_file_or_zip_threaded`: Similar to above, but uses a separate
-///      thread for decoding ([`ReadFileZipPipe`])
 ///    - `use_file_or_stdin`: Interprets the optional path as a regular file or
 ///      stdin if no path is provided ([`ReadFileStdin`])
-/// 3. Optionally parse the input as a particular record format:
+/// 3. If using `use_file_or_zip`, optionally specify that the decoding should
+///    happen eagerly on a separate thread with `decode_in_thread`. This is
+///    useful when the contents are processed in a streamed manner (i.e., not
+///    collected).
+/// 4. Optionally parse the input as a particular record format:
 ///    - `parse_fastq`: Parses the input as a FASTQ file ([`FastQReader`])
 ///    - `parse_fasta`: Parses the input as a FASTA file ([`FastaReader`])
 ///    - `parse_fastx`: Parses the input as either a FASTQ or FASTA file
 ///      ([`FastXReader`])
 ///    - `parse_sam`: Parses the input as a SAM file ([`SAMReader`])
-/// 4. Call the `open` method to retrieve the inputs, with context automatically
+/// 5. Call the `open` method to retrieve the inputs, with context automatically
 ///    added to any errors.
 ///
 /// See the uses of this in IRMA-core for examples.
@@ -102,7 +105,7 @@ impl<'a> InputOptions<'a, &'a Path> {
     /// Creates a new [`InputOptions`] from a specified path.
     ///
     /// This can then be interpreted as [`File`], [`ReadFileZip`], or
-    /// [`ReadFileZipPipe`].
+    /// [`ReadFileZipInThread`].
     pub fn new_from_path<P>(path: &'a P) -> Self
     where
         P: AsRef<Path> + ?Sized, {
@@ -124,9 +127,7 @@ impl<'a> InputOptions<'a, &'a Path> {
     /// Interprets the path using [`ReadFileZip`], which supports regular files
     /// and [gzip files](https://www.rfc-editor.org/rfc/rfc1952#page-5).
     ///
-    /// The file is determined to be zipped if the path ends in `.gz`. Decoding
-    /// is done in the same thread on an as-needed basis. To eagerly decode the
-    /// file in a separate thread, use `use_file_or_zip_threaded`.
+    /// The file is determined to be zipped if the path ends in `.gz`.
     pub fn use_file_or_zip(self) -> InputOptions<'a, ReadFileZip> {
         InputOptions {
             context: self.context,
@@ -135,28 +136,10 @@ impl<'a> InputOptions<'a, &'a Path> {
                 .and_then(|path| ReadFileZip::open(path).map_err(PairedErrors::Err1)),
         }
     }
-
-    /// Interprets the path using [`ReadFileZipPipe`], which supports regular
-    /// files and [gzip files](https://www.rfc-editor.org/rfc/rfc1952#page-5).
-    /// If the file is zipped, it is eagerly decoded in a separate thread, and
-    /// an anonymous pipe is used to communicate the uncompressed data.
-    ///
-    /// The file is determined to be zipped if the path ends in `.gz`. To avoid
-    /// spawning a new thread and pipe (which may be useful if the main thread
-    /// will block on decoding the file), consider using `use_file_or_zip`.
-    pub fn use_file_or_zip_threaded(self) -> InputOptions<'a, ReadFileZipPipe> {
-        InputOptions {
-            context: self.context,
-            input:   self
-                .input
-                .and_then(|path| ReadFileZipPipe::open(path).map_err(PairedErrors::Err1)),
-        }
-    }
 }
 
 impl<'a> InputOptions<'a, Stdin> {
     /// Creates a new [`InputOptions`] for reading from [`Stdin`].
-    #[allow(dead_code)]
     pub fn new_stdin() -> Self {
         Self {
             context: InputContext::default(),
@@ -169,7 +152,6 @@ impl<'a> InputOptions<'a, Option<&'a Path>> {
     /// Creates a new [`InputOptions`] from an optional path.
     ///
     /// This can then be interpreted as a [`ReadFileStdin`].
-    #[allow(dead_code)]
     pub fn new_from_opt_path<P>(path: Option<&'a P>) -> Self
     where
         P: AsRef<Path> + ?Sized, {
@@ -201,7 +183,7 @@ impl<'a> InputOptions<'a, RecordReaders<&'a Path>> {
     /// should be `Some`, and for an unpaired input, `path2` should be `None`.
     ///
     /// The paths can then be interpreted as [`File`], [`ReadFileZip`], or
-    /// [`ReadFileZipPipe`].
+    /// [`ReadFileZipInThread`].
     pub fn new_from_paths<P>(path1: &'a P, path2: Option<&'a P>) -> Self
     where
         P: AsRef<Path> + ?Sized, {
@@ -217,7 +199,6 @@ impl<'a> InputOptions<'a, RecordReaders<&'a Path>> {
     }
 
     /// Interprets the path(s) using [`File`] for reading.
-    #[allow(dead_code)]
     pub fn use_file(self) -> InputOptions<'a, RecordReaders<File>> {
         InputOptions {
             context: self.context,
@@ -228,29 +209,11 @@ impl<'a> InputOptions<'a, RecordReaders<&'a Path>> {
     /// Interprets the path(s) using [`ReadFileZip`], which supports regular
     /// files and [gzip files](https://www.rfc-editor.org/rfc/rfc1952#page-5).
     ///
-    /// Each file is determined to be zipped if the path end in `.gz`. Decoding
-    /// is done in the same thread on an as-needed basis. To eagerly decode the
-    /// file in a separate thread, use `use_file_or_zip_threaded`.
-    #[allow(dead_code)]
+    /// Each file is determined to be zipped if the path end in `.gz`.
     pub fn use_file_or_zip(self) -> InputOptions<'a, RecordReaders<ReadFileZip>> {
         InputOptions {
             context: self.context,
             input:   self.input.and_then(|readers| readers.try_map(ReadFileZip::open)),
-        }
-    }
-
-    /// Interprets the path(s) usig [`ReadFileZipPipe`], which supports regular
-    /// files and [gzip files](https://www.rfc-editor.org/rfc/rfc1952#page-5).
-    /// If a file is zipped, it is eagerly decoded in a separate thread, and an
-    /// anonymous pipe is used to communicate the uncompressed data.
-    ///
-    /// Each file is determined to be zipped if the path ends in `.gz`. To avoid
-    /// spawning a new thread and pipe (which may be useful if the main thread
-    /// will block on decoding the file), consider using `use_file_or_zip`.
-    pub fn use_file_or_zip_threaded(self) -> InputOptions<'a, RecordReaders<ReadFileZipPipe>> {
-        InputOptions {
-            context: self.context,
-            input:   self.input.and_then(|readers| readers.try_map(ReadFileZipPipe::open)),
         }
     }
 }
@@ -266,7 +229,6 @@ impl<'a> InputOptions<'a, OptionalPaths<'a>> {
     /// The paths can then be interpreted as [`ReadFileStdin`]. Only `path1` has
     /// the potential of being [`ReadFileStdin::Stdin`], since if `path2` is
     /// `None`, this corresponds to unpaired input.
-    #[allow(dead_code)]
     pub fn new_from_opt_paths<P1, P2>(path1: Option<&'a P1>, path2: Option<&'a P2>) -> Self
     where
         P1: AsRef<Path> + ?Sized,
@@ -283,11 +245,60 @@ impl<'a> InputOptions<'a, OptionalPaths<'a>> {
     ///
     /// Only `path1` has the potential of being [`ReadFileStdin::Stdin`], since
     /// if `path2` is `None`, this corresponds to unpaired input.
-    #[allow(dead_code)]
     pub fn use_file_or_stdin(self) -> InputOptions<'a, RecordReaders<ReadFileStdin>> {
         InputOptions {
             context: self.context,
             input:   self.input.and_then(|paths| paths.try_map_readers(ReadFileStdin::open)),
+        }
+    }
+}
+
+impl<'a> InputOptions<'a, ReadFileZip> {
+    /// Performs decoding of a GZIP file in a separate thread and sends them
+    /// back using an anonymous pipe, which can speed up streamed processing of
+    /// the contents.
+    ///
+    /// If the contents are collected before the program continues, this is
+    /// unlikely to add benefit.
+    pub fn decode_in_thread(self) -> InputOptions<'a, ReadFileZipInThread> {
+        InputOptions {
+            context: self.context,
+            input:   self.input.and_then(|input| match input {
+                ReadFileZip::File(file) => Ok(ReadFileZipInThread::File(file)),
+                ReadFileZip::Zipped(decoder) => Ok(ReadFileZipInThread::Zipped(
+                    GzipReaderInThread::from_decoder(decoder).map_err(PairedErrors::Err1)?,
+                )),
+            }),
+        }
+    }
+}
+
+impl<'a> InputOptions<'a, RecordReaders<ReadFileZip>> {
+    /// Performs decoding of a GZIP file in a separate thread and sends them
+    /// back using an anonymous pipe, which can speed up streamed processing of
+    /// the contents.
+    ///
+    /// If the contents are collected before the program continues, this is
+    /// unlikely to add benefit.
+    pub fn decode_in_thread(self) -> InputOptions<'a, RecordReaders<ReadFileZipInThread>> {
+        let srcs = match self.input {
+            Ok(src) => src,
+            Err(e) => {
+                return InputOptions {
+                    context: self.context,
+                    input:   Err(e),
+                };
+            }
+        };
+
+        let input = srcs.try_map(|input| match input {
+            ReadFileZip::File(file) => Ok(ReadFileZipInThread::File(file)),
+            ReadFileZip::Zipped(decoder) => Ok(ReadFileZipInThread::Zipped(GzipReaderInThread::from_decoder(decoder)?)),
+        });
+
+        InputOptions {
+            context: self.context,
+            input,
         }
     }
 }
@@ -464,7 +475,6 @@ where
     }
 
     /// Parses the input(s) as SAM files, via the iterator [`SAMReader`].
-    #[allow(dead_code)]
     pub fn parse_sam(self) -> InputOptions<'a, RecordReaders<SAMReader<R, true>>> {
         let srcs = match self.input {
             Ok(src) => src,
@@ -607,8 +617,8 @@ impl InputOptions<'_, ReadFileZip> {
     }
 }
 
-impl InputOptions<'_, ReadFileZipPipe> {
-    /// Opens the [`ReadFileZipPipe`], wrapping it in a [`BufReader`].
+impl InputOptions<'_, ReadFileZipInThread> {
+    /// Opens the [`ReadFileZipInThread`], wrapping it in a [`BufReader`].
     ///
     /// ## Errors
     ///
@@ -617,7 +627,7 @@ impl InputOptions<'_, ReadFileZipPipe> {
     /// reader will also have similar context due to the [`ReaderWithContext`]
     /// wrapper.
     #[allow(dead_code)]
-    pub fn open(self) -> std::io::Result<ReaderWithContext<BufReader<ReadFileZipPipe>>> {
+    pub fn open(self) -> std::io::Result<ReaderWithContext<BufReader<ReadFileZipInThread>>> {
         self.open_readable()
     }
 }
@@ -744,9 +754,9 @@ impl InputOptions<'_, RecordReaders<ReadFileZip>> {
     }
 }
 
-impl InputOptions<'_, RecordReaders<ReadFileZipPipe>> {
-    /// Opens the potentially paired [`ReadFileZipPipe`] inputs, wrapping each
-    /// in a [`BufReader`].
+impl InputOptions<'_, RecordReaders<ReadFileZipInThread>> {
+    /// Opens the potentially paired [`ReadFileZipInThread`] inputs, wrapping
+    /// each in a [`BufReader`].
     ///
     /// ## Errors
     ///
@@ -755,7 +765,7 @@ impl InputOptions<'_, RecordReaders<ReadFileZipPipe>> {
     /// readers will also have similar context due to the [`ReaderWithContext`]
     /// wrapper.
     #[allow(dead_code)]
-    pub fn open(self) -> std::io::Result<RecordReaders<BufReader<ReaderWithContext<ReadFileZipPipe>>>> {
+    pub fn open(self) -> std::io::Result<RecordReaders<BufReader<ReaderWithContext<ReadFileZipInThread>>>> {
         self.open_readable().map(|readers| readers.map(BufReader::new))
     }
 }

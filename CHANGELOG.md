@@ -17,6 +17,9 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
   connected components. Phase labels are now ordered deterministically by
   cluster size (descending), lowest variant position, then lowest minority
   allele byte value.
+- Renamed `GzipReaderPiped` to `GzipReaderInThread` and altered API for it
+- Renamed `ReadFileZipPipe` to `ReadFileZipInThread`
+- `use_file_or_zip_threaded` has been removed in favor of a separate `decode_in_thread` method
 
 ## Fixed
 

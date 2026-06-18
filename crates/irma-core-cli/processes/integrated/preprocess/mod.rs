@@ -10,7 +10,7 @@ use clap::{Args, ValueHint};
 use foldhash::fast::SeedableRandomState;
 use irma_records::{
     fastq::ReadTransforms,
-    io::{InputOptions, IterWithContext, OutputOptions, ReadFileZipPipe, RecordReaders, WriterWithContext},
+    io::{InputOptions, IterWithContext, OutputOptions, ReadFileZipInThread, RecordReaders, WriterWithContext},
     {
         hashing::get_hasher,
         paired::{ReadSide, ZipPairedReadsError, ZipPairedReadsExt},
@@ -111,7 +111,7 @@ pub fn preprocess_process(args: PreprocessArgs) -> Result<(), std::io::Error> {
 /// context.
 struct Reader {
     path: PathBuf,
-    iter: IterWithContext<FastQReader<ReadFileZipPipe>>,
+    iter: IterWithContext<FastQReader<ReadFileZipInThread>>,
 }
 
 struct ParsedPreprocessIoArgs {
@@ -152,7 +152,8 @@ fn parse_preprocess_args(args: PreprocessArgs) -> std::io::Result<ParsedPreproce
     } = args;
 
     let readers = InputOptions::new_from_paths(&fastq_input, fastq_input2.as_ref())
-        .use_file_or_zip_threaded()
+        .use_file_or_zip()
+        .decode_in_thread()
         .parse_fastq()
         .open()?;
 

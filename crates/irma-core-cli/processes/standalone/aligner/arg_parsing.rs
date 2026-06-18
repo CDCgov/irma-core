@@ -109,7 +109,8 @@ pub fn parse_aligner_args(args: AlignerArgs) -> std::io::Result<ParsedAlignerArg
     }
 
     let query_reader = InputOptions::new_from_path(&args.query_file)
-        .use_file_or_zip_threaded()
+        .use_file_or_zip()
+        .decode_in_thread()
         .parse_fastx()
         .open()?;
 

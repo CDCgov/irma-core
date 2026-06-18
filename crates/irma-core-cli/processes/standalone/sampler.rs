@@ -3,7 +3,7 @@
 use clap::Args;
 use irma_records::{
     io::{
-        DispatchFastX, FastXReader, InputOptions, IterWithContext, OutputOptions, ReadFileZipPipe, RecordReaders,
+        DispatchFastX, FastXReader, InputOptions, IterWithContext, OutputOptions, ReadFileZipInThread, RecordReaders,
         RecordWriters, SequenceWriter, WriteFileZipStdout, WriteRecord, WriteRecordCompatibleItem, WriteRecords,
         check_distinct_files, is_gz,
     },
@@ -365,7 +365,7 @@ fn get_paired_seq_count(io_args: &IOArgs) -> std::io::Result<Option<usize>> {
 /// context.
 struct Reader {
     path: PathBuf,
-    iter: IterWithContext<FastXReader<ReadFileZipPipe>>,
+    iter: IterWithContext<FastXReader<ReadFileZipInThread>>,
 }
 
 /// The IO arguments used by sampler, including up to two readers and writers.
@@ -398,7 +398,8 @@ fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, 
     )?;
 
     let readers = InputOptions::new_from_paths(&args.input_file, args.input_file2.as_ref())
-        .use_file_or_zip_threaded()
+        .use_file_or_zip()
+        .decode_in_thread()
         .parse_fastx()
         .open()?;
 
