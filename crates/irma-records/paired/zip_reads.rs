@@ -266,7 +266,7 @@ impl<A: HeaderReadable> Display for ZipPairedReadsError<A> {
                     .with_subitem(format!("Header 1: {h1}", h1 = r1.header()))
                     .with_subitem(format!("Header 2: {h2}", h2 = r2.header()));
 
-                write!(f, "{err}",)
+                write!(f, "{err}")
             }
             ZipPairedReadsError::ExtraFirstRead(r1) => write!(
                 f,

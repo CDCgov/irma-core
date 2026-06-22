@@ -6,7 +6,7 @@ use std::{
 };
 use zoe::{
     data::{
-        err::{GetCode, WithErrorContext},
+        err::{ErrorWithContext, GetCode, WithErrorContext, WithSubitem},
         records::HeaderReadable,
     },
     unwrap_or_return_some_err,
@@ -98,12 +98,13 @@ impl<A: HeaderReadable> Display for DeinterleaveError<A> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             DeinterleaveError::IoError(e) => write!(f, "{e}"),
-            DeinterleaveError::BadHeaders { records: [r1, r2], .. } => write!(
-                f,
-                "Paired read IDs out of sync:\n    | Header 1: {h1}\n    | Header 2: {h2}",
-                h1 = r1.header(),
-                h2 = r2.header()
-            ),
+            DeinterleaveError::BadHeaders { records: [r1, r2], .. } => {
+                let err = ErrorWithContext::new("Paired read IDs out of sync:")
+                    .with_subitem(format!("Header 1: {h1}", h1 = r1.header()))
+                    .with_subitem(format!("Header 2: {h2}", h2 = r2.header()));
+
+                write!(f, "{err}")
+            }
             DeinterleaveError::OddNumberOfReads(r1) => write!(
                 f,
                 "An odd number of reads was found while de-interleaving. See header: {header1}",
@@ -147,11 +148,9 @@ where
                 records: [r1, r2],
                 source,
             } => source
-                .with_context(format!(
-                    "Paired read IDs out of sync:\n| Header 1: {header1}\n| Header 2: {header2}",
-                    header1 = r1.header(),
-                    header2 = r2.header(),
-                ))
+                .with_context("Paired read IDs out of sync:")
+                .with_subitem(format!("Header 1: {header1}", header1 = r1.header()))
+                .with_subitem(format!("Header 2: {header2}", header2 = r2.header()))
                 .with_path_context("Failed to deinterleave the reads in file", path)
                 .into(),
             e @ DeinterleaveError::OddNumberOfReads(_) => std::io::Error::from(e)
