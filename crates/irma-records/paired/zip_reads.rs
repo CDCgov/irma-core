@@ -7,7 +7,7 @@ use std::{
 };
 use zoe::{
     data::{
-        err::{GetCode, WithErrorContext},
+        err::{ErrorWithContext, GetCode, WithErrorContext, WithSubitem},
         records::HeaderReadable,
     },
     unwrap_or_return_some_err,
@@ -89,13 +89,15 @@ where
             ZipPairedReadsError::BadHeaders {
                 records: [r1, r2],
                 source,
-            } => source.with_context(format!(
-                "Did not find corresponding paired reads in {path1} and {path2}.\n    | Header 1: {header1}\n    | Header 2: {header2}",
-                path1 = path1.display(),
-                path2 = path2.display(),
-                header1 = r1.header(),
-                header2 = r2.header(),
-            )).into(),
+            } => source
+                .with_context(format!(
+                    "Did not find corresponding paired reads in {path1} and {path2}",
+                    path1 = path1.display(),
+                    path2 = path2.display(),
+                ))
+                .with_subitem(format!("Header 1: {header1}", header1 = r1.header()))
+                .with_subitem(format!("Header 2: {header2}", header2 = r2.header()))
+                .into(),
             ZipPairedReadsError::ExtraFirstRead(r1) => {
                 std::io::Error::other(format!("Unexpected read found with header: {header1}", header1 = r1.header()))
                     .with_path_context("An extra read was found in file", path1)
@@ -259,12 +261,13 @@ impl<A: HeaderReadable> Display for ZipPairedReadsError<A> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
             ZipPairedReadsError::IoError(e) => write!(f, "{e}"),
-            ZipPairedReadsError::BadHeaders { records: [r1, r2], .. } => write!(
-                f,
-                "Paired read IDs out of sync:\n    | Header 1: {h1}\n    | Header 2: {h2}",
-                h1 = r1.header(),
-                h2 = r2.header()
-            ),
+            ZipPairedReadsError::BadHeaders { records: [r1, r2], .. } => {
+                let err = ErrorWithContext::new("Paired read IDs out of sync:")
+                    .with_subitem(format!("Header 1: {h1}", h1 = r1.header()))
+                    .with_subitem(format!("Header 2: {h2}", h2 = r2.header()));
+
+                write!(f, "{err}",)
+            }
             ZipPairedReadsError::ExtraFirstRead(r1) => write!(
                 f,
                 "An extra read in the first file was found with header {header1}",
