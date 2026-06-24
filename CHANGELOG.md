@@ -7,6 +7,10 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 
 ## [0.10.1-dev] - TBD
 
+### Added
+
+- Added preliminary implementations for `FastX` views (within `irma-records` public API)
+
 ### Changed
 
 - Integrated `phase` process now labels variant phase clusters using thresholded

@@ -7,7 +7,10 @@ use zoe::{
         CheckSequence,
         err::WithErrorContext,
         fasta::FastaSeq,
+        fastq::{FastQView, FastQViewMut},
+        phred::{QualityScoresView, QualityScoresViewMut},
         records::{HeaderReadable, SequenceReadable},
+        views::Len,
     },
     define_whichever,
     prelude::{FastQ, FastQReader, FastaReader, QualityScores},
@@ -88,6 +91,28 @@ pub struct FastX {
     pub quality:  Option<QualityScores>,
 }
 
+/// The corresponding immutable view type for [`FastX`].
+///
+/// If mutating the `sequence` or `quality` fields, the user must ensure they
+/// remain the same length.
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
+pub struct FastXView<'a> {
+    pub header:   &'a str,
+    pub sequence: &'a [u8],
+    pub quality:  Option<QualityScoresView<'a>>,
+}
+
+/// The corresponding mutable view type for [`FastX`].
+///
+/// If mutating the `sequence` or `quality` fields, the user must ensure they
+/// remain the same length.
+#[derive(Eq, PartialEq, Hash, Debug)]
+pub struct FastXViewMut<'a> {
+    pub header:   &'a mut String,
+    pub sequence: &'a mut [u8],
+    pub quality:  Option<QualityScoresViewMut<'a>>,
+}
+
 impl FastX {
     /// A helper function for mapping a result of [`FastQ`] or [`FastaSeq`] to a
     /// result of [`FastX`].
@@ -104,7 +129,29 @@ impl From<FastQ> for FastX {
     fn from(value: FastQ) -> Self {
         Self {
             header:   value.header,
-            sequence: value.sequence.into_vec(),
+            sequence: value.sequence.into(),
+            quality:  Some(value.quality),
+        }
+    }
+}
+
+impl<'a> From<FastQView<'a>> for FastXView<'a> {
+    #[inline]
+    fn from(value: FastQView<'a>) -> Self {
+        Self {
+            header:   value.header,
+            sequence: value.sequence.into(),
+            quality:  Some(value.quality),
+        }
+    }
+}
+
+impl<'a> From<FastQViewMut<'a>> for FastXViewMut<'a> {
+    #[inline]
+    fn from(value: FastQViewMut<'a>) -> Self {
+        Self {
+            header:   value.header,
+            sequence: value.sequence.into(),
             quality:  Some(value.quality),
         }
     }
@@ -151,6 +198,66 @@ impl Display for FastX {
     }
 }
 
+impl Display for FastXView<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(quality) = &self.quality {
+            writeln!(f, "@{}", self.header)?;
+
+            if self.sequence.is_ascii_simd::<16>() {
+                // SAFETY: we just checked it is ASCII using our fast SIMD function.
+                // ASCII is valid UTF8.
+                f.write_str(unsafe { std::str::from_utf8_unchecked(self.sequence) })?;
+            } else {
+                f.write_str(&String::from_utf8_lossy(self.sequence))?;
+            }
+
+            writeln!(f, "\n+\n{quality}")
+        } else {
+            writeln!(f, ">{}", self.header)?;
+
+            if self.sequence.is_ascii_simd::<16>() {
+                // SAFETY: we just checked it is ASCII using our fast SIMD function.
+                // ASCII is valid UTF8.
+                f.write_str(unsafe { std::str::from_utf8_unchecked(self.sequence) })?;
+            } else {
+                f.write_str(&String::from_utf8_lossy(self.sequence))?;
+            }
+
+            f.write_char('\n')
+        }
+    }
+}
+
+impl Display for FastXViewMut<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(quality) = &self.quality {
+            writeln!(f, "@{}", self.header)?;
+
+            if self.sequence.is_ascii_simd::<16>() {
+                // SAFETY: we just checked it is ASCII using our fast SIMD function.
+                // ASCII is valid UTF8.
+                f.write_str(unsafe { std::str::from_utf8_unchecked(self.sequence) })?;
+            } else {
+                f.write_str(&String::from_utf8_lossy(self.sequence))?;
+            }
+
+            writeln!(f, "\n+\n{quality}")
+        } else {
+            writeln!(f, ">{}", self.header)?;
+
+            if self.sequence.is_ascii_simd::<16>() {
+                // SAFETY: we just checked it is ASCII using our fast SIMD function.
+                // ASCII is valid UTF8.
+                f.write_str(unsafe { std::str::from_utf8_unchecked(self.sequence) })?;
+            } else {
+                f.write_str(&String::from_utf8_lossy(self.sequence))?;
+            }
+
+            f.write_char('\n')
+        }
+    }
+}
+
 impl HeaderReadable for FastX {
     #[inline]
     fn header(&self) -> &str {
@@ -162,5 +269,63 @@ impl SequenceReadable for FastX {
     #[inline]
     fn sequence_bytes(&self) -> &[u8] {
         &self.sequence
+    }
+}
+
+impl HeaderReadable for FastXView<'_> {
+    #[inline]
+    fn header(&self) -> &str {
+        self.header
+    }
+}
+
+impl SequenceReadable for FastXView<'_> {
+    #[inline]
+    fn sequence_bytes(&self) -> &[u8] {
+        self.sequence
+    }
+}
+
+impl HeaderReadable for FastXViewMut<'_> {
+    #[inline]
+    fn header(&self) -> &str {
+        self.header
+    }
+}
+
+impl SequenceReadable for FastXViewMut<'_> {
+    #[inline]
+    fn sequence_bytes(&self) -> &[u8] {
+        self.sequence
+    }
+}
+
+impl Len for FastX {
+    fn is_empty(&self) -> bool {
+        self.sequence.is_empty()
+    }
+
+    fn len(&self) -> usize {
+        self.sequence.len()
+    }
+}
+
+impl Len for FastXView<'_> {
+    fn is_empty(&self) -> bool {
+        self.sequence.is_empty()
+    }
+
+    fn len(&self) -> usize {
+        self.sequence.len()
+    }
+}
+
+impl Len for FastXViewMut<'_> {
+    fn is_empty(&self) -> bool {
+        self.sequence.is_empty()
+    }
+
+    fn len(&self) -> usize {
+        self.sequence.len()
     }
 }
