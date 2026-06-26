@@ -27,6 +27,9 @@ zoe = { version = "0.0.29", default-features = false, features = [
 foldhash = "0.2"
 flate2 = "1"
 
+[workspace.lints.rust]
+stable_features = "allow"
+
 [profile.dev]
 opt-level = 1
 

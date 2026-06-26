@@ -35,3 +35,6 @@ dev_no_rayon = []
 
 # An optional feature enabling the adaptive algorithm
 dev-adaptive = []
+
+[lints]
+workspace = true
