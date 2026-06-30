@@ -4,7 +4,10 @@
 
 use crate::{
     args::clipping::{ClippingArgs, ParsedClippingArgs, parse_clipping_args},
-    shared::trimming::{TrimmedCounts, trim_read},
+    shared::{
+        PrintWarning,
+        trimming::{TrimmedCounts, trim_read},
+    },
 };
 use clap::{Args, ValueHint};
 use foldhash::fast::SeedableRandomState;
@@ -235,9 +238,8 @@ fn trim_and_deflate(
                         source,
                     }
                     .add_path_context(input_path1, input_path2);
-                    eprintln!(
-                        "{MODULE} WARNING! {err}\n\n`--filter-widows` or `-f` is being disabled for the remainder of the processing. Consider rerunning with corrected inputs."
-                    );
+
+                    err.warn(MODULE, "`--filter-widows` or `-f` is being disabled for the remainder of the processing. Consider rerunning with corrected inputs.", true);
 
                     std::iter::once(Ok(r1)).chain(reader1).try_for_each(|read| {
                         preprocess_seq(&mut read?, ReadSide::R1, &mut metadata, &mut deflated, options);
@@ -250,22 +252,20 @@ fn trim_and_deflate(
                     })?;
                 }
                 Err(ZipPairedReadsError::ExtraFirstRead(r1)) => {
-                    eprintln!(
-                        "{MODULE} WARNING! An extra read was found in file: '{input_path1}'\n  → Unexpected read found with header: {header1}\n\n`--filter-widows` or `-f` is being disabled for the remainder of the processing. Consider rerunning with corrected inputs.",
-                        input_path1 = input_path1.display(),
-                        header1 = r1.header
-                    );
+                    let err = ZipPairedReadsError::ExtraFirstRead(r1.as_view()).add_path_context(input_path1, input_path2);
+
+                    err.warn(MODULE, "`--filter-widows` or `-f` is being disabled for the remainder of the processing. Consider rerunning with corrected inputs.", true);
+
                     std::iter::once(Ok(r1)).chain(reader1).try_for_each(|read| {
                         preprocess_seq(&mut read?, ReadSide::R1, &mut metadata, &mut deflated, options);
                         std::io::Result::Ok(())
                     })?;
                 }
                 Err(ZipPairedReadsError::ExtraSecondRead(r2)) => {
-                    eprintln!(
-                        "{MODULE} WARNING! An extra read was found in file: '{input_path2}'\n  → Unexpected read found with header: {header2}\n\n`--filter-widows` or `-f` is being disabled for the remainder of the processing. Consider rerunning with corrected inputs.",
-                        input_path2 = input_path2.display(),
-                        header2 = r2.header
-                    );
+                    let err = ZipPairedReadsError::ExtraSecondRead(r2.as_view()).add_path_context(input_path1, input_path2);
+
+                    err.warn(MODULE, "`--filter-widows` or `-f` is being disabled for the remainder of the processing. Consider rerunning with corrected inputs.", true);
+
                     std::iter::once(Ok(r2)).chain(reader2).try_for_each(|read| {
                         preprocess_seq(&mut read?, ReadSide::R2, &mut metadata, &mut deflated, options);
                         std::io::Result::Ok(())

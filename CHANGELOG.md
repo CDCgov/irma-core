@@ -24,6 +24,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 - Added image signing to CI and updated default image to Trixie
 - Removed helper methods for adapter trimming from `ReadTransforms`, and added
   `process_adapter` (within `irma-records` public API)
+- Improves `preprocess` error output via new `PrintWarning` trait
 
 ### Fixes
 
