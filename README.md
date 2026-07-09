@@ -58,6 +58,26 @@ For RHEL 8 compatible Linux distributions, you can either re-build IRMA-core fro
 docker pull ghcr.io/cdcgov/irma-core:latest
 ```
 
+#### Verifying container images
+
+Release images on `ghcr.io` include a keyless Sigstore signature and an SLSA
+build provenance attestation. To verify both with
+[cosign](https://github.com/sigstore/cosign), replace `$TAG` with the release
+version of interest:
+
+```bash
+TAG=latest
+
+cosign verify --new-bundle-format ghcr.io/cdcgov/irma-core:$TAG \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github[.]com/CDCgov/irma-core/[.]github/workflows/release[.]yml@refs/tags/.+$'
+
+cosign verify-attestation --new-bundle-format --type slsaprovenance1 \
+  ghcr.io/cdcgov/irma-core:$TAG \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github[.]com/CDCgov/irma-core/[.]github/workflows/release[.]yml@refs/tags/.+$'
+```
+
 ### How should this application be cited?
 
 One can cite the IRMA [manuscript](https://bmcgenomics.biomedcentral.com/articles/10.1186/s12864-016-3030-6) in general, but a software citation of IRMA-core specifically is also possible for stand-alone use cases. We include some citations for convenience in [`CITATION.bib`](https://github.com/CDCgov/irma-core/blob/main/BIBLIOGRAPHY.bib)).

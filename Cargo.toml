@@ -19,7 +19,7 @@ homepage = "https://github.com/CDCgov/irma-core"
 readme = "README.md"
 
 [workspace.dependencies]
-zoe = { version = "0.0.29", default-features = false, features = [
+zoe = { version = "0.0.30", default-features = false, features = [
     "multiversion",
     "rand",
     "dev-max-score-for-type",

@@ -11,6 +11,8 @@ irma-build:
   stage: build
   tags:
     - docker
+  rules:
+    - if: $CI_COMMIT_BRANCH != "main"
   script:
     - cargo build
   artifacts:
@@ -23,16 +25,14 @@ irma-test:
   stage: test
   tags:
     - docker
+  rules:
+    - if: $CI_COMMIT_BRANCH != "main"
   dependencies:
     - irma-build
   script:
     - perl .github/scripts/check_versions_changelog.pl
     - cargo test
     - cargo doc --no-deps --document-private-items --workspace
-  artifacts:
-    paths:
-      - target/doc
-    expire_in: 12 hours
 
 pages:
   stage: deploy
@@ -41,9 +41,8 @@ pages:
     - pages
   rules:
     - if: $CI_COMMIT_BRANCH == "main"
-  dependencies:
-    - irma-test
   script:
+    - cargo doc --no-deps --document-private-items --workspace
     - mv target/doc public/
     - echo "<meta http-equiv=\"refresh\" content=\"0; url=irma_core/index.html\">" > public/index.html
   artifacts:

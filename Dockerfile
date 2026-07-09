@@ -19,7 +19,7 @@ RUN ARCH=$(uname -m) && \
     chmod -R a+w $RUSTUP_HOME $CARGO_HOME && rustc --version
 
 SHELL ["/bin/bash", "-c"]
-WORKDIR /irma-core
+WORKDIR /build
 ARG irma_core_branch
 
 COPY . .
@@ -28,9 +28,12 @@ RUN if [ -n "$irma_core_branch" ]; then git checkout "$irma_core_branch"; fi
 
 RUN cargo build --profile prod && cargo test
 
-FROM dhi.io/debian-base:bookworm AS base
+FROM scratch AS binary-export
 
-USER 0
+COPY --from=builder /build/target/prod/irma-core /export/
+
+
+FROM dhi.io/debian-base:trixie-dev AS base
 
 ARG APT_MIRROR_NAME=
 RUN if [ -n "$APT_MIRROR_NAME" ]; then sed -i.bak -E '/security/! s^https?://.+?/(debian|ubuntu)^http://'"$APT_MIRROR_NAME"'/\1^' /etc/apt/sources.list && grep '^deb' /etc/apt/sources.list; fi
@@ -38,19 +41,19 @@ RUN apt-get update --allow-releaseinfo-change --fix-missing \
     && DEBIAN_FRONTEND=noninteractive apt-get install --no-install-recommends -y procps \
     && apt clean autoclean \
     && apt autoremove --yes \
-    && rm -rf /var/lib/{apt,dpkg,cache,log}/
+    && rm -rf /var/lib/apt/lists/* /var/cache/* /var/log/* /tmp/* /var/tmp/*
 
 WORKDIR /app
-COPY  --from=builder /irma-core/docs /app/docs
+COPY  --from=builder /build/docs /app/docs
 COPY  --from=builder \
-    /irma-core/target/prod/irma-core \
-    /irma-core/Cargo.toml \
-    /irma-core/Cargo.lock \
-    /irma-core/LICENSE \
-    /irma-core/CHANGELOG.md \
-    /irma-core/CITATION.bib \
-    /irma-core/CONTRIBUTORS.md \
-    /irma-core/README.md \
+    /build/target/prod/irma-core \
+    /build/Cargo.toml \
+    /build/Cargo.lock \
+    /build/LICENSE \
+    /build/CHANGELOG.md \
+    /build/CITATION.bib \
+    /build/CONTRIBUTORS.md \
+    /build/README.md \
     /app/
 
 USER nonroot

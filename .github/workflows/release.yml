@@ -25,19 +25,20 @@ jobs:
       - name: Extract Changelog
         id: extract_changelog
         shell: bash
-        run: perl .github/scripts/last_release_notes.pl > $RUNNER_TEMP/release_notes.md
+        run: perl .github/scripts/last_release_notes.pl > "$RUNNER_TEMP/release_notes.md"
 
       - name: Create Release
         id: create_release
         shell: bash
         run: |
-          [[ "${{ github.ref_name }}" == "test" ]] && latest="--latest=false" || latest=
+          latest=()
+          [[ "${{ github.ref_name }}" == "test" ]] && latest=(--latest=false)
 
           gh release create "${{ github.ref_name }}" \
-          --title "IRMA-core ${{ github.ref_name }}" \
-          --notes-file "$RUNNER_TEMP/release_notes.md" \
-          --draft \
-          $latest
+            --draft \
+            --title "IRMA-core ${{ github.ref_name }}" \
+            --notes-file "$RUNNER_TEMP/release_notes.md" \
+            "${latest[@]}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -58,6 +59,9 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
       - name: Log in to the Container registry
         uses: docker/login-action@v4
         with:
@@ -74,13 +78,14 @@ jobs:
 
       - name: Extract metadata for Docker
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}
           tags: |
             type=raw,value=${{ github.ref_name }}-${{ matrix.arch }}
 
       - name: Build and push Docker image
+        id: buildpush
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -92,19 +97,25 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           annotations: ${{ steps.meta.outputs.annotations }}
 
-      - name: Prepare Linux Binary
+      - name: Export Linux Binary
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          target: binary-export
+          outputs: type=local,dest=./extracted
+
+      - name: Bundle Linux Binary
         shell: bash
         run: |
-          IMAGE_TAG=$(echo "${{ env.REGISTRY }}/${{ github.repository }}:${{ github.ref_name }}-${{ matrix.arch }}" | tr '[A-Z]' '[a-z]')
-          docker create --name temp-container "$IMAGE_TAG" \
-          && docker cp temp-container:/app/irma-core ./irma-core \
-          && docker rm temp-container \
-          && tar -czf ${{ env.RELEASE_BIN }}-linux-${{ matrix.arch }}-${{ github.ref_name }}.tar.gz irma-core
+          ARCHIVE="${{ env.RELEASE_BIN }}-linux-${{ matrix.arch }}-${{ github.ref_name }}.tar.gz"
+          tar -czf "$ARCHIVE" -C extracted/export "${{ env.RELEASE_BIN }}"
 
       - name: Upload Linux Release Asset
         shell: bash
         run: |
-          gh release upload "${{ github.ref_name }}" ${{ env.RELEASE_BIN }}-linux-${{ matrix.arch }}-${{ github.ref_name }}.tar.gz
+          gh release upload "${{ github.ref_name }}" \
+            "${{ env.RELEASE_BIN }}-linux-${{ matrix.arch }}-${{ github.ref_name }}.tar.gz"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -115,7 +126,12 @@ jobs:
     permissions:
       packages: write
       contents: read
+      id-token: write
+      attestations: write
     steps:
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v4.1.2
+
       - name: Log in to the Container registry
         uses: docker/login-action@v4
         with:
@@ -125,7 +141,7 @@ jobs:
 
       - name: Extract metadata for Docker
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         env:
           DOCKER_METADATA_ANNOTATIONS_LEVELS: index
         with:
@@ -134,15 +150,16 @@ jobs:
             type=raw,value=${{ github.ref_name }}
 
       - name: Create and push manifests
+        id: manifest
         shell: bash
         env:
           DOCKER_METADATA_OUTPUT_ANNOTATIONS: ${{ steps.meta.outputs.annotations }}
         run: |
-          REPO=$(echo "${{ env.REGISTRY }}/${{ github.repository }}" | tr '[A-Z]' '[a-z]')
-          VERSION=${REPO}:${{ github.ref_name }}
-          LATEST=${REPO}:latest
-          VERSION_X86=${VERSION}-x86_64
-          VERSION_ARM=${VERSION}-aarch64
+          REPO=$(echo "${{ env.REGISTRY }}/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          VERSION="${REPO}:${{ github.ref_name }}"
+          LATEST="${REPO}:latest"
+          VERSION_X86="${VERSION}-x86_64"
+          VERSION_ARM="${VERSION}-aarch64"
 
           annotations=()
           while IFS= read -r annot; do
@@ -150,7 +167,31 @@ jobs:
           done <<< "$DOCKER_METADATA_OUTPUT_ANNOTATIONS"
 
           docker buildx imagetools create "${annotations[@]}" --tag "$VERSION" "$VERSION_X86" "$VERSION_ARM"
-          docker buildx imagetools create --tag "$LATEST" "$VERSION"
+
+          DIGEST="$(docker buildx imagetools inspect "$VERSION" --format '{{.Manifest.Digest}}')"
+          {
+            echo "signed_manifest=${REPO}@${DIGEST}"
+            echo "repo=${REPO}"
+            echo "digest=${DIGEST}"
+          } >> "$GITHUB_OUTPUT"
+
+          if [[ "${{ github.ref_name }}" != "test" ]]; then
+            docker buildx imagetools create --tag "$LATEST" "$VERSION"
+          fi
+
+      - name: Sign image manifest
+        shell: bash
+        env:
+          SIGNED_MANIFEST: ${{ steps.manifest.outputs.signed_manifest }}
+        run: cosign sign --yes "$SIGNED_MANIFEST"
+
+      - name: Attest image provenance
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ steps.manifest.outputs.repo }}
+          subject-digest: ${{ steps.manifest.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
 
   build-mac-artifacts:
     name: Build Mac Artifacts
@@ -164,34 +205,38 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Install latest nightly Rust
+        shell: bash
         run: |
           rustup update nightly
           rustup default nightly
           rustup target add aarch64-apple-darwin x86_64-apple-darwin
 
       - name: Build
+        shell: bash
         run: |
           cargo build --profile prod --target aarch64-apple-darwin --target x86_64-apple-darwin
 
       - name: Package Binary
         shell: bash
         run: |
-          lipo -create -output ${{ env.RELEASE_BIN }} \
-            target/aarch64-apple-darwin/prod/${{ env.RELEASE_BIN }} \
-            target/x86_64-apple-darwin/prod/${{ env.RELEASE_BIN }}
-          tar -czf ${{ env.RELEASE_BIN }}-apple-universal-${{ github.ref_name }}.tar.gz ${{ env.RELEASE_BIN }}
+          lipo -create -output "${{ env.RELEASE_BIN }}" \
+            "target/aarch64-apple-darwin/prod/${{ env.RELEASE_BIN }}" \
+            "target/x86_64-apple-darwin/prod/${{ env.RELEASE_BIN }}"
+          tar -czf "${{ env.RELEASE_BIN }}-apple-universal-${{ github.ref_name }}.tar.gz" \
+            "${{ env.RELEASE_BIN }}"
 
       - name: Upload Release Asset
         shell: bash
         run: |
-          gh release upload "${{ github.ref_name }}" ${{ env.RELEASE_BIN }}-apple-universal-${{ github.ref_name }}.*
+          gh release upload "${{ github.ref_name }}" \
+            "${{ env.RELEASE_BIN }}-apple-universal-${{ github.ref_name }}.tar.gz"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   create-integrated-package:
     name: Create Integrated Package
     needs:
-      [build-mac-artifacts, build-release-image-and-rhel8-artifacts]
+      [build-mac-artifacts, build-release-image-and-rhel8-artifacts, create-image-manifest]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -201,25 +246,36 @@ jobs:
       - name: Download Release Assets
         shell: bash
         run: |
-          gh release download "${{ github.ref_name }}" -p ${{ env.RELEASE_BIN }}-*.tar.gz
+          gh release download "${{ github.ref_name }}" \
+            --pattern "${{ env.RELEASE_BIN }}-*.tar.gz"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract Binaries and Create Integrated Package
         shell: bash
         run: |
-          bin=${{ env.RELEASE_BIN }}
-          tag=${{ github.ref_name }}
-          tar -xzf ${bin}-apple-universal-${tag}.tar.gz && mv ${bin} ${bin}_Darwin \
-          && tar -xzf ${bin}-linux-x86_64-${tag}.tar.gz && mv ${bin} ${bin}_Linux_x86_64 \
-          && tar -xzf ${bin}-linux-aarch64-${tag}.tar.gz && mv ${bin} ${bin}_Linux_aarch64  \
-          && rm *gz \
-          && zip ${bin}-integrated-${tag}.zip irma-core_*
+          bin="${{ env.RELEASE_BIN }}"
+          tag="${{ github.ref_name }}"
+
+          tar -xzf "${bin}-apple-universal-${tag}.tar.gz"
+          mv "$bin" "${bin}_Darwin"
+
+          tar -xzf "${bin}-linux-x86_64-${tag}.tar.gz"
+          mv "$bin" "${bin}_Linux_x86_64"
+
+          tar -xzf "${bin}-linux-aarch64-${tag}.tar.gz"
+          mv "$bin" "${bin}_Linux_aarch64"
+
+          zip "${bin}-integrated-${tag}.zip" \
+            "${bin}_Darwin" \
+            "${bin}_Linux_x86_64" \
+            "${bin}_Linux_aarch64"
 
       - name: Upload Integrated Package
         shell: bash
         run: |
-          gh release upload "${{ github.ref_name }}" ${{ env.RELEASE_BIN }}-integrated-${{ github.ref_name }}.zip
+          gh release upload "${{ github.ref_name }}" \
+            "${{ env.RELEASE_BIN }}-integrated-${{ github.ref_name }}.zip"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

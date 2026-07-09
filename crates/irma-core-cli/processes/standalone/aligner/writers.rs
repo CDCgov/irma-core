@@ -5,7 +5,7 @@ use std::io::Write;
 use zoe::{
     data::{fasta::FastaSeq, sam::SamDataView},
     math::AnyInt,
-    prelude::{DataOwned, NucleotidesView, QualityScores, QualityScoresView},
+    prelude::{AsView, NucleotidesView, QualityScores, QualityScoresView},
 };
 
 #[cfg(feature = "dev_no_rayon")]
@@ -220,7 +220,7 @@ pub trait AlignmentWriter: Sized {
                             .query
                             .quality
                             .as_ref()
-                            .map_or(QualityScoresView::try_from(b"*").unwrap(), DataOwned::as_view);
+                            .map_or(QualityScoresView::try_from(b"*").unwrap(), AsView::as_view);
                         let record =
                             SamDataView::new(qname, flag, rname, pos, mapq, cigar.as_view(), seq.as_slice().into(), qual);
                         return self.write_record(record, mapping.inner.score);

@@ -21,11 +21,15 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 - Renamed `ReadFileZipPipe` to `ReadFileZipInThread`
 - `use_file_or_zip_threaded` has been removed in favor of a separate `decode_in_thread` method
 - The format of the tallies in `aligner` has been altered when `--tally-diagnostics` is used.
+- Added image signing to CI and updated default image to Trixie
 
-## Fixed
+### Fixes
 
 - An erroneous `unreachable!` has been replaced with a descriptive panic in `process_barcode` (within `irma-records` public API)
 - An error for a non-ascii byte is no longer encountered in `ReadTransforms::fix_header` (within `irma-records` public API)
+- DPKG metadata is no longer incorrectly deleted for container images (bug
+  exposed in v0.9.1)
+
 
 ## [0.10.0] - 2026-06-05
 
