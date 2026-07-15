@@ -30,6 +30,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 
 - An erroneous `unreachable!` has been replaced with a descriptive panic in `process_barcode` (within `irma-records` public API)
 - An error for a non-ascii byte is no longer encountered in `ReadTransforms::fix_header` (within `irma-records` public API)
+- Fixes sequence count estimation in `sampler` to account for multiline FASTA files
 - DPKG metadata is no longer incorrectly deleted for container images (bug
   exposed in v0.9.1)
 - `merge_sam` no longer panics on SRA qnames that are parseable but lack an explicit read side

@@ -432,14 +432,28 @@ fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, 
 
 /// Gets the count of the number of records in `input_file`.
 ///
-/// This is achieved by counting the number of lines, and dividing it by the
-/// proper amount (2 for FASTA, and 4 for FASTQ). The input file must exist, be
-/// a file, and not be zipped.
+/// For FASTQ, this is achieved by counting the number of lines, and dividing it
+/// by 4. For FASTA, this is achieved by counting the number of header
+/// characters `>` in the file. The input file must exist, be a file, and not be
+/// zipped.
+///
+/// ## Notes
+///
+/// If there is a trailing FASTA header character (`>`) at the end of the file
+/// without an actual record, the sequence estimate will be off by 1, but this
+/// error will then be handled when the file is read during sampling.
 fn get_seq_count<R: Read>(input_file: &Path, reader: &FastXReader<R>) -> std::io::Result<usize> {
     let input = InputOptions::new_from_path(input_file).use_file().open()?;
-    let line_count = input.lines().process_results(|iter| iter.count())?;
     match reader {
-        FastXReader::Fasta(_) => Ok(line_count / 2),
-        FastXReader::Fastq(_) => Ok(line_count / 4),
+        FastXReader::Fasta(_) => {
+            // the first item in the `split` iterator will be empty if the first
+            // character in the file is a `>`, so we subtract 1
+            let header_count = input.split(b'>').count().saturating_sub(1);
+            Ok(header_count)
+        }
+        FastXReader::Fastq(_) => {
+            let line_count = input.lines().process_results(|iter| iter.count())?;
+            Ok(line_count / 4)
+        }
     }
 }
