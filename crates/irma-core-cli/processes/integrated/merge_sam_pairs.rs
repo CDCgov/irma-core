@@ -4,7 +4,7 @@
 use clap::Args;
 use irma_records::{
     hashing::get_hasher,
-    io::{InputOptions, OutputOptions, ValidatePaths},
+    io::{Finish, InputOptions, OutputOptions, ValidatePaths},
     paired::get_molecular_id_side,
     sam::{PairedMergeStats, SamMergeablePairs},
 };
@@ -211,10 +211,10 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
             name = reference.name
         )?;
 
-        w.flush()?;
+        w.finish()?;
     }
 
-    sam_writer.flush()
+    sam_writer.finish()
 }
 
 #[derive(Debug)]

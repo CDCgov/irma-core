@@ -15,7 +15,8 @@ use irma_records::{
     fastq::ReadTransforms,
     hashing::get_hasher,
     io::{
-        InputOptions, IterWithContext, OutputOptions, ReadFileZipInThread, RecordReaders, ValidatePaths, WriterWithContext,
+        Finish, InputOptions, IterWithContext, OutputOptions, ReadFileZipInThread, RecordReaders, ValidatePaths,
+        WriterWithContext,
     },
     paired::{ReadSide, ZipPairedReadsError, ZipPairedReadsExt},
 };
@@ -135,11 +136,14 @@ struct Reader {
     iter: IterWithContext<FastQReader<ReadFileZipInThread>>,
 }
 
+type TableWriter = BufWriter<WriterWithContext<File>>;
+type LogWriter = BufWriter<WriterWithContext<File>>;
+
 struct ParsedPreprocessIoArgs {
-    table_writer: BufWriter<WriterWithContext<File>>,
+    table_writer: TableWriter,
     reader1:      Reader,
     reader2:      Option<Reader>,
-    log_writer:   Option<BufWriter<WriterWithContext<File>>>,
+    log_writer:   Option<LogWriter>,
     log_file:     Option<PathBuf>,
 }
 
@@ -314,7 +318,7 @@ fn trim_and_deflate(
 /// Writes the table file to `table_writer` and the XFL file to STDOUT. The
 /// number of read patterns is returned.
 fn output_deflated_sequences(
-    metadata_by_sequence: DeflatedSequences, mut table_writer: impl Write,
+    metadata_by_sequence: DeflatedSequences, mut table_writer: TableWriter,
 ) -> std::io::Result<usize> {
     let mut stdout_writer = OutputOptions::new_stdout().open()?;
 
@@ -340,15 +344,15 @@ fn output_deflated_sequences(
         read_pattern_number += 1;
     }
 
-    table_writer.flush()?;
-    stdout_writer.flush()?;
+    table_writer.finish()?;
+    stdout_writer.finish()?;
 
     Ok(read_pattern_number)
 }
 
 /// Writes the log file.
 fn write_log(
-    mut log_writer: impl Write, metadata: &FastQMetadata, paired_reads: bool, read_pattern_count_passing: usize,
+    mut log_writer: LogWriter, metadata: &FastQMetadata, paired_reads: bool, read_pattern_count_passing: usize,
     options: &ParsedPreprocessOptions, log_file: PathBuf,
 ) -> Result<(), std::io::Error> {
     let FastQMetadata {

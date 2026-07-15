@@ -7,7 +7,7 @@
 //! phase number `1` without reading the matrix.
 
 use clap::Args;
-use irma_records::io::{InputOptions, OutputOptions};
+use irma_records::io::{Finish, InputOptions, OutputOptions};
 use std::{
     collections::{HashMap, hash_map::Entry},
     fmt::Display,
@@ -77,7 +77,7 @@ pub fn phase_process(args: PhaseArgs) -> std::io::Result<()> {
             writeln!(variants_file_writer, "{single_row}\t1")?;
         }
 
-        variants_file_writer.flush()
+        variants_file_writer.finish()
     } else {
         let variants_matrix_reader = InputOptions::new_from_path(&args.sqm_file).use_file().open()?;
         // Phase clustering calculation and assignment happens here.
@@ -110,7 +110,7 @@ pub fn phase_process(args: PhaseArgs) -> std::io::Result<()> {
         for (line, phase_num) in variants_file_table.iter().zip(phase_nums) {
             writeln!(variants_file_writer, "{line}\t{phase_num}")?
         }
-        variants_file_writer.flush()
+        variants_file_writer.finish()
     }
 }
 

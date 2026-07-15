@@ -8,8 +8,8 @@ use clap::Args;
 use core::fmt;
 use irma_records::{
     io::{
-        InputOptions, IterWithContext, OutputOptions, PairedWriters, ReadFileZipInThread, RecordWriters, ValidatePaths,
-        WriteFileZipStdout, WriteRecord,
+        Finish, InputOptions, IterWithContext, OutputOptions, PairedWriters, ReadFileZipInThread, RecordWriters,
+        ValidatePaths, WriteFileZipStdout, WriteRecord,
     },
     paired::{DeinterleavedPairedReadsExt, ZipPairedReadsExt, ZipReadsError},
 };
@@ -93,7 +93,7 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
                 .deinterleave()
                 .map(|res| res.map_err(|e| e.add_path_context(&input_path1)))
                 .try_for_each(|pair| trim_and_write_pair(pair?, &trimming_args, &mut writer, &mut counts))?;
-            writer.flush()?;
+            writer.finish()?;
         }
         PairedIoArgs::TwoInOneOutFilter {
             input_path1,
@@ -107,7 +107,7 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
                 .map(|res| res.map_err(|e| e.add_path_context(&input_path1, &input_path2)))
                 .try_for_each(|pair| trim_and_write_pair(pair?, &trimming_args, &mut writer, &mut counts))?;
 
-            writer.flush()?;
+            writer.finish()?;
         }
         PairedIoArgs::OneInTwoOutFilter {
             input_path1,
@@ -118,7 +118,7 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
                 .deinterleave()
                 .map(|res| res.map_err(|e| e.add_path_context(&input_path1)))
                 .try_for_each(|pair| trim_and_write_pair(pair?, &trimming_args, &mut writer, &mut counts))?;
-            writer.flush()?;
+            writer.finish()?;
         }
         PairedIoArgs::TwoInTwoOutFilter {
             input_path1,
@@ -131,11 +131,11 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
                 .zip_paired_reads(reader2)
                 .map(|res| res.map_err(|e| e.add_path_context(&input_path1, &input_path2)))
                 .try_for_each(|pair| trim_and_write_pair(pair?, &trimming_args, &mut writer, &mut counts))?;
-            writer.flush()?;
+            writer.finish()?;
         }
         PairedIoArgs::OneInOneOutNoFilter { mut reader1, mut writer } => {
             reader1.try_for_each(|read| trim_and_write_seq(read?, &trimming_args, &mut writer, &mut counts))?;
-            writer.flush()?;
+            writer.finish()?;
         }
         PairedIoArgs::TwoInOneOutNoFilter {
             input_path1,
@@ -168,7 +168,7 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
                 Err(err) => return Err(err.add_path_context(&input_path1, &input_path2)),
             }
 
-            writer.flush()?;
+            writer.finish()?;
         }
         PairedIoArgs::OneInTwoOutNoFilter {
             input_path1,
@@ -183,7 +183,7 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
                     trim_and_write_seq(read1, &trimming_args, &mut writer.writer1, &mut counts)?;
                     trim_and_write_seq(read2, &trimming_args, &mut writer.writer2, &mut counts)
                 })?;
-            writer.flush()?;
+            writer.finish()?;
         }
         PairedIoArgs::TwoInTwoOutNoFilter {
             mut reader1,
@@ -198,11 +198,11 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
                     reader2.try_for_each(|read2| {
                         trim_and_write_seq(read2?, trimming_args, &mut writer.writer2, &mut secondary_counts)
                     })?;
-                    writer.writer2.flush()
+                    writer.writer2.finish()
                 });
 
                 reader1.try_for_each(|read1| trim_and_write_seq(read1?, trimming_args, &mut writer.writer1, &mut counts))?;
-                writer.writer1.flush()?;
+                writer.writer1.finish()?;
 
                 handle.join().unwrap()
             })?;

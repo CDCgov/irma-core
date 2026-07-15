@@ -11,6 +11,10 @@ define_whichever! {
     /// An enum for the different acceptable output types. A [`BufWriter`] is
     /// used for all variants, and all variants are wrapped in
     /// [`WriterWithContext`] to add context to write errors.
+    ///
+    /// ## Limitations
+    ///
+    /// Currently only the default level of compression is exposed.
     #[derive(Debug)]
     pub enum WriteFileZipStdout {
         /// A writer for a regular uncompressed file.
@@ -99,15 +103,6 @@ impl<W> PairedWriters<W> {
     #[inline]
     pub fn new(writer1: W, writer2: W) -> Self {
         Self { writer1, writer2 }
-    }
-}
-
-impl<W: Write> PairedWriters<W> {
-    /// Flushes the two stored writers.
-    #[inline]
-    pub fn flush(&mut self) -> std::io::Result<()> {
-        self.writer1.flush()?;
-        self.writer2.flush()
     }
 }
 

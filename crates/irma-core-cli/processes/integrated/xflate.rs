@@ -4,7 +4,7 @@
 use clap::Parser;
 use irma_records::{
     hashing::get_hasher,
-    io::{InputOptions, OutputOptions, ValidatePaths},
+    io::{Finish, InputOptions, OutputOptions, ValidatePaths},
 };
 use std::{
     collections::HashMap,
@@ -94,7 +94,7 @@ fn inflate(table_file: &Path, fasta_files: &Vec<PathBuf>) -> Result<(), std::io:
         }
     }
 
-    stdout_writer.flush()?;
+    stdout_writer.finish()?;
 
     Ok(())
 }
@@ -135,8 +135,8 @@ fn deflate(table_file: &Path, fastq_files: &Vec<PathBuf>) -> Result<(), std::io:
         writeln!(table_writer)?;
     }
 
-    table_writer.flush()?;
-    stdout_writer.flush()?;
+    table_writer.finish()?;
+    stdout_writer.finish()?;
 
     Ok(())
 }

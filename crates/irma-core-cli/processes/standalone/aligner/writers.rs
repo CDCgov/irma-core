@@ -12,6 +12,9 @@ use zoe::{
 use irma_records::io::WriteFileZipStdout;
 
 #[cfg(not(feature = "dev_no_rayon"))]
+use irma_records::io::Finish;
+
+#[cfg(not(feature = "dev_no_rayon"))]
 use std::{error::Error, fmt::Display};
 #[cfg(not(feature = "dev_no_rayon"))]
 use zoe::data::err::{ErrorWithContext, GetCode};
@@ -32,10 +35,10 @@ pub type WriterError = std::io::Error;
 /// A single dedicated thread is used for writing to the file to avoid
 /// interleaved writes. The handle to this thread is stored in the first
 /// constructed [`AlignmentWriterThreaded`], and all subsequently cloned copies
-/// do not hold the thread handle. It is important to call [`flush`] on the
+/// do not hold the thread handle. It is important to call [`finish`] on the
 /// original writer to properly finalize the thread.
 ///
-/// [`flush`]: AlignmentWriterThreaded::flush
+/// [`finish`]: Finish::finish
 /// [`mpsc`]: std::sync::mpsc
 #[cfg(not(feature = "dev_no_rayon"))]
 pub struct AlignmentWriterThreaded {
@@ -122,13 +125,13 @@ impl AlignmentWriterThreaded {
     #[must_use]
     pub fn from_writer<W>(mut writer: W) -> Self
     where
-        W: Write + Send + 'static, {
+        W: Write + Finish + Send + 'static, {
         let (sender, receiver) = std::sync::mpsc::channel();
         let writer_thread = std::thread::spawn(move || -> std::io::Result<()> {
             while let Ok(string) = receiver.recv() {
                 writeln!(writer, "{string}")?;
             }
-            writer.flush()
+            writer.finish()
         });
 
         Self {
@@ -158,13 +161,16 @@ impl AlignmentWriterThreaded {
             }
         })
     }
+}
 
+#[cfg(not(feature = "dev_no_rayon"))]
+impl Finish for AlignmentWriterThreaded {
     /// Finalizes the writing by closing the thread and propagating any errors.
     ///
     /// This **must** be called on at least the originally created writer in
     /// order to properly handle all errors.
     #[inline]
-    pub fn flush(self) -> std::io::Result<()> {
+    fn finish(self) -> std::io::Result<()> {
         if let Some(thread) = self.writer_thread {
             drop(self.sender);
             thread.join().unwrap()

@@ -4,6 +4,7 @@ use crate::aligner::{
     writers::{AlignmentWriter, write_header},
 };
 use clap::{Args, builder::RangedI64ValueParser};
+use irma_records::io::Finish;
 use irma_records::io::{FastX, FastXReader, IterWithContext, OutputOptions, ReadFileZipInThread, ValidatePaths};
 use std::{cmp::Ordering, io::Write, path::PathBuf};
 use zoe::{
@@ -431,7 +432,7 @@ where
     F: Fn(&mut SamWriter, std::io::Result<FastX>) -> std::io::Result<()> + Sync + Send, {
     let mut query_reader = query_reader;
     query_reader.try_for_each(|query| f(&mut writer, query))?;
-    writer.flush()
+    writer.finish()
 }
 
 /// Performs all alignments as indicated by closure `f`, using either a parallel
@@ -457,9 +458,9 @@ where
         .try_for_each_with(writer.clone(), |w, record| f(w, record));
 
     match res {
-        Ok(()) => writer.flush(),
+        Ok(()) => writer.finish(),
         Err(ThreadedWriteError::IoError(e)) => Err(e),
-        Err(ThreadedWriteError::ReceiverDeallocated) => Err(writer.flush().err().unwrap_or(std::io::Error::other(
+        Err(ThreadedWriteError::ReceiverDeallocated) => Err(writer.finish().err().unwrap_or(std::io::Error::other(
             "The receiver in the writing thread unexpectedly closed",
         ))),
     }

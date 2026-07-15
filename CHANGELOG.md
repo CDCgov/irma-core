@@ -31,6 +31,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 - When searching for equal paths in input and output files, paths are now canonicalized and soft links are handled
 - `preprocess`, `merge-sam`, `xflate`, and `aligner` now include checks for the input and output paths
 - Changes `trimmer` behavior when masking primers to mask multiple discontinuous matches, if present
+- Introduces a `Finish` trait for closing writers, and modifies the `WriteRecords` trait to use this
 
 ### Fixes
 
@@ -46,6 +47,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 - Fixed incorrect `size_hint` and `try_fold` impls for `ZipReads` iterator
 - Fixed bug with masking primers in `trimmer` where overlapping ranges of
   matched primer k-mers could cause no masking to occur
+- Errors while writing the footer for zipped outputs are now properly propagated
 
 ## [0.10.0] - 2026-06-05
 

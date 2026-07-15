@@ -9,12 +9,14 @@ use zoe::{
 };
 
 mod fastx;
+mod finish;
 mod open_options;
 mod readers;
 mod write_records;
 mod writers;
 
 pub use fastx::*;
+pub use finish::*;
 pub use open_options::*;
 pub use readers::*;
 pub use write_records::*;

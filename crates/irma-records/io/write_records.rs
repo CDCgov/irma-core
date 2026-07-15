@@ -43,13 +43,13 @@
 //! 1. Ensuring `W` satisfies [`SequenceWriter`]. This trait bound may not be
 //!    needed if a specific writer type is being supported (e.g.,
 //!    [`RecordWriters`], [`PairedWriters`], or just a single-output writer
-//!    implementing [`Write`]). However, if the function is generic over the
-//!    type of writer, this is the proper trait bound.
+//!    implementing [`Write`] and [`Finish`]). However, if the function is
+//!    generic over the type of writer, this is the proper trait bound.
 //! 2. Ensuring `A` satisfies [`WriteRecordCompatibleItem<W>`]. This is a marker
 //!    trait ensuring that the record can in fact be written to the writer and
 //!    any of its variants.
 
-use crate::io::{FastX, FastXView, FastXViewMut, PairedWriters, RecordWriters};
+use crate::io::{FastX, FastXView, FastXViewMut, Finish, PairedWriters, RecordWriters};
 use std::io::Write;
 use zoe::{
     data::fasta::FastaSeq,
@@ -363,28 +363,10 @@ where
 /// A trait marking that the writer is either a basic writer implementing
 /// [`Write`], or is [`PairedWriters`]. In other words, the writer is
 /// potentially compatible with [`WriteRecord`].
-///
-/// This trait also provides a method for flushing the writer(s), for use in
-/// [`SequenceWriter`].
-pub trait BasicSequenceWriter {
-    /// Flushes all the writers contained in the struct.
-    fn flush_writer(&mut self) -> std::io::Result<()>;
-}
+pub trait BasicSequenceWriter: Finish {}
 
-impl<W: Write> BasicSequenceWriter for W {
-    #[inline]
-    fn flush_writer(&mut self) -> std::io::Result<()> {
-        self.flush()
-    }
-}
-
-impl<W: Write> BasicSequenceWriter for PairedWriters<W> {
-    #[inline]
-    fn flush_writer(&mut self) -> std::io::Result<()> {
-        self.writer1.flush()?;
-        self.writer2.flush()
-    }
-}
+impl<W: Write + Finish> BasicSequenceWriter for W {}
+impl<W: Write + Finish> BasicSequenceWriter for PairedWriters<W> {}
 
 /// A trait for unifying writers of a known type (implementing
 /// [`BasicSequenceWriter`], such as single output writers and
@@ -417,7 +399,7 @@ impl<W: BasicSequenceWriter> SequenceWriter for W {
     where
         I: Iterator<Item: WriteRecord<Self::Writer1> + WriteRecord<Self::Writer2>>, {
         iterator.try_for_each(|record| record.write_record(&mut self))?;
-        self.flush_writer()
+        self.finish()
     }
 }
 
@@ -435,11 +417,11 @@ where
         match self {
             RecordWriters::SingleEnd(mut writer) => {
                 iterator.try_for_each(|record| record.write_record(&mut writer))?;
-                writer.flush_writer()
+                writer.finish()
             }
             RecordWriters::PairedEnd(mut writer) => {
                 iterator.try_for_each(|record| record.write_record(&mut writer))?;
-                writer.flush_writer()
+                writer.finish()
             }
         }
     }

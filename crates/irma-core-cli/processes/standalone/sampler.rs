@@ -13,7 +13,7 @@ use rand::{SeedableRng, make_rng};
 use rand_xoshiro::Xoshiro256StarStar;
 use std::{
     fmt::Debug,
-    io::{BufRead, Read, Write},
+    io::{BufRead, Read},
     path::{Path, PathBuf},
 };
 use zoe::{
@@ -183,15 +183,14 @@ pub fn sampler_process(args: SamplerArgs) -> Result<(), std::io::Error> {
 /// This returns a tuple containing the original counts and downsampled counts.
 /// For single end reads, the counts are the number of records. For paired end
 /// reads, each pair counts once.
-fn sample_single_input<R1, W, A>(
-    reader: R1, writer: RecordWriters<W>, target: SamplingTarget, seq_count: Option<usize>, rng: Xoshiro256StarStar,
-    input_path1: &Path,
+fn sample_single_input<R1, A>(
+    reader: R1, writer: RecordWriters<WriteFileZipStdout>, target: SamplingTarget, seq_count: Option<usize>,
+    rng: Xoshiro256StarStar, input_path1: &Path,
 ) -> std::io::Result<(usize, usize)>
 where
     R1: Iterator<Item = std::io::Result<A>>,
-    W: Write,
-    A: HeaderReadable + WriteRecord<W> + Debug + Sync + Send + 'static,
-    std::io::Result<A>: WriteRecord<W>, {
+    A: HeaderReadable + WriteRecord<WriteFileZipStdout> + Debug + Sync + Send + 'static,
+    std::io::Result<A>: WriteRecord<WriteFileZipStdout>, {
     // Don't perform sampling if target is higher than population sequence count
     if let SamplingTarget::Count(target_count) = target
         && let Some(seq_count) = seq_count
@@ -230,15 +229,14 @@ where
 ///
 /// This returns a tuple containing the original counts and downsampled counts.
 /// Each pair of reads counts once.
-fn sample_paired_input<R1, R2, W, A>(
-    reader1: R1, reader2: R2, writer: RecordWriters<W>, target: SamplingTarget, seq_count: Option<usize>,
+fn sample_paired_input<R1, R2, A>(
+    reader1: R1, reader2: R2, writer: RecordWriters<WriteFileZipStdout>, target: SamplingTarget, seq_count: Option<usize>,
     rng: Xoshiro256StarStar, input_paths: [PathBuf; 2],
 ) -> std::io::Result<(usize, usize)>
 where
     R1: Iterator<Item = std::io::Result<A>>,
     R2: Iterator<Item = std::io::Result<A>>,
-    W: Write,
-    A: HeaderReadable + WriteRecord<W> + Debug + Sync + Send + 'static, {
+    A: HeaderReadable + WriteRecord<WriteFileZipStdout> + Debug + Sync + Send + 'static, {
     // Zip the paired reads, and add context including the paths to any zipping
     // errors
     let iterator = reader1
