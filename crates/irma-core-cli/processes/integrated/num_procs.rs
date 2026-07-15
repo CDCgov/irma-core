@@ -20,7 +20,7 @@ pub struct NumProcsArgs {
     #[clap(short = 'H', long)]
     pub include_half: bool,
 
-    /// Cap cores using the min value from env vars NSLOTS or IFX_LOCAL_PROCS
+    /// Cap cores to NSLOTS if available falling back to IFX_LOCAL_PROCS
     #[clap(short = 'C', long)]
     pub cap_cores_using_env: bool,
 }
