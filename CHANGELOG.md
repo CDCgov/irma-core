@@ -41,6 +41,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 - `phase` no longer truncates variants table file on malformed or corrupted variants matrix files
 - Fixes `trimmer` bug with 2-in-1-out reads with widow filtering disabled where
   extra read(s) in either file would not get handled
+- Fixed incorrect `size_hint` and `try_fold` impls for `ZipReads` iterator
 
 ## [0.10.0] - 2026-06-05
 

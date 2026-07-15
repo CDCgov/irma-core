@@ -17,14 +17,42 @@ use zoe::{
 /// but ensures the input iterators are the same length, and provides
 /// appropriate error messages.
 ///
-/// If `CHECKED` is true, paired header checking is performed.
+/// If `C` is [`CheckedHeaders`], then paired header checking is performed.
+/// Otherwise if it is [`UncheckedHeaders`], then no header checking is
+/// performed.
+///
+/// ## Behavior After Errors
+///
+/// On an error, the mismatching or unmatched read(s) will be included in the
+/// payload of the error. In most realistic cases, the application will likely
+/// not call [`next`] on [`ZipReads`] again, either because the error is
+/// immediately propagated, or because special handling on the two iterators
+/// individually is performed.
+///
+/// However, in the case that items continue to be accessed from [`ZipReads`]
+/// after an error, the behavior is:
+///
+/// - A [`next`] call always attempts to consume an item from each input
+///   iterator. This means that if either iterator yields an IO error, the
+///   result from the other will be discarded. IO errors are considered
+///   irrecoverable by IRMA-core.
+/// - For all other errors related to mismatched headers or unpaired remaining
+///   reads, the reads causing the errors are contained within the errors as
+///   payloads, and can be accessed and manually handled by the application. The
+///   reads are consumed from the iterators, but remaining elements of the
+///   iterators may remain, and hence [`ZipReads`] may return additional `Err`
+///   or `Ok` variants depending on the error variant, whether the input
+///   iterators were fused, etc.
 pub struct ZipReads<I, J, A, C>
 where
     I: Iterator<Item = std::io::Result<A>>,
     J: Iterator<Item = std::io::Result<A>>,
     A: HeaderReadable, {
+    /// The iterator of left reads.
     reads1:  I,
+    /// The iterator of right reads.
     reads2:  J,
+    /// A phantom field to track the checking level ([`ZipReadsCheckingLevel`]).
     phantom: PhantomData<C>,
 }
 
@@ -316,6 +344,9 @@ where
     type Item = Result<[A; 2], C::Err<A>>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        // We always attempt to consume an item from each iterator, even if one
+        // of them is an IO error. Also, IO errors have precedence before
+        // pairing errors, and read1 has precendence before read2
         match (self.reads1.next(), self.reads2.next()) {
             (Some(read1), Some(read2)) => {
                 let read1 = unwrap_or_return_some_err!(read1.map_err(C::new_io_error));
@@ -335,18 +366,10 @@ where
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let (i_lower, i_upper) = self.reads1.size_hint();
-        let (j_lower, j_upper) = self.reads2.size_hint();
-        let lower = i_lower.min(j_lower);
-        let upper = match (i_upper, j_upper) {
-            (Some(i_upper), Some(j_upper)) if i_upper == j_upper => Some(i_upper.min(j_upper)),
-            // Potentially unequal iterator lengths, so add 1 for error message
-            (Some(i_upper), Some(j_upper)) => Some(i_upper.min(j_upper) + 1),
-            // Potentially unequal iterator lengths, so add 1 for error message
-            (Some(upper), None) | (None, Some(upper)) => Some(upper + 1),
-            (None, None) => None,
-        };
-        (lower, upper)
+        let (i_lower, _) = self.reads1.size_hint();
+        let (j_lower, _) = self.reads2.size_hint();
+
+        (i_lower.max(j_lower), None)
     }
 
     fn try_fold<B, F, R>(&mut self, init: B, mut f: F) -> R
@@ -354,13 +377,19 @@ where
         Self: Sized,
         F: FnMut(B, Self::Item) -> R,
         R: std::ops::Try<Output = B>, {
-        let accum = self.reads1.try_fold(init, |accum, r1| {
+        let mut accum = self.reads1.try_fold(init, |accum, r1| {
+            // We always attempt to consume an item from each iterator, even if
+            // r1 is an error
+            let r2 = self.reads2.next();
+
+            // r1 has precedence before r2, and IO errors have precendence
+            // before pairing errors
             let r1 = match r1 {
                 Ok(r1) => r1,
                 Err(err) => return f(accum, Err(C::new_io_error(err))),
             };
 
-            let r2 = match self.reads2.next() {
+            let r2 = match r2 {
                 None => return f(accum, Err(C::new_extra_first_read(r1))),
                 Some(Err(err)) => return f(accum, Err(C::new_io_error(err))),
                 Some(Ok(r2)) => r2,
@@ -369,11 +398,23 @@ where
             f(accum, C::zip_pair(r1, r2))
         })?;
 
-        match self.reads2.next() {
-            None => R::from_output(accum),
-            Some(Ok(r2)) => f(accum, Err(C::new_extra_second_read(r2))),
-            Some(Err(e)) => f(accum, Err(C::new_io_error(e))),
+        // reads1 had an extra next call containing `None`, which caused
+        // `try_fold` to end. Call next on reads2 to balance it again.
+
+        accum = match self.reads2.next() {
+            // If reads2 is also None, then next would have yielded None, which
+            // terminates try_fold
+            None => return R::from_output(accum),
+            Some(Ok(r2)) => f(accum, Err(C::new_extra_second_read(r2)))?,
+            Some(Err(e)) => f(accum, Err(C::new_io_error(e)))?,
+        };
+
+        // Assuming the user is aborting after the first error, this will not be
+        // reached, so we defer to default impl
+        for item in self {
+            accum = f(accum, item)?;
         }
+        R::from_output(accum)
     }
 }
 
