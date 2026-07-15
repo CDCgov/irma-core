@@ -147,17 +147,14 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
             let result = reader1
                 .by_ref()
                 .zip_paired_reads_unchecked(reader2.by_ref())
-                .map(|res| res.map_err(|e| e.add_path_context(&input_path1, &input_path2)))
                 .try_for_each(|pair| {
                     let [read1, read2] = pair?;
-                    trim_and_write_seq(read1, &trimming_args, &mut writer, &mut counts)?;
-                    trim_and_write_seq(read2, &trimming_args, &mut writer, &mut counts)?;
-                    Ok(())
+                    trim_and_write_seq(read1, &trimming_args, &mut writer, &mut counts).map_err(ZipReadsError::IoError)?;
+                    trim_and_write_seq(read2, &trimming_args, &mut writer, &mut counts).map_err(ZipReadsError::IoError)
                 });
 
             match result {
                 Ok(()) => {}
-                Err(ZipReadsError::IoError(e)) => return Err(e),
                 Err(ZipReadsError::ExtraFirstRead(read1)) => {
                     std::iter::once(Ok(read1))
                         .chain(reader1)
@@ -168,6 +165,7 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
                         .chain(reader2)
                         .try_for_each(|read2| trim_and_write_seq(read2?, &trimming_args, &mut writer, &mut counts))?;
                 }
+                Err(err) => return Err(err.add_path_context(&input_path1, &input_path2)),
             }
 
             writer.flush()?;

@@ -112,20 +112,6 @@ where
     }
 }
 
-impl<A> From<std::io::Error> for ZipReadsError<A> {
-    #[inline]
-    fn from(value: std::io::Error) -> Self {
-        Self::IoError(value)
-    }
-}
-
-impl<A> From<std::io::Error> for ZipPairedReadsError<A> {
-    #[inline]
-    fn from(value: std::io::Error) -> Self {
-        Self::IoError(value)
-    }
-}
-
 impl<A: HeaderReadable> From<ZipReadsError<A>> for std::io::Error {
     #[inline]
     fn from(value: ZipReadsError<A>) -> Self {

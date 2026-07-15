@@ -39,6 +39,8 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
   exposed in v0.9.1)
 - `merge_sam` no longer panics on SRA qnames that are parseable but lack an explicit read side
 - `phase` no longer truncates variants table file on malformed or corrupted variants matrix files
+- Fixes `trimmer` bug with 2-in-1-out reads with widow filtering disabled where
+  extra read(s) in either file would not get handled
 
 ## [0.10.0] - 2026-06-05
 
