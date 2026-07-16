@@ -83,12 +83,23 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
         .parse_fasta()
         .open()?;
 
-    let reference = ref_reader.next().ok_or_else(|| {
+    let mut reference = ref_reader.next().ok_or_else(|| {
         std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             format!("No valid fasta data in file: {file}", file = args.fasta_reference.display()),
         )
     })??;
+
+    let Some(new_len) = reference.name.split_ascii_whitespace().next().map(str::len) else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "Empty name field in FASTA header: {file}",
+                file = args.fasta_reference.display()
+            ),
+        ));
+    };
+    reference.name.truncate(new_len);
 
     const ONE_MB: usize = 2usize.pow(20);
 
