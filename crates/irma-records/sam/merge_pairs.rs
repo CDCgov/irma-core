@@ -8,7 +8,10 @@ use zoe::{
 };
 
 /// Makes a merged qname for paired-end reads based on a provided qname plus
-/// adding or replacing `3` as the read side. Used in IRMA.
+/// adding or replacing `3` as the read side.
+///
+/// If Illumina, SRA or IRMA formats are not found the original input `s` is
+/// used without suffix.
 pub(crate) fn make_merged_qname(s: &str) -> String {
     let mut merged = String::with_capacity(s.len() + 2);
     if let Some(index) = s.find(' ') {
@@ -73,6 +76,11 @@ pub(crate) fn make_merged_qname(s: &str) -> String {
             merged.push_str(&s[stop..]);
         }
     }
+
+    if merged.is_empty() {
+        merged.push_str(s);
+    }
+
     merged
 }
 
