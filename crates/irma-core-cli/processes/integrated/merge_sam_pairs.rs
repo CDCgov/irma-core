@@ -9,7 +9,7 @@ use irma_records::{
     sam::{PairedMergeStats, SamMergeablePairs},
 };
 use std::{collections::HashMap, io::Write, path::PathBuf};
-use zoe::data::sam::*;
+use zoe::data::{sam::*, views::Len};
 
 #[derive(Args, Debug)]
 pub struct MergeSAMArgs {
@@ -152,14 +152,23 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
     for pair in pairs.values() {
         match (pair.r1, pair.r2) {
             (Some(pair_index1), Some(pair_index2)) => {
-                let (s, stats) = sam_data[pair_index1].merge_pair_using_reference(
-                    &sam_data[pair_index2],
-                    &reference.sequence,
-                    args.bowtie_format,
-                );
-                paired_merging_stats += stats;
+                let (sam1, sam2) = (&sam_data[pair_index1], &sam_data[pair_index2]);
 
-                writeln!(sam_writer, "{s}")?;
+                // IRMA does not define read-pair merging yet for the empty quality score case.
+                // TODO: in v0.0.32 Zoe will only require checking for empty
+                if !sam1.qual.is_empty()
+                    && !sam2.qual.is_empty()
+                    && sam1.qual.as_bytes() != b"*"
+                    && sam2.qual.as_bytes() != b"*"
+                {
+                    let (s, stats) = sam1.merge_pair_using_reference(sam2, &reference.sequence, args.bowtie_format);
+                    paired_merging_stats += stats;
+
+                    writeln!(sam_writer, "{s}")?;
+                } else {
+                    writeln!(sam_writer, "{sam1}")?;
+                    writeln!(sam_writer, "{sam2}")?;
+                }
             }
             (Some(index), None) | (None, Some(index)) => {
                 writeln!(sam_writer, "{}", sam_data[index])?;
