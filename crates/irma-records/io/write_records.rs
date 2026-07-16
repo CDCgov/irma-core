@@ -3,10 +3,11 @@
 //! single output file or paired output files.
 //!
 //! The core building block is [`WriteRecord`], which enables writing many
-//! different types, such as [`FastQ`], [`FastaSeq`], the corresponding view
-//! types, two-tuples of these, length-two arrays of these, and results of
-//! these. The trait is generic over `W`, which can be a single end writer
-//! (implementing [`Write`]) or a paired end writer ([`PairedWriters`]).
+//! different types, such as [`FastQ`], [`FastaSeq`], [`FastX`], the
+//! corresponding view types, two-tuples of these, length-two arrays of these,
+//! and results of these. The trait is generic over `W`, which can be a single
+//! end writer (implementing [`Write`]) or a paired end writer
+//! ([`PairedWriters`]).
 //!
 //! For single output files, the reads in tuples and arrays are interleaved. For
 //! paired output files, only the tuple/array values are permitted; the first
@@ -48,7 +49,7 @@
 //!    trait ensuring that the record can in fact be written to the writer and
 //!    any of its variants.
 
-use crate::io::{PairedWriters, RecordWriters};
+use crate::io::{FastX, FastXView, FastXViewMut, PairedWriters, RecordWriters};
 use std::io::Write;
 use zoe::{
     data::fasta::FastaSeq,
@@ -67,7 +68,7 @@ pub trait WriteRecord<W> {
     /// - [`PairedWriters`], which represents writing to two output files
     ///   (paired end reads)
     ///
-    /// This function is available for [`FastQ`], [`FastaSeq`], the
+    /// This function is available for [`FastQ`], [`FastaSeq`], [`FastX`] the
     /// corresponding view types, two-tuples of these, length-two arrays of
     /// these, and results of these. For single end reads, the reads in tuples
     /// and arrays are interleaved. For paired end reads, the first is written
@@ -102,6 +103,30 @@ impl<W: Write> WriteRecord<W> for FastQView<'_> {
 
 impl<W: Write> WriteRecord<W> for FastQViewMut<'_> {
     /// Writes a [`FastQViewMut`] record to a single writer.
+    #[inline]
+    fn write_record(self, writer: &mut W) -> std::io::Result<()> {
+        write!(writer, "{self}")
+    }
+}
+
+impl<W: Write> WriteRecord<W> for FastX {
+    /// Writes a [`FastX`] record to a single writer.
+    #[inline]
+    fn write_record(self, writer: &mut W) -> std::io::Result<()> {
+        write!(writer, "{self}")
+    }
+}
+
+impl<W: Write> WriteRecord<W> for FastXView<'_> {
+    /// Writes a [`FastXView`] record to a single writer.
+    #[inline]
+    fn write_record(self, writer: &mut W) -> std::io::Result<()> {
+        write!(writer, "{self}")
+    }
+}
+
+impl<W: Write> WriteRecord<W> for FastXViewMut<'_> {
+    /// Writes a [`FastXViewMut`] record to a single writer.
     #[inline]
     fn write_record(self, writer: &mut W) -> std::io::Result<()> {
         write!(writer, "{self}")
@@ -148,6 +173,45 @@ where
     std::io::Error: From<E>,
 {
     /// Writes a [`FastQViewMut`] record to a single writer, propagating an
+    /// error if present.
+    #[inline]
+    fn write_record(self, writer: &mut W) -> std::io::Result<()> {
+        write!(writer, "{}", self?)
+    }
+}
+
+impl<W, E> WriteRecord<W> for Result<FastX, E>
+where
+    W: Write,
+    std::io::Error: From<E>,
+{
+    /// Writes a [`FastX`] record to a single writer, propagating an error if
+    /// present.
+    #[inline]
+    fn write_record(self, writer: &mut W) -> std::io::Result<()> {
+        write!(writer, "{}", self?)
+    }
+}
+
+impl<W, E> WriteRecord<W> for Result<FastXView<'_>, E>
+where
+    W: Write,
+    std::io::Error: From<E>,
+{
+    /// Writes a [`FastXView`] record to a single writer, propagating an error
+    /// if present.
+    #[inline]
+    fn write_record(self, writer: &mut W) -> std::io::Result<()> {
+        write!(writer, "{}", self?)
+    }
+}
+
+impl<W, E> WriteRecord<W> for Result<FastXViewMut<'_>, E>
+where
+    W: Write,
+    std::io::Error: From<E>,
+{
+    /// Writes a [`FastXViewMut`] record to a single writer, propagating an
     /// error if present.
     #[inline]
     fn write_record(self, writer: &mut W) -> std::io::Result<()> {
