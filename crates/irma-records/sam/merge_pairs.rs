@@ -1,7 +1,7 @@
 use crate::sam::{ExpandedCigar, PairedMergeStats, SamAligned, SamInsertion};
 use std::iter::repeat_n;
 use zoe::{
-    alignment::StatesSequence,
+    alignment::NextCiglet,
     data::{cigar::Ciglet, sam::SamData},
     prelude::QualityScores,
     search::ByteSubstring,

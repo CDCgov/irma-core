@@ -75,7 +75,7 @@ pub struct PreprocessArgs {
 }
 
 const CLUSTER_PREFIX: &str = "C";
-static MODULE: &str = module_path!();
+static MODULE: &str = "IRMA-CORE PREPROCESS";
 
 /// # Panics
 ///
