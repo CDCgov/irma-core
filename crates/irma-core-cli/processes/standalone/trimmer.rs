@@ -8,8 +8,8 @@ use clap::Args;
 use core::fmt;
 use irma_records::{
     io::{
-        InputOptions, IterWithContext, OutputOptions, PairedWriters, ReadFileZipInThread, RecordWriters, WriteFileZipStdout,
-        WriteRecord, check_distinct_files,
+        InputOptions, IterWithContext, OutputOptions, PairedWriters, ReadFileZipInThread, RecordWriters, ValidatePaths,
+        WriteFileZipStdout, WriteRecord,
     },
     paired::{DeinterleavedPairedReadsExt, ZipPairedReadsExt, ZipReadsError},
 };
@@ -54,6 +54,22 @@ pub struct TrimmerArgs {
     #[arg(short = 'v', long)]
     /// Prints the number of records trimmed for each method to stderr
     verbose: bool,
+}
+
+impl ValidatePaths for TrimmerArgs {
+    fn inputs(&self) -> impl IntoIterator<Item = &PathBuf> {
+        let input1 = std::iter::once(&self.fastq_input);
+        let input2 = self.fastq_input2.iter();
+
+        input1.chain(input2)
+    }
+
+    fn outputs(&self) -> impl IntoIterator<Item = &PathBuf> {
+        let output1 = self.output.iter();
+        let output2 = self.output2.iter();
+
+        output1.chain(output2)
+    }
 }
 
 /// Sub-program for trimming FASTQ data.
@@ -336,6 +352,8 @@ struct ParsedTrimmerOptions {
 /// Any errors generated will have customized error messages including
 /// additional information.
 fn parse_trimmer_args(args: TrimmerArgs) -> std::io::Result<ParsedTrimmerArgs> {
+    args.validate_paths()?;
+
     let TrimmerArgs {
         fastq_input,
         fastq_input2,
@@ -347,8 +365,6 @@ fn parse_trimmer_args(args: TrimmerArgs) -> std::io::Result<ParsedTrimmerArgs> {
         clipping_args,
         verbose,
     } = args;
-
-    check_distinct_files(&fastq_input, fastq_input2.as_ref(), output.as_ref(), output2.as_ref())?;
 
     let readers = InputOptions::new_from_paths(&fastq_input, fastq_input2.as_ref())
         .use_file_or_zip()

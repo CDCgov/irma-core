@@ -4,8 +4,8 @@ use clap::Args;
 use irma_records::{
     io::{
         DispatchFastX, FastXReader, InputOptions, IterWithContext, OutputOptions, ReadFileZipInThread, RecordReaders,
-        RecordWriters, SequenceWriter, WriteFileZipStdout, WriteRecord, WriteRecordCompatibleItem, WriteRecords,
-        check_distinct_files, is_gz,
+        RecordWriters, SequenceWriter, ValidatePaths, WriteFileZipStdout, WriteRecord, WriteRecordCompatibleItem,
+        WriteRecords, is_gz,
     },
     paired::{DeinterleavedPairedReadsExt, ZipPairedReadsExt},
 };
@@ -85,8 +85,26 @@ fn validate_percent(value: &str) -> Result<usize, String> {
     }
 }
 
+impl ValidatePaths for SamplerArgs {
+    fn inputs(&self) -> impl IntoIterator<Item = &PathBuf> {
+        let input1 = std::iter::once(&self.input_file);
+        let input2 = self.input_file2.iter();
+
+        input1.chain(input2)
+    }
+
+    fn outputs(&self) -> impl IntoIterator<Item = &PathBuf> {
+        let output1 = self.output.iter();
+        let output2 = self.output2.iter();
+
+        output1.chain(output2)
+    }
+}
+
 /// main process getting called by irma-core main.rs
 pub fn sampler_process(args: SamplerArgs) -> Result<(), std::io::Error> {
+    args.validate_paths()?;
+
     let (io_args, rng, target, verbose) = parse_sampler_args(args)?;
 
     // Get the population sequence count from one of the files if possible
@@ -389,13 +407,6 @@ fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, 
     } else {
         make_rng()
     };
-
-    check_distinct_files(
-        &args.input_file,
-        args.input_file2.as_ref(),
-        args.output.as_ref(),
-        args.output2.as_ref(),
-    )?;
 
     let readers = InputOptions::new_from_paths(&args.input_file, args.input_file2.as_ref())
         .use_file_or_zip()

@@ -4,7 +4,7 @@ use crate::aligner::{
     writers::{AlignmentWriter, write_header},
 };
 use clap::{Args, builder::RangedI64ValueParser};
-use irma_records::io::{FastX, FastXReader, IterWithContext, OutputOptions, ReadFileZipInThread};
+use irma_records::io::{FastX, FastXReader, IterWithContext, OutputOptions, ReadFileZipInThread, ValidatePaths};
 use std::{cmp::Ordering, io::Write, path::PathBuf};
 use zoe::{
     alignment::{Alignment, LocalProfiles, MaybeAligned, SharedProfiles},
@@ -119,8 +119,20 @@ pub struct AlignerArgs {
     tally_diagnostics: Option<PathBuf>,
 }
 
+impl ValidatePaths for AlignerArgs {
+    fn inputs(&self) -> impl IntoIterator<Item = &PathBuf> {
+        [&self.ref_file, &self.query_file]
+    }
+
+    fn outputs(&self) -> impl IntoIterator<Item = &PathBuf> {
+        self.output.iter()
+    }
+}
+
 /// Sub-program for performing sequence alignment
 pub fn aligner_process(args: AlignerArgs) -> std::io::Result<()> {
+    args.validate_paths()?;
+
     let ParsedAlignerArgs {
         query_reader,
         references,

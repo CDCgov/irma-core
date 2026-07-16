@@ -2,7 +2,7 @@
 
 use clap::Args;
 use irma_records::{
-    io::{DispatchFastX, InputOptions, OutputOptions, RecordWriters, WriteRecords, check_distinct_files},
+    io::{DispatchFastX, InputOptions, OutputOptions, RecordWriters, ValidatePaths, WriteRecords},
     paired::{DeinterleavedPairedReadsExt, ZipPairedReadsExt},
 };
 use std::path::PathBuf;
@@ -25,13 +25,24 @@ pub struct XleaveArgs {
     pub output2: Option<PathBuf>,
 }
 
+impl ValidatePaths for XleaveArgs {
+    fn inputs(&self) -> impl IntoIterator<Item = &PathBuf> {
+        let input1 = std::iter::once(&self.input_file1);
+        let input2 = self.input_file2.iter();
+
+        input1.chain(input2)
+    }
+
+    fn outputs(&self) -> impl IntoIterator<Item = &PathBuf> {
+        let output1 = self.output.iter();
+        let output2 = self.output2.iter();
+
+        output1.chain(output2)
+    }
+}
+
 pub fn xleave_process(args: XleaveArgs) -> Result<(), std::io::Error> {
-    check_distinct_files(
-        &args.input_file1,
-        args.input_file2.as_ref(),
-        args.output.as_ref(),
-        args.output2.as_ref(),
-    )?;
+    args.validate_paths()?;
 
     let readers = InputOptions::new_from_paths(&args.input_file1, args.input_file2.as_ref())
         .use_file_or_zip()

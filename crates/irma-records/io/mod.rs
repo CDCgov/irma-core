@@ -1,7 +1,7 @@
 use std::{
     fmt::Display,
     io::{BufRead, Read, Write},
-    path::Path,
+    path::{Path, PathBuf},
 };
 use zoe::{
     data::err::{ResultWithErrorContext, WithErrorContext},
@@ -157,73 +157,81 @@ fn is_linux_device(path: &Path) -> bool {
     path.starts_with("/dev/")
 }
 
-/// Checks whether two paths represent repeated files.
-///
-/// A repeated device file such as `/dev/null` is not considered a repeated
-/// file.
-fn is_repeated_file(path1: &Path, path2: &Path) -> bool {
-    path1 == path2 && !is_linux_device(path1)
-}
+/// A trait for validating that input and output paths do not have conflicts.
+pub trait ValidatePaths {
+    /// Returns the paths that will be read from by the process.
+    fn inputs(&self) -> impl IntoIterator<Item = &PathBuf>;
 
-/// Checks that all the provided paths are distinct from each other.
-///
-/// Repeated paths are allowed if they refer to a device file, such as
-/// `/dev/null`.
-///
-/// ## Errors
-///
-/// If any of the paths are equal, then an appropriate error message is
-/// provided.
-pub fn check_distinct_files(
-    input1: impl AsRef<Path>, input2: Option<impl AsRef<Path>>, output1: Option<impl AsRef<Path>>,
-    output2: Option<impl AsRef<Path>>,
-) -> std::io::Result<()> {
-    fn identical_path_input_output(path: &Path) -> std::io::Error {
-        std::io::Error::other(format!(
-            "An identical path was found for an input file and output file: {}",
-            path.display()
-        ))
-    }
+    /// Returns the paths that will be written to by the process.
+    fn outputs(&self) -> impl IntoIterator<Item = &PathBuf>;
 
-    let input1 = input1.as_ref();
-    let input2 = input2.as_ref().map(AsRef::as_ref);
-    let output1 = output1.as_ref().map(AsRef::as_ref);
-    let output2 = output2.as_ref().map(AsRef::as_ref);
+    /// Validates that no path is both an input and an output, and that all
+    /// output paths are distinct.
+    ///
+    /// Device files (paths beginning with `/dev`/) are ignored.
+    ///
+    /// ## Errors
+    ///
+    /// All input paths must exist, and the parent directories of the output
+    /// paths must exist. The paths must be successfully canonicalized. All
+    /// output paths must be distinct and cannot also be input paths.
+    fn validate_paths(&self) -> std::io::Result<()> {
+        let inputs = self
+            .inputs()
+            .into_iter()
+            .filter(|path| !is_linux_device(path))
+            .map(|path| std::fs::canonicalize(path).with_path_context("Failed to canonicalize path", path));
 
-    if let Some(input2) = input2
-        && is_repeated_file(input1, input2)
-    {
-        Err(std::io::Error::other(format!(
-            "An identical path was found for the two input files: {}",
-            input1.display()
-        )))
-    } else if let Some(output1) = output1
-        && is_repeated_file(input1, output1)
-    {
-        Err(identical_path_input_output(input1))
-    } else if let Some(output2) = output2
-        && is_repeated_file(input1, output2)
-    {
-        Err(identical_path_input_output(input1))
-    } else if let Some(input2) = input2
-        && let Some(output1) = output1
-        && is_repeated_file(input2, output1)
-    {
-        Err(identical_path_input_output(input1))
-    } else if let Some(input2) = input2
-        && let Some(output2) = output2
-        && is_repeated_file(input2, output2)
-    {
-        Err(identical_path_input_output(input1))
-    } else if let Some(output1) = output1
-        && let Some(output2) = output2
-        && is_repeated_file(output1, output2)
-    {
-        Err(std::io::Error::other(format!(
-            "An identical path was found for the two output files: {}",
-            output1.display(),
-        )))
-    } else {
+        let outputs = self
+            .outputs()
+            .into_iter()
+            .filter(|path| !is_linux_device(path))
+            .map(|path| {
+                // If the output path already exists (including as a symlink),
+                // canonicalize it directly so that aliases such as symlinks
+                // pointing at an input file are resolved to their real path.
+                if path.exists() {
+                    return Ok(std::fs::canonicalize(path).with_path_context("Failed to canonicalize path", path)?);
+                }
+
+                let filename = path.file_name().ok_or_else(|| {
+                    std::io::Error::other(format!("Failed to find filename of path: {path}", path = path.display()))
+                })?;
+                let parent = match path.parent() {
+                    Some(parent) if !parent.as_os_str().is_empty() => parent,
+                    _ => Path::new("."),
+                };
+                let canonical_parent =
+                    std::fs::canonicalize(parent).with_path_context("Failed to canonicalize parent path", parent)?;
+                Ok(canonical_parent.join(filename))
+            })
+            .collect::<std::io::Result<Vec<_>>>()?;
+
+        for input1 in inputs {
+            let input1 = input1?;
+
+            for output in &outputs {
+                if &input1 == output {
+                    return Err(std::io::Error::other(format!(
+                        "Found a file as both an input and an output: {input1}",
+                        input1 = input1.display()
+                    )));
+                }
+            }
+        }
+
+        for (i, output1) in outputs.iter().enumerate() {
+            let rest = &outputs[i + 1..];
+            for output2 in rest {
+                if output1 == output2 {
+                    return Err(std::io::Error::other(format!(
+                        "Two output files were the same: {output1}",
+                        output1 = output1.display()
+                    )));
+                }
+            }
+        }
+
         Ok(())
     }
 }

@@ -10,6 +10,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 ### Added
 
 - Added preliminary implementations for `FastX` views (within `irma-records` public API)
+- A `ValidatePaths` trait is now available in the library portion for ensuring no path is passed as both an input and an output, and that all output paths are distinct
 
 ### Changed
 
@@ -25,6 +26,9 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 - Removed helper methods for adapter trimming from `ReadTransforms`, and added
   `process_adapter` (within `irma-records` public API)
 - Improves `preprocess` error output via new `PrintWarning` trait
+- Passing the same input path twice is now allowed
+- When searching for equal paths in input and output files, paths are now canonicalized and soft links are handled
+- `preprocess`, `merge-sam`, `xflate`, and `aligner` now include checks for the input and output paths
 
 ### Fixes
 

@@ -4,7 +4,7 @@
 use clap::Parser;
 use irma_records::{
     hashing::get_hasher,
-    io::{InputOptions, OutputOptions},
+    io::{InputOptions, OutputOptions, ValidatePaths},
 };
 use std::{
     collections::HashMap,
@@ -29,6 +29,17 @@ pub struct XflateArgs {
     /// Inflate sequence files
     #[arg(short, long)]
     inflate: bool,
+}
+
+impl ValidatePaths for XflateArgs {
+    fn inputs(&self) -> impl IntoIterator<Item = &PathBuf> {
+        let table_file = self.inflate.then_some(&self.table_file);
+        self.seq_files.iter().chain(table_file)
+    }
+
+    fn outputs(&self) -> impl IntoIterator<Item = &PathBuf> {
+        (!self.inflate).then_some(&self.table_file)
+    }
 }
 
 /// ## Validity
@@ -131,6 +142,8 @@ fn deflate(table_file: &Path, fastq_files: &Vec<PathBuf>) -> Result<(), std::io:
 }
 
 pub fn xflate_process(args: XflateArgs) -> Result<(), std::io::Error> {
+    args.validate_paths()?;
+
     if args.inflate {
         // Validity: No context is added to the result
         inflate(&args.table_file, &args.seq_files)

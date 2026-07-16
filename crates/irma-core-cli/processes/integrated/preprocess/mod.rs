@@ -13,11 +13,11 @@ use clap::{Args, ValueHint};
 use foldhash::fast::SeedableRandomState;
 use irma_records::{
     fastq::ReadTransforms,
-    io::{InputOptions, IterWithContext, OutputOptions, ReadFileZipInThread, RecordReaders, WriterWithContext},
-    {
-        hashing::get_hasher,
-        paired::{ReadSide, ZipPairedReadsError, ZipPairedReadsExt},
+    hashing::get_hasher,
+    io::{
+        InputOptions, IterWithContext, OutputOptions, ReadFileZipInThread, RecordReaders, ValidatePaths, WriterWithContext,
     },
+    paired::{ReadSide, ZipPairedReadsError, ZipPairedReadsExt},
 };
 use std::{
     collections::HashMap,
@@ -74,6 +74,22 @@ pub struct PreprocessArgs {
     clipping_args: ClippingArgs,
 }
 
+impl ValidatePaths for PreprocessArgs {
+    fn inputs(&self) -> impl IntoIterator<Item = &PathBuf> {
+        let input1 = std::iter::once(&self.fastq_input);
+        let input2 = self.fastq_input2.iter();
+
+        input1.chain(input2)
+    }
+
+    fn outputs(&self) -> impl IntoIterator<Item = &PathBuf> {
+        let table_file = std::iter::once(&self.table_file);
+        let log_file = self.log_file.iter();
+
+        table_file.chain(log_file)
+    }
+}
+
 const CLUSTER_PREFIX: &str = "C";
 static MODULE: &str = "IRMA-CORE PREPROCESS";
 
@@ -81,6 +97,8 @@ static MODULE: &str = "IRMA-CORE PREPROCESS";
 ///
 /// Sub-program for processing FASTQ data.
 pub fn preprocess_process(args: PreprocessArgs) -> Result<(), std::io::Error> {
+    args.validate_paths()?;
+
     let ParsedPreprocessArgs { mut io_args, options } = parse_preprocess_args(args)?;
 
     let paired_reads = io_args.reader2.is_some();

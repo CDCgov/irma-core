@@ -4,7 +4,7 @@
 use clap::Args;
 use irma_records::{
     hashing::get_hasher,
-    io::{InputOptions, OutputOptions},
+    io::{InputOptions, OutputOptions, ValidatePaths},
     paired::get_molecular_id_side,
     sam::{PairedMergeStats, SamMergeablePairs},
 };
@@ -32,7 +32,52 @@ pub struct MergeSAMArgs {
     bowtie_format: bool,
 }
 
+struct ParsedMergeSamArgs {
+    /// Reference file used to generate the SAM.
+    fasta_reference: PathBuf,
+
+    /// SAM file to merge R1 and R2 pairs via alignment and parsimonious
+    /// correction.
+    sam_file: PathBuf,
+
+    /// The path for the output SAM file.
+    merged_sam_file: PathBuf,
+
+    /// If `Some`, the file to output observations for downstream analysis.
+    paired_stats_file: Option<PathBuf>,
+
+    /// SAM is in bowtie format.
+    bowtie_format: bool,
+}
+
+fn parse_merge_sam_args(args: MergeSAMArgs) -> ParsedMergeSamArgs {
+    ParsedMergeSamArgs {
+        fasta_reference:   args.fasta_reference,
+        sam_file:          args.sam_file,
+        merged_sam_file:   args.output_prefix.with_extension("sam"),
+        paired_stats_file: args.store_stats.then(|| args.output_prefix.with_extension("stats")),
+        bowtie_format:     args.bowtie_format,
+    }
+}
+
+impl ValidatePaths for ParsedMergeSamArgs {
+    fn inputs(&self) -> impl IntoIterator<Item = &PathBuf> {
+        [&self.fasta_reference, &self.sam_file]
+    }
+
+    fn outputs(&self) -> impl IntoIterator<Item = &PathBuf> {
+        let merged_sam_file = std::iter::once(&self.merged_sam_file);
+        let paired_stats_file = self.paired_stats_file.iter();
+
+        merged_sam_file.chain(paired_stats_file)
+    }
+}
+
 pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error> {
+    let args = parse_merge_sam_args(args);
+
+    args.validate_paths()?;
+
     let mut ref_reader = InputOptions::new_from_path(&args.fasta_reference)
         .use_file()
         .parse_fasta()
@@ -46,9 +91,8 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
     })??;
 
     const ONE_MB: usize = 2usize.pow(20);
-    let merged_sam_file = args.output_prefix.with_extension("sam");
 
-    let mut sam_writer = OutputOptions::new_from_path(&merged_sam_file)
+    let mut sam_writer = OutputOptions::new_from_path(&args.merged_sam_file)
         .with_capacity(ONE_MB)
         .use_file()
         .open()?;
@@ -124,9 +168,7 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
         }
     }
 
-    if args.store_stats {
-        let paired_stats_file = args.output_prefix.with_extension("stats");
-
+    if let Some(paired_stats_file) = args.paired_stats_file {
         let mut w = OutputOptions::new_from_path(&paired_stats_file).use_file().open()?;
 
         let PairedMergeStats {
