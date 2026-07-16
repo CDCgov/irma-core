@@ -1,6 +1,6 @@
 //! Phase clustering assignment.
 //!
-//! Reads in the variants table and associated distance matrix for a gene.
+//! Reads in the variants table and associated distance matrix for a ctype.
 //! Assigns a phase number to each variant by clustering variants connected by
 //! distances at or below a specified height. The variants table is rewritten
 //! with a trailing `Phase` column. If there is a single variant, it is assigned
@@ -19,9 +19,9 @@ use zoe::{data::err::ResultWithErrorContext, iter_utils::ProcessResultsExt};
 
 #[derive(Args, Debug)]
 pub struct PhaseArgs {
-    /// Gene variants file `<gene>-variants.txt`
+    /// Variants file `<ctype>-variants.txt`
     pub variants_file: PathBuf,
-    /// Gene variants square matrix file `<gene>-EXPENRD.sqm`
+    /// Variants square matrix file `<ctype>-EXPENRD.sqm`
     pub sqm_file:      PathBuf,
     /// Optional height value for phase clustering. The default height was
     /// selected empirically on known mixture data to render 95% sensitivity and
@@ -67,15 +67,18 @@ pub fn phase_process(args: PhaseArgs) -> std::io::Result<()> {
         variants_file_table.push(variants_file_line);
     }
 
-    let mut variants_file_writer = OutputOptions::new_from_path(&args.variants_file).use_file().open()?;
+    if variants_file_table.len() < 2 {
+        let mut variants_file_writer = OutputOptions::new_from_path(&args.variants_file).use_file().open()?;
+        writeln!(variants_file_writer, "{header}\tPhase", header = header.trim())?;
 
-    writeln!(variants_file_writer, "{header}\tPhase", header = header.trim())?;
+        // If there is only a single variant, skip clustering calculation.
+        // Single variant is assigned phase number `1`.
+        for single_row in variants_file_table {
+            writeln!(variants_file_writer, "{single_row}\t1")?;
+        }
 
-    // If there is only a single variant, skip clustering calculation. Single
-    // variant is assigned phase number `1`.
-    if let [single_row] = variants_file_table.as_slice() {
-        writeln!(variants_file_writer, "{single_row}\t1")?;
-    } else if !variants_file_table.is_empty() {
+        variants_file_writer.flush()
+    } else {
         let variants_matrix_reader = InputOptions::new_from_path(&args.sqm_file).use_file().open()?;
         // Phase clustering calculation and assignment happens here.
         let variant_phases = variants_matrix_reader.lines().process_results(|lines| {
@@ -83,7 +86,11 @@ pub fn phase_process(args: PhaseArgs) -> std::io::Result<()> {
                 .with_path_context("Cannot parse the .sqm file", &args.sqm_file)
         })??;
 
-        for line in variants_file_table {
+        let mut phase_nums = Vec::with_capacity(variants_file_table.len());
+
+        // Validate all variants in the .sqm first before truncating variants
+        // file
+        for line in &variants_file_table {
             let Some(&phase_num) = variant_phases.phase_by_tag.get(&VariantTag {
                 position:   line.position,
                 min_allele: line.minority_allele,
@@ -95,12 +102,16 @@ pub fn phase_process(args: PhaseArgs) -> std::io::Result<()> {
                     sqm_file = args.sqm_file.display()
                 )));
             };
+            phase_nums.push(phase_num);
+        }
 
+        let mut variants_file_writer = OutputOptions::new_from_path(&args.variants_file).use_file().open()?;
+        writeln!(variants_file_writer, "{header}\tPhase", header = header.trim())?;
+        for (line, phase_num) in variants_file_table.iter().zip(phase_nums) {
             writeln!(variants_file_writer, "{line}\t{phase_num}")?
         }
+        variants_file_writer.flush()
     }
-
-    variants_file_writer.flush()
 }
 
 /// Validates the type and range of the `tree_height` argument.
@@ -112,7 +123,7 @@ fn validate_height(tree_height: &str) -> Result<f64, String> {
     }
 }
 
-/// Validates the header in the `<gene>-variants.txt` file.
+/// Validates the header in the `<ctype>-variants.txt` file.
 ///
 /// Ensures the `Position` and `Minority_Allele` columns are present at the
 /// locations expected by [`VariantsFileLine`], and rejects input that already
