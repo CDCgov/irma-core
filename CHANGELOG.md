@@ -30,6 +30,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 - Passing the same input path twice is now allowed
 - When searching for equal paths in input and output files, paths are now canonicalized and soft links are handled
 - `preprocess`, `merge-sam`, `xflate`, and `aligner` now include checks for the input and output paths
+- Changes `trimmer` behavior when masking primers to mask multiple discontinuous matches, if present
 
 ### Fixes
 
@@ -43,6 +44,8 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 - Fixes `trimmer` bug with 2-in-1-out reads with widow filtering disabled where
   extra read(s) in either file would not get handled
 - Fixed incorrect `size_hint` and `try_fold` impls for `ZipReads` iterator
+- Fixed bug with masking primers in `trimmer` where overlapping ranges of
+  matched primer k-mers could cause no masking to occur
 
 ## [0.10.0] - 2026-06-05
 

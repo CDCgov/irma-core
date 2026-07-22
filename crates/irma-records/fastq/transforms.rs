@@ -96,8 +96,9 @@ pub trait ReadTransforms {
     ///
     /// The allowable primers are decomposed into k-mers and passed as a
     /// [`KmerSet`]. The first `restrict_left` bases in the read are searched
-    /// for any instances of these k-mers, from right to left. Any bases within
-    /// or left of the first k-mer found are trimmed/masked.
+    /// for any instances of these k-mers, from right to left. In clipping
+    /// mode, any bases within or left of the first k-mer found are trimmed. In
+    /// masking mode, only the matched k-mer spans are masked.
     fn process_left_primer(
         &mut self, restrict_left: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, SeedableRandomState>, masking: bool,
     ) -> &mut Self;
@@ -107,8 +108,9 @@ pub trait ReadTransforms {
     ///
     /// The allowable primers are decomposed into k-mers and passed as a
     /// [`KmerSet`]. The last `restrict_right` bases in the read are searched
-    /// for any instances of these k-mers, from left to right. Any bases within
-    /// or right of the first k-mer found are trimmed/masked.
+    /// for any instances of these k-mers, from left to right. In clipping
+    /// mode, any bases within or right of the first k-mer found are trimmed.
+    /// In masking mode, only the matched k-mer spans are masked.
     fn process_right_primer(
         &mut self, restrict_right: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, SeedableRandomState>, masking: bool,
     ) -> &mut Self;
@@ -236,16 +238,17 @@ impl ReadTransforms for FastQ {
                 self.quality.cut_to_start(range.end);
             }
         } else {
-            let mut ranges = self.sequence.search_in_first(restrict_left).find_all_kmers_rev(kmer_set);
-            if let Some(mut masking_range) = ranges.next() {
-                for other_range in ranges {
-                    if other_range.start <= masking_range.end {
-                        masking_range.end = other_range.end;
-                    } else {
-                        break;
-                    }
-                }
-                self.mask_if_exists(masking_range);
+            // Note: This will mask all k-mers found, one at a time, even
+            // redundantly if they overlap. However this was found to be
+            // slightly faster than collecting the ranges and merging before
+            // masking
+            let ranges: Vec<_> = self
+                .sequence
+                .search_in_first(restrict_left)
+                .find_all_kmers(kmer_set)
+                .collect();
+            for range in ranges {
+                self.sequence.mask_if_exists(range);
             }
         }
         self
@@ -261,16 +264,17 @@ impl ReadTransforms for FastQ {
                 self.quality.shorten_to(range.start);
             }
         } else {
-            let mut ranges = self.sequence.search_in_last(restrict_right).find_all_kmers(kmer_set);
-            if let Some(mut masking_range) = ranges.next() {
-                for other_range in ranges {
-                    if other_range.start <= masking_range.end {
-                        masking_range.end = other_range.end;
-                    } else {
-                        break;
-                    }
-                }
-                self.mask_if_exists(masking_range);
+            // Note: This will mask all k-mers found, one at a time, even
+            // redundantly if they overlap. However this was found to be
+            // slightly faster than collecting the ranges and merging before
+            // masking
+            let ranges: Vec<_> = self
+                .sequence
+                .search_in_last(restrict_right)
+                .find_all_kmers(kmer_set)
+                .collect();
+            for range in ranges {
+                self.sequence.mask_if_exists(range);
             }
         }
         self
@@ -456,17 +460,17 @@ impl ReadTransforms for FastQViewMut<'_> {
                 self.restrict(range.end..);
             }
         } else {
-            let mut ranges = self.sequence.search_in_first(restrict_left).find_all_kmers_rev(kmer_set);
-            if let Some(mut masking_range) = ranges.next() {
-                for other_range in ranges {
-                    if other_range.start <= masking_range.end {
-                        masking_range.end = other_range.end;
-                    } else {
-                        break;
-                    }
-                }
-                self.mask_if_exists(masking_range.clone());
-                self.restrict(masking_range.end..);
+            // Note: This will mask all k-mers found, one at a time, even
+            // redundantly if they overlap. However this was found to be
+            // slightly faster than collecting the ranges and merging before
+            // masking
+            let ranges: Vec<_> = self
+                .sequence
+                .search_in_first(restrict_left)
+                .find_all_kmers(kmer_set)
+                .collect();
+            for range in ranges {
+                self.sequence.mask_if_exists(range);
             }
         }
         self
@@ -481,17 +485,17 @@ impl ReadTransforms for FastQViewMut<'_> {
                 self.restrict(..range.start);
             }
         } else {
-            let mut ranges = self.sequence.search_in_last(restrict_right).find_all_kmers(kmer_set);
-            if let Some(mut masking_range) = ranges.next() {
-                for other_range in ranges {
-                    if other_range.start <= masking_range.end {
-                        masking_range.end = other_range.end;
-                    } else {
-                        break;
-                    }
-                }
-                self.mask_if_exists(masking_range.clone());
-                self.restrict(..masking_range.start);
+            // Note: This will mask all k-mers found, one at a time, even
+            // redundantly if they overlap. However this was found to be
+            // slightly faster than collecting the ranges and merging before
+            // masking
+            let ranges: Vec<_> = self
+                .sequence
+                .search_in_last(restrict_right)
+                .find_all_kmers(kmer_set)
+                .collect();
+            for range in ranges {
+                self.sequence.mask_if_exists(range);
             }
         }
         self

@@ -1,6 +1,7 @@
 /target
 *gz
 *.fastq
+*.fasta
 *.log
 *test*/
 snip.pl
