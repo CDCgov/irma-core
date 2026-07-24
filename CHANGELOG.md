@@ -5,7 +5,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 [Semantic Versioning]. For IRMA vs IRMA-core compatibility, please see the
 [version matrix](VERSION_MATRIX.md).
 
-## [0.10.1-dev] - TBD
+## [0.10.1] - 2026-07-24
 
 ### Added
 
@@ -19,35 +19,46 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
   connected components. Phase labels are now ordered deterministically by
   cluster size (descending), lowest variant position, then lowest minority
   allele byte value.
+- The format of the tallies in `aligner` has been altered when
+  `--tally-diagnostics` is used.
+- Changes `trimmer` behavior when masking primers to mask multiple discontinuous
+  matches, if present
+- Passing the same input path twice is now allowed
+- When searching for equal paths in input and output files, paths are now
+  canonicalized and soft links are handled
+- Added image signing to CI and updated default image to Trixie
 - Renamed `GzipReaderPiped` to `GzipReaderInThread` and altered API for it
 - Renamed `ReadFileZipPipe` to `ReadFileZipInThread`
-- `use_file_or_zip_threaded` has been removed in favor of a separate `decode_in_thread` method
-- The format of the tallies in `aligner` has been altered when `--tally-diagnostics` is used.
-- Added image signing to CI and updated default image to Trixie
+- `use_file_or_zip_threaded` has been removed in favor of a separate
+  `decode_in_thread` method
 - Removed helper methods for adapter trimming from `ReadTransforms`, and added
   `process_adapter` (within `irma-records` public API)
 - Improves `preprocess` error output via new `PrintWarning` trait
-- Passing the same input path twice is now allowed
-- When searching for equal paths in input and output files, paths are now canonicalized and soft links are handled
-- `preprocess`, `merge-sam`, `xflate`, and `aligner` now include checks for the input and output paths
-- Changes `trimmer` behavior when masking primers to mask multiple discontinuous matches, if present
-- Introduces a `Finish` trait for closing writers, and modifies the `WriteRecords` trait to use this
+- `preprocess`, `merge-sam`, `xflate`, and `aligner` now include checks for the
+  input and output paths
+- Introduces a `Finish` trait for closing writers, and modifies the
+  `WriteRecords` trait to use this
 
 ### Fixes
 
-- An erroneous `unreachable!` has been replaced with a descriptive panic in `process_barcode` (within `irma-records` public API)
-- An error for a non-ascii byte is no longer encountered in `ReadTransforms::fix_header` (within `irma-records` public API)
-- Fixes sequence count estimation in `sampler` to account for multiline FASTA files
-- DPKG metadata is no longer incorrectly deleted for container images (bug
-  exposed in v0.9.1)
-- `merge_sam` no longer panics on SRA qnames that are parseable but lack an explicit read side
-- `phase` no longer truncates variants table file on malformed or corrupted variants matrix files
-- Fixes `trimmer` bug with 2-in-1-out reads with widow filtering disabled where
-  extra read(s) in either file would not get handled
-- Fixed incorrect `size_hint` and `try_fold` impls for `ZipReads` iterator
 - Fixed bug with masking primers in `trimmer` where overlapping ranges of
   matched primer k-mers could cause no masking to occur
+- Fixes sequence count estimation in `sampler` to account for multiline FASTA
+  files
+- `merge_sam` no longer panics on SRA qnames that are parseable but lack an
+  explicit read side
+- Fixes `trimmer` bug with 2-in-1-out reads with widow filtering disabled where
+  extra read(s) in either file would not get handled
+- `phase` no longer truncates variants table file on malformed or corrupted
+  variants matrix files
 - Errors while writing the footer for zipped outputs are now properly propagated
+- DPKG metadata is no longer incorrectly deleted for container images (bug
+  exposed in v0.9.1)
+- Fixed incorrect `size_hint` and `try_fold` impls for `ZipReads` iterator
+- An error for a non-ascii byte is no longer encountered in
+  `ReadTransforms::fix_header` (within `irma-records` public API)
+- An erroneous `unreachable!` has been replaced with a descriptive panic in
+  `process_barcode` (within `irma-records` public API)
 
 ## [0.10.0] - 2026-06-05
 
@@ -287,7 +298,7 @@ randomly downsampling FastQ or FASTA files. Deinterleaving is also supported.
 - **Added**: custom inexact matching algorithm from [Zoe]
 
 <!-- Versions -->
-[0.10.1-dev]: https://github.com/CDCgov/irma-core/compare/v0.10.0...v0.10.0-dev
+[0.10.1]: https://github.com/CDCgov/irma-core/compare/v0.10.0...v0.10.0
 [0.10.0]: https://github.com/CDCgov/irma-core/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/CDCgov/irma-core/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/CDCgov/irma-core/compare/v0.8.1...v0.9.0
