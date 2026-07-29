@@ -4,8 +4,7 @@ use crate::aligner::{
     writers::{AlignmentWriter, write_header},
 };
 use clap::{Args, builder::RangedI64ValueParser};
-use irma_records::io::Finish;
-use irma_records::io::{FastX, FastXReader, IterWithContext, OutputOptions, ReadFileZipInThread, ValidatePaths};
+use irma_records::io::{FastX, FastXReader, Finish, IterWithContext, OutputOptions, ReadFileZipInThread, ValidatePaths};
 use std::{cmp::Ordering, io::Write, path::PathBuf};
 use zoe::{
     alignment::{Alignment, LocalProfiles, MaybeAligned, SharedProfiles},
@@ -14,7 +13,8 @@ use zoe::{
 };
 
 #[cfg(not(feature = "dev_no_rayon"))]
-use crate::aligner::writers::{AlignmentWriterThreaded, ThreadedWriteError};
+use irma_records::io::WriterThreaded;
+
 #[cfg(not(feature = "dev_no_rayon"))]
 use rayon::iter::{ParallelBridge, ParallelIterator};
 
@@ -28,7 +28,7 @@ type QueryReader = IterWithContext<FastXReader<ReadFileZipInThread>>;
 /// A type alias for the writer being used for the SAM file, which depends on
 /// whether `dev_no_rayon` is set.
 #[cfg(not(feature = "dev_no_rayon"))]
-type SamWriter = AlignmentWriterThreaded;
+type SamWriter = WriterThreaded;
 
 /// A type alias for the writer being used for the SAM file, which depends on
 /// whether `dev_no_rayon` is set.
@@ -157,7 +157,7 @@ pub fn aligner_process(args: AlignerArgs) -> std::io::Result<()> {
     }
 
     #[cfg(not(feature = "dev_no_rayon"))]
-    let writer = AlignmentWriterThreaded::from_writer(writer);
+    let writer = WriterThreaded::new(writer);
 
     // Validity: No context is added to the result
     let tallies = dispatch_alphabet(query_reader, references, writer, weight_matrix, &config)?;
@@ -443,27 +443,18 @@ where
 ///
 /// ## Errors
 ///
-/// Any IO errors occurring within the writer thread, while flushing `writer`,
-/// or while calling `f` are propagated. If a
-/// [`ThreadedWriteError::ReceiverDeallocated`] occurs, and there is no IO error
-/// found which could've caused this, then an error with a custom message is
-/// thrown.
+/// Any IO errors occurring within the writer thread, while finalizing `writer`,
+/// or while calling `f` are propagated.
 #[inline]
 #[cfg(not(feature = "dev_no_rayon"))]
-fn align_queries<F>(query_reader: QueryReader, writer: AlignmentWriterThreaded, f: F) -> std::io::Result<()>
+fn align_queries<F>(query_reader: QueryReader, writer: WriterThreaded, f: F) -> std::io::Result<()>
 where
-    F: Fn(&mut AlignmentWriterThreaded, std::io::Result<FastX>) -> Result<(), ThreadedWriteError> + Sync + Send, {
-    let res = query_reader
+    F: Fn(&mut WriterThreaded, std::io::Result<FastX>) -> std::io::Result<()> + Sync + Send, {
+    query_reader
         .par_bridge()
-        .try_for_each_with(writer.clone(), |w, record| f(w, record));
+        .try_for_each_with(writer.clone(), |w, record| f(w, record))?;
 
-    match res {
-        Ok(()) => writer.finish(),
-        Err(ThreadedWriteError::IoError(e)) => Err(e),
-        Err(ThreadedWriteError::ReceiverDeallocated) => Err(writer.finish().err().unwrap_or(std::io::Error::other(
-            "The receiver in the writing thread unexpectedly closed",
-        ))),
-    }
+    writer.finish()
 }
 
 /// An enum to track which strand the alignment mapped to
