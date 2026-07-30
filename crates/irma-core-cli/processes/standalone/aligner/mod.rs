@@ -1,7 +1,7 @@
 use crate::aligner::{
     arg_parsing::{AlignerConfig, Alphabet, AnyMatrix, NumPasses, ParsedAlignerArgs, parse_aligner_args},
     tallies::{AlignmentTallies, AllTallies, QueryTallies, RefTallies, pick_alignment_method},
-    writers::{AlignmentWriter, write_header},
+    writers::{write_alignment, write_header},
 };
 use clap::{Args, builder::RangedI64ValueParser};
 use irma_records::io::{FastX, FastXReader, Finish, IterWithContext, OutputOptions, ReadFileZipInThread, ValidatePaths};
@@ -288,7 +288,7 @@ fn align_all<'r, const S: usize>(
                 for reference in &references {
                     let alignment = query.sw_1pass_query_profile(reference)?;
                     alignment_tallies.tally(&alignment, weight_matrix);
-                    writer.write_alignment(alignment, config)?;
+                    write_alignment(writer, alignment, config)?;
                 }
             }
             AlignmentMethod::OnePassRefProfile => {
@@ -297,7 +297,7 @@ fn align_all<'r, const S: usize>(
                 for reference in &references.0 {
                     let alignment = reference.sw_1pass_ref_profile(&query)?;
                     alignment_tallies.tally(&alignment, weight_matrix);
-                    writer.write_alignment(alignment, config)?;
+                    write_alignment(writer, alignment, config)?;
                 }
             }
             AlignmentMethod::ThreePassQueryProfile => {
@@ -306,7 +306,7 @@ fn align_all<'r, const S: usize>(
                 for reference in references.0.iter() {
                     let alignment = query.sw_3pass_query_profile(reference)?;
                     alignment_tallies.tally(&alignment, weight_matrix);
-                    writer.write_alignment(alignment, config)?;
+                    write_alignment(writer, alignment, config)?;
                 }
             }
             AlignmentMethod::ThreePassRefProfile => {
@@ -315,7 +315,7 @@ fn align_all<'r, const S: usize>(
                 for reference in references.0.iter() {
                     let alignment = reference.sw_3pass_ref_profile(&query)?;
                     alignment_tallies.tally(&alignment, weight_matrix);
-                    writer.write_alignment(alignment, config)?;
+                    write_alignment(writer, alignment, config)?;
                 }
             }
         }
@@ -372,7 +372,7 @@ fn align_best_match<'r, const S: usize>(
                     Ok(alignment)
                 })?;
 
-                writer.write_alignment(best_alignment, config)?;
+                write_alignment(writer, best_alignment, config)?;
             }
             AlignmentMethod::OnePassRefProfile => {
                 let query = QueryWithRc::new(&query, config.rev_comp);
@@ -383,7 +383,7 @@ fn align_best_match<'r, const S: usize>(
                     Ok(alignment)
                 })?;
 
-                writer.write_alignment(best_alignment, config)?;
+                write_alignment(writer, best_alignment, config)?;
             }
             AlignmentMethod::ThreePassQueryProfile => {
                 let query = QueryWithProfile::new(&query, weight_matrix, config.gap_open, config.gap_extend)?;
@@ -394,7 +394,7 @@ fn align_best_match<'r, const S: usize>(
                     Ok(alignment)
                 })?;
 
-                writer.write_alignment(best_alignment, config)?;
+                write_alignment(writer, best_alignment, config)?;
             }
             AlignmentMethod::ThreePassRefProfile => {
                 let query = QueryWithRc::new(&query, config.rev_comp);
@@ -405,7 +405,7 @@ fn align_best_match<'r, const S: usize>(
                     Ok(alignment)
                 })?;
 
-                writer.write_alignment(best_alignment, config)?;
+                write_alignment(writer, best_alignment, config)?;
             }
         }
 
