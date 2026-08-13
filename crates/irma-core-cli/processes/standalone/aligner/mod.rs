@@ -1,11 +1,10 @@
 use crate::aligner::{
-    arg_parsing::{AlignerConfig, Alphabet, AnyMatrix, NumPasses, ParsedAlignerArgs, parse_aligner_args},
-    tallies::{AlignmentTallies, AllTallies, QueryTallies, RefTallies, pick_alignment_method},
+    arg_parsing::{AlignerConfig, Alphabet, AnyMatrix, NumPasses, ParsedAlignerArgs, WhichSequence, parse_aligner_args},
     writers::{write_alignment, write_header},
 };
 use clap::{Args, builder::RangedI64ValueParser};
 use irma_records::io::{FastX, FastXReader, Finish, IterWithContext, OutputOptions, ReadFileZipInThread, ValidatePaths};
-use std::{cmp::Ordering, io::Write, path::PathBuf};
+use std::{cmp::Ordering, path::PathBuf};
 use zoe::{
     alignment::{Alignment, LocalProfiles, MaybeAligned, SharedProfiles},
     data::{err::ResultWithErrorContext, fasta::FastaSeq, matrices::WeightMatrix},
@@ -19,7 +18,6 @@ use irma_records::io::WriterThreaded;
 use rayon::iter::{ParallelBridge, ParallelIterator};
 
 mod arg_parsing;
-mod tallies;
 mod writers;
 
 /// A type alias for the query reader used by `aligner`.
@@ -94,10 +92,9 @@ pub struct AlignerArgs {
     /// Builds the profile from the query sequences (currently the default)
     profile_from_query: bool,
 
-    #[arg(long)]
-    /// The method to use for alignment. If not specified, the 1pass algorithm
-    /// is used
-    method: Option<NumPasses>,
+    #[arg(long, default_value_t = NumPasses::OnePass)]
+    /// The method to use for alignment
+    method: NumPasses,
 
     #[arg(long)]
     /// Excludes the unmapped alignments from the final alignment
@@ -114,10 +111,6 @@ pub struct AlignerArgs {
     #[arg(long)]
     /// Include the SAM header line
     header: bool,
-
-    #[arg(long)]
-    /// The file to print tally diagnostics to
-    tally_diagnostics: Option<PathBuf>,
 }
 
 impl ValidatePaths for AlignerArgs {
@@ -139,7 +132,6 @@ pub fn aligner_process(args: AlignerArgs) -> std::io::Result<()> {
         references,
         weight_matrix,
         header,
-        tally_diagnostics,
         config,
     } = parse_aligner_args(args)?;
 
@@ -160,30 +152,7 @@ pub fn aligner_process(args: AlignerArgs) -> std::io::Result<()> {
     let writer = WriterThreaded::new(writer);
 
     // Validity: No context is added to the result
-    let tallies = dispatch_alphabet(query_reader, references, writer, weight_matrix, &config)?;
-
-    if let Some(path) = tally_diagnostics {
-        let mut tally_diagnostics = OutputOptions::new_from_path(&path).use_file().open()?;
-
-        let AllTallies {
-            num_queries,
-            queries_at_most_300,
-            num_refs,
-            first_ref_len,
-            num_alignments,
-            est_scores_fitting_i8,
-        } = tallies;
-
-        writeln!(tally_diagnostics, "Number of queries: {num_queries}")?;
-        writeln!(tally_diagnostics, "Queries at most length 300: {queries_at_most_300}")?;
-        writeln!(tally_diagnostics, "Number of references: {num_refs}")?;
-        writeln!(tally_diagnostics, "Length of first reference: {first_ref_len}")?;
-        writeln!(tally_diagnostics, "Number of alignments performed: {num_alignments}")?;
-        writeln!(
-            tally_diagnostics,
-            "Estimated number of alignments fitting i8: {est_scores_fitting_i8}"
-        )?;
-    }
+    dispatch_alphabet(query_reader, references, writer, weight_matrix, &config)?;
 
     Ok(())
 }
@@ -206,7 +175,7 @@ pub fn aligner_process(args: AlignerArgs) -> std::io::Result<()> {
 fn dispatch_alphabet(
     query_reader: QueryReader, references: Vec<FastaSeq>, writer: SamWriter, weight_matrix: AnyMatrix<'static, i8>,
     config: &AlignerConfig,
-) -> std::io::Result<AllTallies> {
+) -> std::io::Result<()> {
     // Validity: No context is added to the results
     match weight_matrix {
         AnyMatrix::Dna(weight_matrix) => dispatch_method(query_reader, references, writer, &weight_matrix, config),
@@ -235,7 +204,7 @@ fn dispatch_alphabet(
 fn dispatch_method<const S: usize>(
     query_reader: QueryReader, references: Vec<FastaSeq>, writer: SamWriter, weight_matrix: &WeightMatrix<'static, i8, S>,
     config: &AlignerConfig,
-) -> std::io::Result<AllTallies> {
+) -> std::io::Result<()> {
     let references = References::new(
         &references,
         weight_matrix,
@@ -270,60 +239,47 @@ fn dispatch_method<const S: usize>(
 fn align_all<'r, const S: usize>(
     query_reader: QueryReader, references: References<'r, S>, writer: SamWriter,
     weight_matrix: &WeightMatrix<'static, i8, S>, config: &AlignerConfig,
-) -> std::io::Result<AllTallies> {
-    let query_tallies = QueryTallies::default();
-    let ref_tallies = RefTallies::new(&references);
-    let alignment_tallies = AlignmentTallies::default();
-
+) -> std::io::Result<()> {
     align_queries(query_reader, writer, |writer, query| {
         let query = query?;
-        query_tallies.tally(&query.sequence);
 
-        let method = pick_alignment_method(&query_tallies, &ref_tallies, &alignment_tallies, config);
-
-        match method {
-            AlignmentMethod::OnePassQueryProfile => {
+        match (config.method, config.profile_from) {
+            (NumPasses::OnePass, WhichSequence::Query) => {
                 let query = QueryWithProfile::new(&query, weight_matrix, config.gap_open, config.gap_extend)?;
 
                 for reference in &references {
                     let alignment = query.sw_1pass_query_profile(reference)?;
-                    alignment_tallies.tally(&alignment, weight_matrix);
                     write_alignment(writer, alignment, config)?;
                 }
             }
-            AlignmentMethod::OnePassRefProfile => {
+            (NumPasses::OnePass, WhichSequence::Reference) => {
                 let query = QueryWithRc::new(&query, config.rev_comp);
 
                 for reference in &references.0 {
                     let alignment = reference.sw_1pass_ref_profile(&query)?;
-                    alignment_tallies.tally(&alignment, weight_matrix);
                     write_alignment(writer, alignment, config)?;
                 }
             }
-            AlignmentMethod::ThreePassQueryProfile => {
+            (NumPasses::ThreePass, WhichSequence::Query) => {
                 let query = QueryWithProfile::new(&query, weight_matrix, config.gap_open, config.gap_extend)?;
 
                 for reference in references.0.iter() {
                     let alignment = query.sw_3pass_query_profile(reference)?;
-                    alignment_tallies.tally(&alignment, weight_matrix);
                     write_alignment(writer, alignment, config)?;
                 }
             }
-            AlignmentMethod::ThreePassRefProfile => {
+            (NumPasses::ThreePass, WhichSequence::Reference) => {
                 let query = QueryWithRc::new(&query, config.rev_comp);
 
                 for reference in references.0.iter() {
                     let alignment = reference.sw_3pass_ref_profile(&query)?;
-                    alignment_tallies.tally(&alignment, weight_matrix);
                     write_alignment(writer, alignment, config)?;
                 }
             }
         }
 
         Ok(())
-    })?;
-
-    Ok(AllTallies::new(&query_tallies, &ref_tallies, &alignment_tallies, config))
+    })
 }
 
 /// Aligns all the queries in `query_reader` to the `references`, picking the
@@ -346,73 +302,58 @@ fn align_all<'r, const S: usize>(
 fn align_best_match<'r, const S: usize>(
     query_reader: QueryReader, references: References<'r, S>, writer: SamWriter,
     weight_matrix: &WeightMatrix<'static, i8, S>, config: &AlignerConfig,
-) -> std::io::Result<AllTallies> {
-    let query_tallies = QueryTallies::default();
-    let ref_tallies = RefTallies::new(&references);
-    let alignment_tallies = AlignmentTallies::default();
-
+) -> std::io::Result<()> {
     align_queries(query_reader, writer, |writer, query| {
         let query = query?;
-        query_tallies.tally(&query.sequence);
-
-        let method = pick_alignment_method(&query_tallies, &ref_tallies, &alignment_tallies, config);
 
         // Each match statement ends with a write, which appears redundant.
         // However, this is needed since the lifetime of the query is limited to
         // the match statement scope, and hence the alignment will not live long
         // enough to move this after
 
-        match method {
-            AlignmentMethod::OnePassQueryProfile => {
+        match (config.method, config.profile_from) {
+            (NumPasses::OnePass, WhichSequence::Query) => {
                 let query = QueryWithProfile::new(&query, weight_matrix, config.gap_open, config.gap_extend)?;
 
                 let best_alignment = align_best_ref(&references, |reference| {
                     let alignment = query.sw_1pass_query_profile(reference)?;
-                    alignment_tallies.tally(&alignment, weight_matrix);
                     Ok(alignment)
                 })?;
 
-                write_alignment(writer, best_alignment, config)?;
+                write_alignment(writer, best_alignment, config)
             }
-            AlignmentMethod::OnePassRefProfile => {
+            (NumPasses::OnePass, WhichSequence::Reference) => {
                 let query = QueryWithRc::new(&query, config.rev_comp);
 
                 let best_alignment = align_best_ref(&references, |reference| {
                     let alignment = reference.sw_1pass_ref_profile(&query)?;
-                    alignment_tallies.tally(&alignment, weight_matrix);
                     Ok(alignment)
                 })?;
 
-                write_alignment(writer, best_alignment, config)?;
+                write_alignment(writer, best_alignment, config)
             }
-            AlignmentMethod::ThreePassQueryProfile => {
+            (NumPasses::ThreePass, WhichSequence::Query) => {
                 let query = QueryWithProfile::new(&query, weight_matrix, config.gap_open, config.gap_extend)?;
 
                 let best_alignment = align_best_ref(&references, |reference| {
                     let alignment = query.sw_3pass_query_profile(reference)?;
-                    alignment_tallies.tally(&alignment, weight_matrix);
                     Ok(alignment)
                 })?;
 
-                write_alignment(writer, best_alignment, config)?;
+                write_alignment(writer, best_alignment, config)
             }
-            AlignmentMethod::ThreePassRefProfile => {
+            (NumPasses::ThreePass, WhichSequence::Reference) => {
                 let query = QueryWithRc::new(&query, config.rev_comp);
 
                 let best_alignment = align_best_ref(&references, |reference| {
                     let alignment = reference.sw_3pass_ref_profile(&query)?;
-                    alignment_tallies.tally(&alignment, weight_matrix);
                     Ok(alignment)
                 })?;
 
-                write_alignment(writer, best_alignment, config)?;
+                write_alignment(writer, best_alignment, config)
             }
         }
-
-        Ok(())
-    })?;
-
-    Ok(AllTallies::new(&query_tallies, &ref_tallies, &alignment_tallies, config))
+    })
 }
 
 /// Performs all alignments as indicated by closure `f`, using either a parallel
@@ -507,8 +448,7 @@ impl<'q, const S: usize> QueryWithProfile<'q, S> {
     }
 
     /// Aligns the query profile against the provided reference using the 1-pass
-    /// algorithm. This also tallies the alignment characteristics for the
-    /// forward alignment, and reverse complement if applicable.
+    /// algorithm.
     ///
     /// This is a higher-level abstraction around [`AlignerMethods::sw_1pass`]
     /// that handles the reverse complement alignment (if `--rev-comp` is used)
@@ -536,8 +476,7 @@ impl<'q, const S: usize> QueryWithProfile<'q, S> {
     }
 
     /// Aligns the query profile against the provided reference using the 3-pass
-    /// algorithm. This also tallies the alignment characteristics for the
-    /// forward alignment, and reverse complement if applicable.
+    /// algorithm.
     ///
     /// This is a higher-level abstraction around [`AlignerMethods::sw_3pass`]
     /// that handles the reverse complement alignment (if `--rev-comp` is used)
@@ -634,8 +573,7 @@ impl<'r, const S: usize> Reference<'r, S> {
     }
 
     /// Aligns the reference profile against the provided query using the 1-pass
-    /// algorithm. This also tallies the alignment characteristics for the
-    /// forward alignment, and reverse complement if applicable.
+    /// algorithm.
     ///
     /// This is a higher-level abstraction around [`AlignerMethods::sw_1pass`]
     /// that handles the reverse complement alignment (if `--rev-comp` is used)
@@ -662,8 +600,7 @@ impl<'r, const S: usize> Reference<'r, S> {
     }
 
     /// Aligns the reference profile against the provided query using the 3-pass
-    /// algorithm. This also tallies the alignment characteristics for the
-    /// forward alignment, and reverse complement if applicable.
+    /// algorithm.
     ///
     /// This is a higher-level abstraction around [`AlignerMethods::sw_3pass`]
     /// that handles the reverse complement alignment (if `--rev-comp` is used)
@@ -725,17 +662,6 @@ impl<'r, 'c, const S: usize> IntoIterator for &'c References<'r, S> {
     fn into_iter(self) -> Self::IntoIter {
         self.0.iter()
     }
-}
-
-/// An enum containing the different alignment methods which can be used in
-/// [`align_all`] or [`align_best_match`].
-#[allow(clippy::enum_variant_names)]
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-enum AlignmentMethod {
-    OnePassQueryProfile,
-    OnePassRefProfile,
-    ThreePassQueryProfile,
-    ThreePassRefProfile,
 }
 
 /// A trait extending [`ProfileSets`] with methods that add context to errors.

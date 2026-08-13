@@ -17,21 +17,19 @@ use zoe::{
 /// The parsed and validated command line arguments for `aligner`
 pub struct ParsedAlignerArgs {
     /// The streamed query sequences
-    pub query_reader:      QueryReader,
+    pub query_reader:  QueryReader,
     /// The slurped reference sequences
     ///
     /// ## Validity
     ///
     /// This field must be non-empty.
-    pub references:        Vec<FastaSeq>,
+    pub references:    Vec<FastaSeq>,
     /// The weight matrix to use for the alignment
-    pub weight_matrix:     AnyMatrix<'static, i8>,
+    pub weight_matrix: AnyMatrix<'static, i8>,
     /// Whether to write the SAM header
-    pub header:            bool,
-    /// The file to print tally diagnostics to
-    pub tally_diagnostics: Option<PathBuf>,
+    pub header:        bool,
     /// Any additional configuration
-    pub config:            AlignerConfig,
+    pub config:        AlignerConfig,
 }
 
 /// The parsed and validated configuration options for `aligner`
@@ -43,9 +41,9 @@ pub struct AlignerConfig {
     /// Whether to also align the reverse complements
     pub rev_comp:         bool,
     /// Any override for which sequence to build the profile from
-    pub profile_from:     Option<WhichSequence>,
+    pub profile_from:     WhichSequence,
     /// Any override for the number of passes to use
-    pub method:           Option<NumPasses>,
+    pub method:           NumPasses,
     /// Whether to exclude unmapped alignments from the final output
     pub exclude_unmapped: bool,
     /// Whether to perform best match alignment
@@ -79,10 +77,7 @@ pub struct AlignerConfig {
 ///
 /// [`Aa`]: Alphabet::Aa
 #[allow(unused_mut)]
-pub fn parse_aligner_args(args: AlignerArgs) -> std::io::Result<ParsedAlignerArgs> {
-    #[cfg(not(feature = "dev-adaptive"))]
-    let mut args = args;
-
+pub fn parse_aligner_args(mut args: AlignerArgs) -> std::io::Result<ParsedAlignerArgs> {
     let weight_matrix = AnyMatrix::parse_from_clap(args.alphabet, args.matrix, args.matching, args.mismatch, args.ignore_n);
 
     if weight_matrix.alphabet() == Alphabet::Aa && args.rev_comp {
@@ -129,29 +124,18 @@ pub fn parse_aligner_args(args: AlignerArgs) -> std::io::Result<ParsedAlignerArg
     }
 
     let mut profile_from = if args.profile_from_query {
-        Some(WhichSequence::Query)
+        WhichSequence::Query
     } else if args.profile_from_ref {
-        Some(WhichSequence::Reference)
+        WhichSequence::Reference
     } else {
-        None
+        WhichSequence::Query
     };
-
-    #[cfg(not(feature = "dev-adaptive"))]
-    if profile_from.is_none() {
-        profile_from = Some(WhichSequence::Query);
-    }
-
-    #[cfg(not(feature = "dev-adaptive"))]
-    if args.method.is_none() {
-        args.method = Some(NumPasses::OnePass);
-    }
 
     Ok(ParsedAlignerArgs {
         query_reader,
         references,
         weight_matrix,
         header: args.header,
-        tally_diagnostics: args.tally_diagnostics,
         config: AlignerConfig {
             gap_open,
             gap_extend,
