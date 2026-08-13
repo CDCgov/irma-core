@@ -128,7 +128,10 @@ pub fn parse_aligner_args(mut args: AlignerArgs) -> std::io::Result<ParsedAligne
     } else if args.profile_from_ref {
         WhichSequence::Reference
     } else {
-        WhichSequence::Query
+        match args.method {
+            NumPasses::OnePass => WhichSequence::Reference,
+            NumPasses::ThreePass => WhichSequence::Query,
+        }
     };
 
     Ok(ParsedAlignerArgs {

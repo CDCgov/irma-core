@@ -85,14 +85,16 @@ pub struct AlignerArgs {
     alphabet: Option<Alphabet>,
 
     #[arg(long, conflicts_with = "profile_from_query")]
-    /// Builds the profile from the reference sequences instead of the queries
+    /// Builds the profile from the reference sequences. This is default when
+    /// --method 3pass is used or left unspecified
     profile_from_ref: bool,
 
     #[arg(long, conflicts_with = "profile_from_ref")]
-    /// Builds the profile from the query sequences (currently the default)
+    /// Builds the profile from the query sequences. This is default when
+    /// --method 1pass is used
     profile_from_query: bool,
 
-    #[arg(long, default_value_t = NumPasses::OnePass)]
+    #[arg(long, default_value_t = NumPasses::ThreePass)]
     /// The method to use for alignment
     method: NumPasses,
 
