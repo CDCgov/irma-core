@@ -105,6 +105,9 @@ When in doubt, benchmarking on data reflective of the use-case can be informativ
 | `--profile-from-ref` | False |  |  Builds the striped profiles from the reference sequence(s) |
 | `--profile-from-query` | True |  |  Builds the striped profiles from the query sequences |
 
+> [!WARNING]
+> Changing these options may result in different optimal alignments. `aligner` always returns a deterministic optimal alignment when these parameters are held constant, but these options alter the underlying algorithms used, and hence may produce different outputs.
+
 ## Other Options
 
 For DNA alignments, passing `--rev-comp` or `-r` will also check the alignment against the reverse complement and return whichever is better. SAM uses the 5th bit (16 or 0b0001 0000) to indicate that the best alignment was against the reverse complement of the reference. To exclude unmapped (zero-scoring) alignments from the output, use `--exclude-unmapped`.
