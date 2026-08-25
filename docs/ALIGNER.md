@@ -97,13 +97,21 @@ When trying to optimize the runtime or memory usage of `aligner`, there are two 
 
 A second configuration option which can alter performance is passing either `--profile-from-query` (default for 3pass) or `--profile-from-ref` (default for 1pass). These mutually exclusive flags toggle whether the striped profile is built from the query or the reference, respectively. For the one-pass algorithm, `--profile-from-ref` can often offer faster performance by reusing profiles between multiple alignments. For the three-pass algorithm, `--profile-from-query` is often fastest (since the reverse profile in the second pass is cheaper for smaller sequences), but under certain scoring schemes, `--profile-from-ref` may perform better.
 
-When in doubt, benchmarking on data reflective of the use-case can be informative.
-
 | Parameter              | Default               | Kind                                                 | Description                                                      |
 | ---------------------- | --------------------- | ---------------------------------------------------- | ---------------------------------------------------------------- |
 | `--method`             | `3pass`               | `1pass` or `3pass`                                   | The alignment method to use                                      |
 | `--profile-from-ref`   | True if using `1pass` |                                                      |  Builds the striped profiles from the reference sequence(s)      |
 | `--profile-from-query` | True if using `3pass` |                                                      |  Builds the striped profiles from the query sequences            |
+
+When in doubt, benchmarking on data reflective of the use-case can be informative. Based on tests on an x86-64 Linux machine with 56 physical cores (112 logical), we offer the following guidance. The expected maximum score is relevant since it affects the final integer width used by the SIMD alignment algorithm.
+
+| Reference Length             | Query Length                                  | Expected Maximum Score                                               | Recommendation                        | Examples           |
+|------------------------------|-----------------------------------------------|----------------------------------------------------------------------|---------------------------------------|--------------------|
+| Long references (≥15000 nt)  | Not full length (<75% of reference length)    | Any                                                                  | `--method 3pass --profile-from-query` | COVID Illumina/ONT |
+| Long references (≥15000 nt)  | Nearly full length (≥75% of reference length) | Any                                                                  | `--method 3pass --profile-from-ref`   | COVID full length  |
+| Short references (<15000 nt) | Short reads (<200 nt)                         | No more than 20% of alignments are expected to exceed a score of 254 | `--method 1pass --profile-from-ref`   | Flu Illumina       |
+| Short references (<15000 nt) | Short reads (<200 nt)                         | At least 20% of alignments exceed a score of 254                     | `--method 3pass --profile-from-query` |                    |
+| Short references (<15000 nt) | Long reads (≥200 nt)                          | Any                                                                  | `--method 1pass --profile-from-query` | Flu full length    |
 
 > [!WARNING]
 > Changing these options may result in different optimal alignments. `aligner` always returns a deterministic optimal alignment when these parameters are held constant, but these options alter the underlying algorithms used, and hence may produce different outputs.
