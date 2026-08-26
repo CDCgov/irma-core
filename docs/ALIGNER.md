@@ -12,7 +12,7 @@ For benchmarking or scenarios where a single thread is always used, the `dev_no_
 
 ## Inputs and Outputs
 
-The first positional argument is a FASTA file containing the reference sequence(s), and the second argument is a FASTA or FASTQ file containing the queries. Either file may be gzip-compressed, in which case it is assumed to end in `.gz`. The output is in the [SAM alignment format](https://samtools.github.io/hts-specs/SAMv1.pdf). The score is reported with the `AS` tag for mapped reads, and the `MAPQ` field is not used (it is set to 255). The output file is specified with `--out` or `--output` flags. If not specified, output is directed to `STDOUT`. If the provided file ends in `.gz`, the output will be zipped.
+The first positional argument is a FASTA file containing the reference sequence(s), and the second argument is a FASTA or FASTQ file containing the queries. Either file may be gzip-compressed, in which case it is assumed to end in `.gz`. The output is in the [SAM alignment format](https://samtools.github.io/hts-specs/SAMv1.pdf). The score is reported with the `AS` tag for mapped reads, and the `MAPQ` field is not used (it is set to 255). The output file is specified with `--out` or `--output` flags. If not specified, output is directed to `STDOUT`.
 
 As an example, consider the following inputs:
 

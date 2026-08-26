@@ -15,6 +15,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 ### Removed
 
 - Removed the `--tally-diagnostics` flag from `aligner`
+- Removed support for zipped output files from `aligner`
 
 ## [0.10.1] - 2026-07-24
 

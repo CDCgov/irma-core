@@ -1,5 +1,5 @@
 use crate::io::{
-    OptionalPaths, OutputContext, PairedErrors, RecordWriters, WriteFileZipStdout, WriterWithContext,
+    OptionalPaths, OutputContext, PairedErrors, RecordWriters, WriteFileStdout, WriteFileZipStdout, WriterWithContext,
     open_options::PairedStruct,
 };
 use std::{
@@ -13,8 +13,8 @@ use std::{
 /// This supports many features, such as:
 ///
 /// - Handling unpaired or paired inputs
-/// - Interpreting the paths in multiple ways, such as [`File`] and
-///   [`WriteFileZipStdout`]
+/// - Interpreting the paths in multiple ways, such as [`File`],
+///   [`WriteFileStdout`], and [`WriteFileZipStdout`]
 /// - Automatically adding context including the path and record type (if
 ///   applicable) to any errors while creating the file or writing to the file
 /// - Altering the capacity of the [`BufWriter`]
@@ -26,17 +26,20 @@ use std::{
 ///      file is being created from a path, compatible with [`File`].
 ///    - [`OutputOptions::new_from_opt_path`]: This is used when a single output
 ///      file is being created from an optional path, compatible with
-///      [`WriteFileZipStdout`]. If the path is not provided, stdout is used.
+///      [`WriteFileStdout`] and [`WriteFileZipStdout`]. If the path is not
+///      provided, stdout is used.
 ///    - [`OutputOptions::new_from_paths`]: This is used when potentially paired
 ///      output files are being created. This is compatible with [`File`].
 ///    - [`OutputOptions::new_from_opt_paths`]: This is used when potentially
 ///      paired output files are being created, and the first path is optional.
-///      This is compatible with [`WriteFileZipStdout`].
+///      This is compatible with [`WriteFileStdout`] and [`WriteFileZipStdout`].
 /// 2. Optionally set the capacity for the [`BufWriter`] to create using
 ///    `with_capacity`.
 /// 3. Call a method to interpret the path as something readable. The options
 ///    may differ depending on the constructor used.
 ///    - `use_file`: Interpret the path as a regular file ([`File`])
+///    - `use_file_or_stdout`: Interpret the path as a regular file or stdout if
+///      no path is provided ([`WriteFileStdout`])
 ///    - `use_file_zip_or_stdout`: Interpret the path as a regular file, zipped
 ///      file, or stdout if no path is provided ([`WriteFileZipStdout`])
 /// 4. Call the `open` method to create the outputs, with context automatically
@@ -69,7 +72,6 @@ impl<'a> OutputOptions<'a, &'a Path> {
     /// Creates a new [`OutputOptions`] from a specified path.
     ///
     /// This can then be interpreted as [`File`].
-    #[allow(dead_code)]
     pub fn new_from_path<P>(path: &'a P) -> Self
     where
         P: AsRef<Path> + ?Sized, {
@@ -110,7 +112,6 @@ impl<'a> OutputOptions<'a, Stdout> {
     }
 
     /// Sets the capacity for the [`BufWriter`] to use when opening the writer.
-    #[allow(dead_code)]
     pub fn with_capacity(mut self, capacity: usize) -> Self {
         self.capacity = Some(capacity);
         self
@@ -133,10 +134,28 @@ impl<'a> OutputOptions<'a, Option<&'a Path>> {
     }
 
     /// Sets the capacity for the [`BufWriter`] to use when opening the writer.
-    #[allow(dead_code)]
     pub fn with_capacity(mut self, capacity: usize) -> Self {
         self.capacity = Some(capacity);
         self
+    }
+
+    /// Interprets the optional path using [`WriteFileStdout`], which supports
+    /// regular files and stdout (in the case that no path was provided).
+    pub fn use_file_or_stdout(self) -> OutputOptions<'a, WriteFileStdout> {
+        let output = self.output.and_then(|path| {
+            if let Some(capacity) = self.capacity {
+                WriteFileStdout::with_capacity(capacity, path)
+            } else {
+                WriteFileStdout::create(path)
+            }
+            .map_err(PairedErrors::Err1)
+        });
+
+        OutputOptions {
+            context: self.context,
+            output,
+            capacity: self.capacity,
+        }
     }
 
     /// Interprets the optional path using [`WriteFileZipStdout`], which
@@ -171,7 +190,6 @@ impl<'a> OutputOptions<'a, RecordWriters<&'a Path>> {
     /// should be `Some`, and for an unpaired output, `path2` should be `None`.
     ///
     /// The paths can then be interpreted as [`File`].
-    #[allow(dead_code)]
     pub fn new_from_paths<P>(path1: &'a P, path2: Option<&'a P>) -> Self
     where
         P: AsRef<Path> + ?Sized, {
@@ -185,14 +203,12 @@ impl<'a> OutputOptions<'a, RecordWriters<&'a Path>> {
     }
 
     /// Sets the capacity for the [`BufWriter`] to use when opening the writer.
-    #[allow(dead_code)]
     pub fn with_capacity(mut self, capacity: usize) -> Self {
         self.capacity = Some(capacity);
         self
     }
 
     /// Interprets the path(s) using [`File`] for writing.
-    #[allow(dead_code)]
     pub fn use_file(self) -> OutputOptions<'a, RecordWriters<File>> {
         OutputOptions {
             context:  self.context,
@@ -226,10 +242,29 @@ impl<'a> OutputOptions<'a, OptionalPaths<'a>> {
     }
 
     /// Sets the capacity for the [`BufWriter`] to use when opening the writer.
-    #[allow(dead_code)]
     pub fn with_capacity(mut self, capacity: usize) -> Self {
         self.capacity = Some(capacity);
         self
+    }
+
+    /// Interprets the optional path(s) using [`WriteFileStdout`].
+    ///
+    /// Only `path1` has the potential of being `stdout`, since if `path2` is
+    /// `None`, this corresponds to unpaired output.
+    pub fn use_file_or_stdout(self) -> OutputOptions<'a, RecordWriters<WriteFileStdout>> {
+        OutputOptions {
+            context:  self.context,
+            output:   self.output.and_then(|paths| {
+                paths.try_map_writers(|path| {
+                    if let Some(capacity) = self.capacity {
+                        WriteFileStdout::with_capacity(capacity, path)
+                    } else {
+                        WriteFileStdout::create(path)
+                    }
+                })
+            }),
+            capacity: self.capacity,
+        }
     }
 
     /// Interprets the optional path(s) using [`WriteFileZipStdout`].
@@ -300,6 +335,22 @@ impl<'a> OutputOptions<'a, Stdout> {
     }
 }
 
+impl<'a> OutputOptions<'a, WriteFileStdout> {
+    /// Opens the [`WriteFileStdout`].
+    ///
+    /// ## Errors
+    ///
+    /// If a path was provided, IO errors when creating the file are propagated.
+    /// Context is added that includes the path. Any failed writes will also
+    /// have similar context added (by definition of [`WriteFileStdout`]).
+    pub fn open(self) -> std::io::Result<WriteFileStdout> {
+        match self.output {
+            Ok(writer) => Ok(writer),
+            Err(e) => Err(self.context.add_context(e).into()),
+        }
+    }
+}
+
 impl<'a> OutputOptions<'a, WriteFileZipStdout> {
     /// Opens the [`WriteFileZipStdout`].
     ///
@@ -325,7 +376,6 @@ impl<'a> OutputOptions<'a, RecordWriters<File>> {
     /// IO errors when creating the files are propagated. Context is added that
     /// includes the path. Any failed writes will also have similar context
     /// added.
-    #[allow(dead_code)]
     pub fn open(self) -> std::io::Result<RecordWriters<BufWriter<WriterWithContext<File>>>> {
         let files = self.output.map_err(|e| self.context.add_context(e))?;
 
@@ -340,6 +390,23 @@ impl<'a> OutputOptions<'a, RecordWriters<File>> {
         });
 
         Ok(with_bufwriter)
+    }
+}
+
+impl<'a> OutputOptions<'a, RecordWriters<WriteFileStdout>> {
+    /// Opens the potentially paired [`WriteFileStdout`] outputs.
+    ///
+    /// ## Errors
+    ///
+    /// If a path was provided for the first input, IO errors when creating the
+    /// file are propagated. Context is added that includes the path. Any failed
+    /// writes will also have similar context added (by definition of
+    /// [`WriteFileStdout`]).
+    pub fn open(self) -> std::io::Result<RecordWriters<WriteFileStdout>> {
+        match self.output {
+            Ok(writer) => Ok(writer),
+            Err(e) => Err(self.context.add_context(e).into()),
+        }
     }
 }
 

@@ -12,12 +12,43 @@ use std::{
     },
     thread::JoinHandle,
 };
-use zoe::{data::err::GetCode, define_whichever};
+use zoe::{data::err::GetCode, define_whichever, impl_traits};
+
+/// A writer enabling writing to either a file or stdout.
+///
+/// This includes buffering via [`BufWriter`] and context with in
+/// [`WriterWithContext`] to add context to write errors.
+pub struct WriteFileStdout(WriterWithContext<BufWriter<WriteFileStdoutInner>>);
 
 define_whichever! {
-    /// An enum for the different acceptable output types. A [`BufWriter`] is
-    /// used for all variants, and all variants are wrapped in
-    /// [`WriterWithContext`] to add context to write errors.
+    /// An enum unifying writing to a regular file or stdout, without buffering
+    /// or context.
+    ///
+    /// Since all variants require buffering, we do not include [`BufWriter`]
+    /// inside the variants, and instead wrap the enum in a [`BufWriter`]. This
+    /// allows dispatch to _only_ occur when writing a full buffer, as compared
+    /// to on every write.
+    #[derive(Debug)]
+    enum WriteFileStdoutInner {
+        /// A writer for a regular uncompressed file.
+        File(File),
+        /// A writer for uncompressed data to stdout.
+        Stdout(Stdout),
+    }
+
+    impl Write for WriteFileStdoutInner {}
+}
+
+impl_traits! {
+    impl Write for WriteFileStdout {}
+}
+
+define_whichever! {
+    /// An enum unifying writing to a regular file, a gzip compressed file, or
+    /// stdout.
+    ///
+    /// A [`BufWriter`] is used for all variants, and all variants are wrapped
+    /// in [`WriterWithContext`] to add context to write errors.
     ///
     /// ## Limitations
     ///
@@ -33,6 +64,49 @@ define_whichever! {
     }
 
     impl Write for WriteFileZipStdout {}
+}
+
+impl WriteFileStdout {
+    /// Creates a new [`WriteFileStdout`] from an optional filename. If a path
+    /// is not provided, `stdout` is used.
+    ///
+    /// ## Errors
+    ///
+    /// If a path is provided, any IO errors when creating the file are
+    /// propagated. If no path is provided, this method is infallible. Any
+    /// failed writes will have context added including the path if available.
+    pub fn create(path: Option<impl AsRef<Path>>) -> std::io::Result<Self> {
+        match path {
+            Some(path) => {
+                let file = File::create(&path)?;
+                Ok(Self(
+                    BufWriter::new(WriteFileStdoutInner::File(file))
+                        .writer_with_path_context("Failed to write to file", path),
+                ))
+            }
+            None => Ok(Self(
+                BufWriter::new(WriteFileStdoutInner::Stdout(stdout())).writer_with_context("Failed to write to stdout"),
+            )),
+        }
+    }
+
+    /// Similar to [`WriteFileStdout::create`], but uses a specified `capacity`
+    /// for the underlying [`BufWriter`].
+    pub fn with_capacity(capacity: usize, path: Option<impl AsRef<Path>>) -> std::io::Result<Self> {
+        match path {
+            Some(path) => {
+                let file = File::create(&path)?;
+                Ok(Self(
+                    BufWriter::with_capacity(capacity, WriteFileStdoutInner::File(file))
+                        .writer_with_path_context("Failed to write to file", path),
+                ))
+            }
+            None => Ok(Self(
+                BufWriter::with_capacity(capacity, WriteFileStdoutInner::Stdout(stdout()))
+                    .writer_with_context("Failed to write to stdout"),
+            )),
+        }
+    }
 }
 
 impl WriteFileZipStdout {
@@ -90,6 +164,21 @@ impl WriteFileZipStdout {
                 BufWriter::with_capacity(capacity, stdout()).writer_with_context("Failed to write to stdout"),
             )),
         }
+    }
+}
+
+impl Finish for WriteFileStdoutInner {
+    fn finish(self) -> std::io::Result<()> {
+        match self {
+            WriteFileStdoutInner::File(writer) => writer.finish(),
+            WriteFileStdoutInner::Stdout(writer) => writer.finish(),
+        }
+    }
+}
+
+impl Finish for WriteFileStdout {
+    fn finish(self) -> std::io::Result<()> {
+        self.0.finish()
     }
 }
 

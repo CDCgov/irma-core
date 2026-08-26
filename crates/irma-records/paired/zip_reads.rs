@@ -43,6 +43,8 @@ use zoe::{
 ///   iterators may remain, and hence [`ZipReads`] may return additional `Err`
 ///   or `Ok` variants depending on the error variant, whether the input
 ///   iterators were fused, etc.
+///
+/// [`next`]: Iterator::next
 pub struct ZipReads<I, J, A, C>
 where
     I: Iterator<Item = std::io::Result<A>>,

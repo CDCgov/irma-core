@@ -31,7 +31,7 @@ type SamWriter = WriterThreaded;
 /// A type alias for the writer being used for the SAM file, which depends on
 /// whether `dev_no_rayon` is set.
 #[cfg(feature = "dev_no_rayon")]
-type SamWriter = irma_records::io::WriteFileZipStdout;
+type SamWriter = irma_records::io::WriteFileStdout;
 
 /// The command line arguments for `aligner`
 #[derive(Args, Debug)]
@@ -143,7 +143,7 @@ pub fn aligner_process(args: AlignerArgs) -> std::io::Result<()> {
     }
 
     let mut writer = OutputOptions::new_from_opt_path(config.output.as_ref())
-        .use_file_zip_or_stdout()
+        .use_file_or_stdout()
         .open()?;
 
     if header {
