@@ -257,28 +257,43 @@ pub struct WriterWithContext<W> {
     description: String,
 }
 
+impl<W> WriterWithContext<W> {
+    /// Runs a custom function on the inner writer, with context added if it
+    /// fails.
+    ///
+    /// Typically the [`Write`] trait is sufficient to perform writing with
+    /// [`WriterWithContext`], but if a more customized operation is required
+    /// (perhaps a specialized method offered by the inner `W`), this gives a
+    /// way to robustly call it.
+    pub fn run_with_context<F, T>(&mut self, mut f: F) -> std::io::Result<T>
+    where
+        F: FnMut(&mut W) -> std::io::Result<T>, {
+        Ok(f(&mut self.writer).with_context(&self.description)?)
+    }
+}
+
 impl<W> Write for WriterWithContext<W>
 where
     W: Write,
 {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        Ok(self.writer.write(buf).with_context(&self.description)?)
+        self.run_with_context(|writer| writer.write(buf))
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
-        Ok(self.writer.flush().with_context(&self.description)?)
+        self.run_with_context(|writer| writer.flush())
     }
 
     fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
-        Ok(self.writer.write_vectored(bufs).with_context(&self.description)?)
+        self.run_with_context(|writer| writer.write_vectored(bufs))
     }
 
     fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
-        Ok(self.writer.write_all(buf).with_context(&self.description)?)
+        self.run_with_context(|writer| writer.write_all(buf))
     }
 
     fn write_fmt(&mut self, args: std::fmt::Arguments<'_>) -> std::io::Result<()> {
-        Ok(self.writer.write_fmt(args).with_context(&self.description)?)
+        self.run_with_context(|writer| writer.write_fmt(args))
     }
 }
 
