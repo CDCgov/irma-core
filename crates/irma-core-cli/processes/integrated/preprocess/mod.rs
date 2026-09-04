@@ -14,10 +14,7 @@ use foldhash::fast::SeedableRandomState;
 use irma_records::{
     fastq::ReadTransforms,
     hashing::get_hasher,
-    io::{
-        Finish, InputOptions, IterWithContext, OutputOptions, ReadFileZipInThread, RecordReaders, ValidatePaths,
-        WriterWithContext,
-    },
+    io::{Finish, InputOptions, OutputOptions, ReadFileZipInThread, RecordReaders, ValidatePaths, WithContext},
     paired::{ReadSide, ZipPairedReadsError, ZipPairedReadsExt},
 };
 use std::{
@@ -133,11 +130,11 @@ pub fn preprocess_process(args: PreprocessArgs) -> Result<(), std::io::Error> {
 /// context.
 struct Reader {
     path: PathBuf,
-    iter: IterWithContext<FastQReader<ReadFileZipInThread>>,
+    iter: WithContext<FastQReader<ReadFileZipInThread>>,
 }
 
-type TableWriter = BufWriter<WriterWithContext<File>>;
-type LogWriter = BufWriter<WriterWithContext<File>>;
+type TableWriter = BufWriter<WithContext<File>>;
+type LogWriter = BufWriter<WithContext<File>>;
 
 struct ParsedPreprocessIoArgs {
     table_writer: TableWriter,

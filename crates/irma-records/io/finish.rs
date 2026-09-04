@@ -1,4 +1,4 @@
-use crate::io::{PairedWriters, RecordWriters, WriteFileZipStdout, WriterWithContext};
+use crate::io::{PairedWriters, RecordWriters, WriteFileZipStdout};
 use flate2::write::GzEncoder;
 use std::{
     collections::VecDeque,
@@ -6,7 +6,6 @@ use std::{
     io::{BufWriter, Cursor, Empty, LineWriter, PipeWriter, Sink, Stderr, Stdout, Write},
     process::ChildStdin,
 };
-use zoe::data::err::ResultWithErrorContext;
 
 /// A trait allowing a writer to be finished, which may include flushing,
 /// writing any footers, etc.
@@ -142,13 +141,6 @@ impl<W: Finish + Write> Finish for LineWriter<W> {
         let inner = self.into_inner()?;
         // Finish the inner writer
         inner.finish()
-    }
-}
-
-impl<W: Finish> Finish for WriterWithContext<W> {
-    fn finish(self) -> std::io::Result<()> {
-        self.writer.finish().with_context(self.description)?;
-        Ok(())
     }
 }
 

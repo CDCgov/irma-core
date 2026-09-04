@@ -8,8 +8,8 @@ use clap::Args;
 use core::fmt;
 use irma_records::{
     io::{
-        Finish, InputOptions, IterWithContext, OutputOptions, PairedWriters, ReadFileZipInThread, RecordWriters,
-        ValidatePaths, WriteFileZipStdout, WriteRecord,
+        Finish, InputOptions, OutputOptions, PairedWriters, ReadFileZipInThread, RecordWriters, ValidatePaths, WithContext,
+        WriteFileZipStdout, WriteRecord,
     },
     paired::{DeinterleavedPairedReadsExt, ZipPairedReadsExt, ZipReadsError},
 };
@@ -325,7 +325,7 @@ impl fmt::Display for PairedIoStrategy {
 
 /// Parsed arguments for the `trimmer` subprocess
 struct ParsedTrimmerArgs {
-    io_args:       PairedIoArgs<IterWithContext<FastQReader<ReadFileZipInThread>>, WriteFileZipStdout>,
+    io_args:       PairedIoArgs<WithContext<FastQReader<ReadFileZipInThread>>, WriteFileZipStdout>,
     strategy:      PairedIoStrategy,
     trimming_args: ParsedTrimmerOptions,
     primer_file:   Option<PathBuf>,

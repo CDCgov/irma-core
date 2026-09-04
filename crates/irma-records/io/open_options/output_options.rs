@@ -1,5 +1,5 @@
 use crate::io::{
-    OptionalPaths, OutputContext, PairedErrors, RecordWriters, WriteFileStdout, WriteFileZipStdout, WriterWithContext,
+    OptionalPaths, OutputContext, PairedErrors, RecordWriters, WithContext, WriteFileStdout, WriteFileZipStdout,
     open_options::PairedStruct,
 };
 use std::{
@@ -290,14 +290,14 @@ impl<'a> OutputOptions<'a, OptionalPaths<'a>> {
 
 impl<'a> OutputOptions<'a, File> {
     /// Opens the [`File`] for writing, wrapping it in a [`BufWriter`] and a
-    /// [`WriterWithContext`].
+    /// [`WithContext`].
     ///
     /// ## Errors
     ///
     /// IO errors when opening the file are propagated. Context is added that
     /// includes the path. Any failed writes will also have similar context
     /// added.
-    pub fn open(self) -> std::io::Result<BufWriter<WriterWithContext<File>>> {
+    pub fn open(self) -> std::io::Result<BufWriter<WithContext<File>>> {
         let file = self.output.map_err(|e| self.context.add_context(e))?;
 
         let with_writer_context = OutputContext::add_writer_context(file, self.context.output1);
@@ -314,13 +314,13 @@ impl<'a> OutputOptions<'a, File> {
 
 impl<'a> OutputOptions<'a, Stdout> {
     /// Opens [`Stdout`] for writing, wrapping it in a [`BufWriter`] and a
-    /// [`WriterWithContext`].
+    /// [`WithContext`].
     ///
     /// ## Errors
     ///
     /// Any failed writes will have context added (mentioning that there was a
     /// failure to write to stdout).
-    pub fn open(self) -> std::io::Result<BufWriter<WriterWithContext<Stdout>>> {
+    pub fn open(self) -> std::io::Result<BufWriter<WithContext<Stdout>>> {
         let stdout = self.output.map_err(|e| self.context.add_context(e))?;
 
         let with_writer_context = OutputContext::add_writer_context(stdout, self.context.output1);
@@ -376,7 +376,7 @@ impl<'a> OutputOptions<'a, RecordWriters<File>> {
     /// IO errors when creating the files are propagated. Context is added that
     /// includes the path. Any failed writes will also have similar context
     /// added.
-    pub fn open(self) -> std::io::Result<RecordWriters<BufWriter<WriterWithContext<File>>>> {
+    pub fn open(self) -> std::io::Result<RecordWriters<BufWriter<WithContext<File>>>> {
         let files = self.output.map_err(|e| self.context.add_context(e))?;
 
         let with_writer_context = self.context.add_paired_writer_context(files);

@@ -3,9 +3,9 @@
 use clap::Args;
 use irma_records::{
     io::{
-        DispatchFastX, FastXReader, InputOptions, IterWithContext, OutputOptions, ReadFileZipInThread, RecordReaders,
-        RecordWriters, SequenceWriter, ValidatePaths, WriteFileZipStdout, WriteRecord, WriteRecordCompatibleItem,
-        WriteRecords, is_gz,
+        DispatchFastX, FastXReader, FastXType, InputOptions, OutputOptions, ReadFileZipInThread, RecordReaders,
+        RecordWriters, SequenceWriter, ValidatePaths, WithContext, WriteFileZipStdout, WriteRecord,
+        WriteRecordCompatibleItem, WriteRecords, is_gz,
     },
     paired::{DeinterleavedPairedReadsExt, ZipPairedReadsExt},
 };
@@ -13,7 +13,7 @@ use rand::{SeedableRng, make_rng};
 use rand_xoshiro::Xoshiro256StarStar;
 use std::{
     fmt::Debug,
-    io::{BufRead, Read},
+    io::BufRead,
     path::{Path, PathBuf},
 };
 use zoe::{
@@ -366,12 +366,12 @@ fn get_paired_seq_count(io_args: &IOArgs) -> std::io::Result<Option<usize>> {
     } = &io_args;
 
     if reader1.path.is_file() && !is_gz(&reader1.path) {
-        Ok(Some(get_seq_count(&reader1.path, reader1.iter.inner_iter())?))
+        Ok(Some(get_seq_count(&reader1.path, reader1.iter.record_type())?))
     } else if let Some(reader2) = reader2
         && reader2.path.is_file()
         && !is_gz(&reader2.path)
     {
-        Ok(Some(get_seq_count(&reader2.path, reader2.iter.inner_iter())?))
+        Ok(Some(get_seq_count(&reader2.path, reader2.iter.record_type())?))
     } else {
         Ok(None)
     }
@@ -381,7 +381,7 @@ fn get_paired_seq_count(io_args: &IOArgs) -> std::io::Result<Option<usize>> {
 /// context.
 struct Reader {
     path: PathBuf,
-    iter: IterWithContext<FastXReader<ReadFileZipInThread>>,
+    iter: WithContext<FastXReader<ReadFileZipInThread>>,
 }
 
 /// The IO arguments used by sampler, including up to two readers and writers.
@@ -451,16 +451,16 @@ fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, 
 /// If there is a trailing FASTA header character (`>`) at the end of the file
 /// without an actual record, the sequence estimate will be off by 1, but this
 /// error will then be handled when the file is read during sampling.
-fn get_seq_count<R: Read>(input_file: &Path, reader: &FastXReader<R>) -> std::io::Result<usize> {
+fn get_seq_count(input_file: &Path, record_type: FastXType) -> std::io::Result<usize> {
     let input = InputOptions::new_from_path(input_file).use_file().open()?;
-    match reader {
-        FastXReader::Fasta(_) => {
+    match record_type {
+        FastXType::Fasta => {
             // the first item in the `split` iterator will be empty if the first
             // character in the file is a `>`, so we subtract 1
             let header_count = input.split(b'>').count().saturating_sub(1);
             Ok(header_count)
         }
-        FastXReader::Fastq(_) => {
+        FastXType::Fastq => {
             let line_count = input.lines().process_results(|iter| iter.count())?;
             Ok(line_count / 4)
         }

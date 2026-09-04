@@ -16,6 +16,14 @@ use zoe::{
     prelude::{FastQ, FastQReader, FastaReader, QualityScores},
 };
 
+/// An enum holding the type of a [`FastX`] or [`FastXReader`], without holding
+/// any data.
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+pub enum FastXType {
+    Fastq,
+    Fasta,
+}
+
 define_whichever! {
     /// A reader over either FASTA or FASTQ data, determined automatically based
     /// on the first non-whitespace character.
@@ -37,7 +45,7 @@ define_whichever! {
     }
 
     #[map(FastX::map_result)]
-    impl<U: Read> Iterator for FastXReader<U> {
+    impl<R: Read> Iterator for FastXReader<R> {
         type Item = std::io::Result<FastX>;
 
         // The rest of the methods are added by define_whichever
@@ -81,6 +89,14 @@ impl<R: std::io::Read> FastXReader<R> {
             )),
         }
     }
+
+    /// Returns the type of record that the [`FastXReader`] is parsing.
+    pub fn record_type(&self) -> FastXType {
+        match self {
+            FastXReader::Fastq(_) => FastXType::Fastq,
+            FastXReader::Fasta(_) => FastXType::Fasta,
+        }
+    }
 }
 
 /// A record type for either FASTQ or FASTA data.
@@ -121,6 +137,37 @@ impl FastX {
     where
         FastX: From<T>, {
         result.map(|record| record.into())
+    }
+
+    /// Returns the type of record that the [`FastX`] is holding.
+    pub fn record_type(&self) -> FastXType {
+        if self.quality.is_some() {
+            FastXType::Fastq
+        } else {
+            FastXType::Fasta
+        }
+    }
+}
+
+impl FastXView<'_> {
+    /// Returns the type of record that the [`FastXView`] is holding.
+    pub fn record_type(&self) -> FastXType {
+        if self.quality.is_some() {
+            FastXType::Fastq
+        } else {
+            FastXType::Fasta
+        }
+    }
+}
+
+impl FastXViewMut<'_> {
+    /// Returns the type of record that the [`FastXViewMut`] is holding.
+    pub fn record_type(&self) -> FastXType {
+        if self.quality.is_some() {
+            FastXType::Fastq
+        } else {
+            FastXType::Fasta
+        }
     }
 }
 

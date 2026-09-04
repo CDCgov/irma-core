@@ -1,6 +1,5 @@
 use crate::io::{
-    IterWithContext, IterWithErrorContext, PairedWriters, ReaderWithContext, ReaderWithErrorContext, RecordReaders,
-    RecordWriters, WriterWithContext, WriterWithErrorContext,
+    IterWithContext, PairedWriters, ReaderWithContext, RecordReaders, RecordWriters, WithContext, WriterWithContext,
 };
 use std::{
     error::Error,
@@ -212,34 +211,28 @@ impl InputContext<'_> {
     /// `reader` and `input` should be corresponding fields in an
     /// [`InputContext`] struct. The context will include the path if available
     /// and the record type.
-    pub fn add_iter_context<I>(iter: I, reader: Option<ReaderType>, input: InputType) -> IterWithContext<I>
+    pub fn add_iter_context<I>(iter: I, reader: Option<ReaderType>, input: InputType) -> WithContext<I>
     where
-        I: IterWithErrorContext, {
+        I: IterWithContext, {
         match (reader, input) {
-            (None, InputType::File(path)) => iter.iter_with_path_context("Invalid record in file", path),
-            (None, InputType::Stdin) => iter.iter_with_context("Invalid record in stdin"),
-            (Some(ReaderType::FastQ), InputType::File(path)) => {
-                iter.iter_with_path_context("Invalid FASTQ record in file", path)
-            }
-            (Some(ReaderType::Fasta), InputType::File(path)) => {
-                iter.iter_with_path_context("Invalid FASTA record in file", path)
-            }
-            (Some(ReaderType::FastX), InputType::File(path)) => iter.iter_with_path_context("Invalid record in file", path),
-            (Some(ReaderType::Sam), InputType::File(path)) => {
-                iter.iter_with_path_context("Invalid SAM record in file", path)
-            }
-            (Some(ReaderType::FastQ), InputType::Stdin) => iter.iter_with_context("Invalid FASTQ record from stdin"),
-            (Some(ReaderType::Fasta), InputType::Stdin) => iter.iter_with_context("Invalid FASTA record from stdin"),
-            (Some(ReaderType::FastX), InputType::Stdin) => iter.iter_with_context("Invalid record from stdin"),
-            (Some(ReaderType::Sam), InputType::Stdin) => iter.iter_with_context("Invalid SAM record from stdin"),
+            (None, InputType::File(path)) => iter.with_path_context("Invalid record in file", path),
+            (None, InputType::Stdin) => iter.with_context("Invalid record in stdin"),
+            (Some(ReaderType::FastQ), InputType::File(path)) => iter.with_path_context("Invalid FASTQ record in file", path),
+            (Some(ReaderType::Fasta), InputType::File(path)) => iter.with_path_context("Invalid FASTA record in file", path),
+            (Some(ReaderType::FastX), InputType::File(path)) => iter.with_path_context("Invalid record in file", path),
+            (Some(ReaderType::Sam), InputType::File(path)) => iter.with_path_context("Invalid SAM record in file", path),
+            (Some(ReaderType::FastQ), InputType::Stdin) => iter.with_context("Invalid FASTQ record from stdin"),
+            (Some(ReaderType::Fasta), InputType::Stdin) => iter.with_context("Invalid FASTA record from stdin"),
+            (Some(ReaderType::FastX), InputType::Stdin) => iter.with_context("Invalid record from stdin"),
+            (Some(ReaderType::Sam), InputType::Stdin) => iter.with_context("Invalid SAM record from stdin"),
         }
     }
 
     /// Wrap the fallible iterators contained in a [`RecordReaders`] so that
     /// items that are errors have context added.
-    pub fn add_paired_iter_context<I>(&self, iters: RecordReaders<I>) -> RecordReaders<IterWithContext<I>>
+    pub fn add_paired_iter_context<I>(&self, iters: RecordReaders<I>) -> RecordReaders<WithContext<I>>
     where
-        I: IterWithErrorContext, {
+        I: IterWithContext, {
         RecordReaders {
             reader1: InputContext::add_iter_context(iters.reader1, self.reader1, self.input1),
             reader2: iters
@@ -253,18 +246,18 @@ impl InputContext<'_> {
     /// `reader` and `input` should be corresponding fields in an
     /// [`InputContext`] struct. The context will include the path if available
     /// and the record type.
-    pub fn add_reader_context<R>(reader: R, input: InputType) -> ReaderWithContext<R>
+    pub fn add_reader_context<R>(reader: R, input: InputType) -> WithContext<R>
     where
         R: Read, {
         match input {
-            InputType::File(path) => reader.reader_with_path_context("Failed to read from path", path),
-            InputType::Stdin => reader.reader_with_context("Failed to read from stdin"),
+            InputType::File(path) => reader.with_path_context("Failed to read from path", path),
+            InputType::Stdin => reader.with_context("Failed to read from stdin"),
         }
     }
 
     /// Wrap the readers contained in a [`RecordReaders`] so that failed reads
     /// have context added.
-    pub fn add_paired_reader_context<R>(&self, readers: RecordReaders<R>) -> RecordReaders<ReaderWithContext<R>>
+    pub fn add_paired_reader_context<R>(&self, readers: RecordReaders<R>) -> RecordReaders<WithContext<R>>
     where
         R: Read, {
         RecordReaders {
@@ -333,18 +326,18 @@ impl OutputContext<'_> {
 
     /// Given one of the `output` fields for an [`OutputContext`], add the
     /// context to a provided writer.
-    pub fn add_writer_context<W>(writer: W, output: OutputType) -> WriterWithContext<W>
+    pub fn add_writer_context<W>(writer: W, output: OutputType) -> WithContext<W>
     where
         W: Write, {
         match output {
-            OutputType::File(path) => writer.writer_with_path_context("Failed to write to file", path),
-            OutputType::Stdout => writer.writer_with_context("Failed to write to stdout"),
+            OutputType::File(path) => writer.with_path_context("Failed to write to file", path),
+            OutputType::Stdout => writer.with_context("Failed to write to stdout"),
         }
     }
 
     /// Wrap the writers contained in a [`RecordWriters`] so that failed writes
     /// have context added.
-    pub fn add_paired_writer_context<W>(&self, writers: RecordWriters<W>) -> RecordWriters<WriterWithContext<W>>
+    pub fn add_paired_writer_context<W>(&self, writers: RecordWriters<W>) -> RecordWriters<WithContext<W>>
     where
         W: Write, {
         match writers {

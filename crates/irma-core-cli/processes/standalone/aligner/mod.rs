@@ -3,7 +3,7 @@ use crate::aligner::{
     writers::{write_alignment, write_header},
 };
 use clap::{Args, builder::RangedI64ValueParser};
-use irma_records::io::{FastX, FastXReader, Finish, IterWithContext, OutputOptions, ReadFileZipInThread, ValidatePaths};
+use irma_records::io::{FastX, FastXReader, Finish, OutputOptions, ReadFileZipInThread, ValidatePaths, WithContext};
 use std::{cmp::Ordering, path::PathBuf};
 use zoe::{
     alignment::{Alignment, LocalProfiles, MaybeAligned, SharedProfiles},
@@ -21,7 +21,7 @@ mod arg_parsing;
 mod writers;
 
 /// A type alias for the query reader used by `aligner`.
-type QueryReader = IterWithContext<FastXReader<ReadFileZipInThread>>;
+type QueryReader = WithContext<FastXReader<ReadFileZipInThread>>;
 
 /// A type alias for the writer being used for the SAM file, which depends on
 /// whether `dev_no_rayon` is set.

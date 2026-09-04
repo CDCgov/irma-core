@@ -7,12 +7,9 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 
 ## [0.11.0] - TBD
 
-### Added
-
-- Added `run_with_context` method to `WriterWithContext` to enable custom writing operations to be performed
-
 ### Changed
 
+- Combined `IterWithContext`, `ReaderWithContext`, and `WriterWithContext` into a single `WithContext` struct
 - The default method for `aligner` is now the 3-pass algorithm which has a more stable runtime and memory performance for large sequences. This may result in different optimal alignments
 - The profile for alignment is now built from the reference by default when the 1-pass algorithm is enabled. This may result in different optimal alignments
 
