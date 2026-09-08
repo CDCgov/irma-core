@@ -45,6 +45,16 @@ impl<T> WithContext<T> {
         F: FnOnce(&mut T) -> std::io::Result<R>, {
         Ok(f(&mut self.inner).with_context(&self.description)?)
     }
+
+    /// Maps the inner struct while retaining the same error context.
+    pub fn map<U, F>(self, f: F) -> WithContext<U>
+    where
+        F: FnOnce(T) -> U, {
+        WithContext {
+            inner:       f(self.inner),
+            description: self.description,
+        }
+    }
 }
 
 impl<I, V, E> Iterator for WithContext<I>
