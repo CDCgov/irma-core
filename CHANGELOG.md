@@ -9,9 +9,15 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 
 ### Changed
 
-- Combined `IterWithContext`, `ReaderWithContext`, and `WriterWithContext` into a single `WithContext` struct
-- The default method for `aligner` is now the 3-pass algorithm which has a more stable runtime and memory performance for large sequences. This may result in different optimal alignments
-- The profile for alignment is now built from the reference by default when the 1-pass algorithm is enabled. This may result in different optimal alignments
+- Combined `IterWithContext`, `ReaderWithContext`, and `WriterWithContext` into
+  a single `WithContext` struct
+- The default method for `aligner` is now the 3-pass algorithm which has a more
+  stable runtime and memory performance for large sequences. This may result in
+  different optimal alignments
+- The profile for alignment is now built from the reference by default when the
+  1-pass algorithm is enabled. This may result in different optimal alignments
+- `sampler` now uses `IRMA_SEED` as a fallback if no `--rng-seed` is provided,
+  allowing reproducibility in sampling runs
 
 ### Removed
 
@@ -22,8 +28,11 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 
 ### Added
 
-- Added preliminary implementations for `FastX` views (within `irma-records` public API)
-- A `ValidatePaths` trait is now available in the library portion for ensuring no path is passed as both an input and an output, and that all output paths are distinct
+- Added preliminary implementations for `FastX` views (within `irma-records`
+  public API)
+- A `ValidatePaths` trait is now available in the library portion for ensuring
+  no path is passed as both an input and an output, and that all output paths
+  are distinct
 - `WriteRecord` is now compatible with `FastX`
 
 ### Changed

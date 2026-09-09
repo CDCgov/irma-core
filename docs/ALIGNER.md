@@ -6,7 +6,7 @@ IRMA-core's `aligner` provides an efficient and exact local sequence alignment r
 
 ## Multithreading
 
-`aligner` uses `rayon` to perform multithreading to enable higher throughput. To specify the number of threads, set the `RAYON_NUM_THREADS` environmental variable as described [in rayon](https://docs.rs/rayon/latest/rayon/fn.max_num_threads.html). Or, to limit to a single worker thread, pass `--single-thread` to `aligner`.
+`aligner` uses `rayon` to perform multithreading to enable higher throughput. To specify the number of threads, set the `RAYON_NUM_THREADS` environment variable as described [in rayon](https://docs.rs/rayon/latest/rayon/fn.max_num_threads.html). Or, to limit to a single worker thread, pass `--single-thread` to `aligner`.
 
 For benchmarking or scenarios where a single thread is always used, the `dev_no_rayon` feature can be enabled in IRMA-core to remove the use of channels. This feature may be removed in future releases, and so should not be relied upon except for testing.
 

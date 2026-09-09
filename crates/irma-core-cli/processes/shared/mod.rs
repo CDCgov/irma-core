@@ -23,7 +23,7 @@ pub(crate) trait PrintWarning {
     /// `stdout` or `stderr`.
     ///
     /// The message includes a timestamp, indentation based on the shell level
-    /// (`SHLVL` environmental variable), and the word `WARNING`.
+    /// (`SHLVL` environment variable), and the word `WARNING`.
     fn warn(&self, program: &str, message: &str, use_stderr: bool);
 }
 

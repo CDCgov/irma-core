@@ -2,6 +2,7 @@
 
 use clap::Args;
 use irma_records::{
+    hashing::get_seed,
     io::{
         DispatchFastX, FastXReader, FastXType, InputOptions, OutputOptions, ReadFileZipInThread, RecordReaders,
         RecordWriters, SequenceWriter, ValidatePaths, WithContext, WriteFileZipStdout, WriteRecord,
@@ -48,7 +49,8 @@ pub struct SamplerArgs {
 
     #[arg(short = 's', long)]
     /// For reproducibility, provide an optional seed for the random number
-    /// generator
+    /// generator. If not provided, checks `IRMA_SEED` environment variable, and
+    /// finally falls back to a random seed
     pub rng_seed: Option<u64>,
 
     #[arg(short = 'v', long)]
@@ -402,6 +404,8 @@ enum SamplingTarget {
 fn parse_sampler_args(args: SamplerArgs) -> Result<(IOArgs, Xoshiro256StarStar, SamplingTarget, bool), std::io::Error> {
     let rng = if let Some(seed) = &args.rng_seed {
         Xoshiro256StarStar::seed_from_u64(*seed)
+    } else if let Some(seed) = get_seed() {
+        Xoshiro256StarStar::seed_from_u64(seed)
     } else {
         make_rng()
     };
