@@ -3,11 +3,15 @@
 #![feature(portable_simd)]
 
 use crate::processes::{
-    aligner::*, merge_sam_pairs::*, num_procs::*, phase::*, preprocess::*, trimmer::*, xflate::*, xleave::*,
+    aligner::*, merge_sam_pairs::*, num_procs::*, phase::*, preprocess::*, sampler::*, trimmer::*, xflate::*, xleave::*,
 };
-use clap::{Parser, Subcommand};
-use processes::sampler::{SamplerArgs, sampler_process};
-use zoe::data::err::OrFail;
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use zoe::data::err::{ErrorWithContext, ResultWithErrorContext};
+
+pub(crate) mod args;
+mod processes;
+
+pub(crate) use crate::processes::*;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -49,27 +53,23 @@ enum Commands {
     Aligner(AlignerArgs),
 }
 
-fn main() {
-    let args = Cli::parse();
-    match args.command {
-        Commands::Preprocess(cmd_args) => preprocess_process(cmd_args).unwrap_or_die("subcommand 'preprocess'"),
-        Commands::MergeSAM(cmd_args) => merge_sam_pairs_process(cmd_args).unwrap_or_die("subcommand 'merge-sam'"),
-        Commands::Xflate(cmd_args) => xflate_process(cmd_args).unwrap_or_die("subcommand 'xflate'"),
-        Commands::Trimmer(cmd_args) => trimmer_process(cmd_args).unwrap_or_die("subcommand 'trimmer'"),
-        Commands::Sampler(cmd_args) => sampler_process(cmd_args).unwrap_or_die("subcommand 'sampler'"),
-        Commands::NumProcs(cmd_args) => num_procs_process(cmd_args).unwrap_or_die("subcommand 'num-procs'"),
-        Commands::Xleave(cmd_args) => xleave_process(cmd_args).unwrap_or_die("subcommand 'xleave'"),
-        Commands::Aligner(cmd_args) => aligner_process(cmd_args).unwrap_or_die("subcommand 'aligner'"),
-        Commands::Phase(cmd_args) => phase_process(cmd_args).unwrap_or_die("subcommand 'phase'"),
-        _ => {
-            eprintln!("IRMA-CORE: unrecognized command {:?}", args.command);
-            std::process::exit(1)
-        }
-    }
+fn main() -> Result<(), ErrorWithContext> {
+    // Perform manual parsing so that we can get subcommand name automatically
+    let mut matches = Cli::command().get_matches();
+    let command_name = matches.subcommand_name().unwrap().to_owned();
+    let args = Cli::from_arg_matches_mut(&mut matches).unwrap();
+
+    let res = match args.command {
+        Commands::Preprocess(cmd_args) => preprocess_process(cmd_args),
+        Commands::MergeSAM(cmd_args) => merge_sam_pairs_process(cmd_args),
+        Commands::Xflate(cmd_args) => xflate_process(cmd_args),
+        Commands::Trimmer(cmd_args) => trimmer_process(cmd_args),
+        Commands::Sampler(cmd_args) => sampler_process(cmd_args),
+        Commands::NumProcs(cmd_args) => num_procs_process(cmd_args),
+        Commands::Xleave(cmd_args) => xleave_process(cmd_args),
+        Commands::Aligner(cmd_args) => aligner_process(cmd_args),
+        Commands::Phase(cmd_args) => phase_process(cmd_args),
+    };
+
+    res.with_context(format!("Error in subcommand '{command_name}'"))
 }
-
-mod processes;
-
-pub(crate) mod args;
-
-pub(crate) use crate::processes::*;
