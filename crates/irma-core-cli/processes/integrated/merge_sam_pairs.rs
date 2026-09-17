@@ -100,6 +100,7 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
         ));
     };
     reference.name.truncate(new_len);
+    reference.sequence.make_ascii_uppercase();
 
     const ONE_MB: usize = 2usize.pow(20);
 
@@ -116,10 +117,11 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
 
     for sam_row in sam_records {
         let row = match sam_row? {
-            SamRow::Data(d) => {
+            SamRow::Data(mut d) => {
                 if d.rname != reference.name {
                     continue;
                 }
+                d.seq.as_mut_bytes().make_ascii_uppercase();
                 d
             }
             SamRow::Header(h) => {
@@ -166,12 +168,7 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
                 let (sam1, sam2) = (&sam_data[pair_index1], &sam_data[pair_index2]);
 
                 // IRMA does not define read-pair merging yet for the empty quality score case.
-                // TODO: in v0.0.32 Zoe will only require checking for empty
-                if !sam1.qual.is_empty()
-                    && !sam2.qual.is_empty()
-                    && sam1.qual.as_bytes() != b"*"
-                    && sam2.qual.as_bytes() != b"*"
-                {
+                if !sam1.qual.is_empty() && !sam2.qual.is_empty() {
                     let (s, stats) = sam1.merge_pair_using_reference(sam2, &reference.sequence, args.bowtie_format);
                     paired_merging_stats += stats;
 

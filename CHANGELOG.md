@@ -5,7 +5,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 [Semantic Versioning]. For IRMA vs IRMA-core compatibility, please see the
 [version matrix](VERSION_MATRIX.md).
 
-## [0.11.0] - TBD
+## [0.11.0] - 2026-09-17
 
 ### Changed
 
@@ -18,6 +18,10 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
   1-pass algorithm is enabled. This may result in different optimal alignments
 - `sampler` now uses `IRMA_SEED` as a fallback if no `--rng-seed` is provided,
   allowing reproducibility in sampling runs
+
+### Fixed
+
+- Process `merge-sam` restores case normalization that regressed in v0.10.1
 
 ### Removed
 
