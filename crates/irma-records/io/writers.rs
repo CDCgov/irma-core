@@ -12,7 +12,7 @@ use std::{
     },
     thread::JoinHandle,
 };
-use zoe::{data::err::GetCode, define_whichever, impl_traits};
+use zoe::{define_whichever, impl_traits};
 
 /// A writer enabling writing to either a file or stdout.
 ///
@@ -510,12 +510,6 @@ impl Display for SharedIoError {
 impl Error for SharedIoError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         self.0.source()
-    }
-}
-
-impl GetCode for SharedIoError {
-    fn get_code(&self) -> i32 {
-        self.0.get_code()
     }
 }
 

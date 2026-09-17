@@ -2,7 +2,6 @@ use std::{
     error::Error,
     fmt::{Debug, Display},
 };
-use zoe::data::err::GetCode;
 
 /// An error arising from paired headers which were incorrect (either poorly
 /// formatted or mismatching).
@@ -31,4 +30,3 @@ impl Display for PairedHeaderError {
 }
 
 impl Error for PairedHeaderError {}
-impl GetCode for PairedHeaderError {}

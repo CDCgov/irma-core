@@ -7,7 +7,7 @@ use std::{
 };
 use zoe::{
     data::{
-        err::{ErrorWithContext, GetCode, WithErrorContext, WithSubitem},
+        err::{ErrorWithContext, WithErrorContext, WithSubitem},
         records::HeaderReadable,
     },
     unwrap_or_return_some_err,
@@ -307,31 +307,12 @@ impl<A: HeaderReadable + Debug> Error for ZipReadsError<A> {
     }
 }
 
-impl<A: HeaderReadable> GetCode for ZipReadsError<A> {
-    fn get_code(&self) -> i32 {
-        match self {
-            ZipReadsError::IoError(e) => e.get_code(),
-            _ => 1,
-        }
-    }
-}
-
 impl<A: HeaderReadable + Debug> Error for ZipPairedReadsError<A> {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             ZipPairedReadsError::IoError(e) => e.source(),
             ZipPairedReadsError::BadHeaders { source, .. } => Some(source),
             _ => None,
-        }
-    }
-}
-
-impl<A: HeaderReadable> GetCode for ZipPairedReadsError<A> {
-    fn get_code(&self) -> i32 {
-        match self {
-            ZipPairedReadsError::IoError(e) => e.get_code(),
-            ZipPairedReadsError::BadHeaders { source, .. } => source.get_code(),
-            _ => 1,
         }
     }
 }

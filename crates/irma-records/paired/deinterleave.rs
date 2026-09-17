@@ -6,7 +6,7 @@ use std::{
 };
 use zoe::{
     data::{
-        err::{ErrorWithContext, GetCode, WithErrorContext, WithSubitem},
+        err::{ErrorWithContext, WithErrorContext, WithSubitem},
         records::HeaderReadable,
     },
     unwrap_or_return_some_err,
@@ -120,16 +120,6 @@ impl<A: HeaderReadable + Debug> Error for DeinterleaveError<A> {
             DeinterleaveError::IoError(e) => e.source(),
             DeinterleaveError::BadHeaders { source, .. } => Some(source),
             _ => None,
-        }
-    }
-}
-
-impl<A: HeaderReadable> GetCode for DeinterleaveError<A> {
-    fn get_code(&self) -> i32 {
-        match self {
-            DeinterleaveError::IoError(e) => e.get_code(),
-            DeinterleaveError::BadHeaders { source, .. } => source.get_code(),
-            _ => 1,
         }
     }
 }
