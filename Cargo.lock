@@ -230,7 +230,7 @@ checksum = "e17592d60ebacc7d5e169f4663c5f84f9161cc90328abcfe8456f41e4dfcb284"
 
 [[package]]
 name = "irma-core-cli"
-version = "0.11.0"
+version = "0.12.0-dev"
 dependencies = [
  "clap",
  "foldhash",
@@ -245,7 +245,7 @@ dependencies = [
 
 [[package]]
 name = "irma-records"
-version = "0.11.0"
+version = "0.12.0-dev"
 dependencies = [
  "flate2",
  "foldhash",

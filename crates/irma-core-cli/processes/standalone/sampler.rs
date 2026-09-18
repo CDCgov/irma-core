@@ -66,7 +66,7 @@ struct Target {
     /// `percent_target` must be specified
     pub subsample_target: Option<usize>,
 
-    #[arg(short = 'p', long, value_parser = validate_percent,)]
+    #[arg(short = 'p', long, value_parser = validate_percent)]
     /// Target percentage of reads to be sampled. Must be a positive integer in
     /// [0, 100]. Either a `subsample_target` or `percent_target` must be
     /// specified

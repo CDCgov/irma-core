@@ -7,7 +7,11 @@ use irma_records::io::{FastX, FastXReader, Finish, OutputOptions, ReadFileZipInT
 use std::{cmp::Ordering, path::PathBuf};
 use zoe::{
     alignment::{Alignment, LocalProfiles, MaybeAligned, SharedProfiles},
-    data::{err::ResultWithErrorContext, fasta::FastaSeq, matrices::WeightMatrix},
+    data::{
+        err::{ResultWithErrorContext, ResultWithSubitem},
+        fasta::FastaSeq,
+        matrices::WeightMatrix,
+    },
     prelude::{NucleotidesView, ProfileSets, SeqSrc},
 };
 
@@ -465,9 +469,11 @@ impl<'q, const S: usize> QueryWithProfile<'q, S> {
         let mapping = align_maybe_rc(SeqSrc::Reference(&reference.forward.sequence), &reference.reverse, |seq| {
             self.profile.sw_1pass(seq)
         })
-        .with_context(format!(
-            "Failed to align the sequences with the following headers:\n    | Query: {q_header}\n    | Reference: {r_header}",
-            q_header=self.forward.header, r_header=reference.forward.name
+        .with_context("Failed to align the sequences with the following headers:")
+        .with_subitem(format!(
+            "Query: {q_header}\nReference: {r_header}",
+            q_header = self.forward.header,
+            r_header = reference.forward.name
         ))?;
 
         Ok(AlignmentAndSeqs {
@@ -492,9 +498,12 @@ impl<'q, const S: usize> QueryWithProfile<'q, S> {
     pub fn sw_3pass_query_profile<'r>(&'q self, reference: &Reference<'r, S>) -> std::io::Result<AlignmentAndSeqs<'q, 'r>> {
         let mapping = align_maybe_rc(SeqSrc::Reference(&reference.forward.sequence), &reference.reverse, |seq| {
             self.profile.sw_3pass(seq)
-        }).with_context(format!(
-            "Failed to align the sequences with the following headers:\n    | Query: {q_header}\n    | Reference: {r_header}",
-            q_header=self.forward.header, r_header=reference.forward.name
+        })
+        .with_context("Failed to align the sequences with the following headers:")
+        .with_subitem(format!(
+            "Query: {q_header}\nReference: {r_header}",
+            q_header = self.forward.header,
+            r_header = reference.forward.name
         ))?;
 
         Ok(AlignmentAndSeqs {
@@ -589,9 +598,12 @@ impl<'r, const S: usize> Reference<'r, S> {
     pub fn sw_1pass_ref_profile<'q>(&self, query: &QueryWithRc<'q, S>) -> std::io::Result<AlignmentAndSeqs<'q, 'r>> {
         let mapping = align_maybe_rc(SeqSrc::Query(&query.forward.sequence), &query.reverse, |seq| {
             self.profile.sw_1pass(seq)
-        }).with_context(format!(
-            "Failed to align the sequences with the following headers:\n    | Query: {q_header}\n    | Reference: {r_header}",
-            q_header=query.forward.header, r_header=self.forward.name
+        })
+        .with_context("Failed to align the sequences with the following headers:")
+        .with_subitem(format!(
+            "Query: {q_header}\nReference: {r_header}",
+            q_header = query.forward.header,
+            r_header = self.forward.name
         ))?;
 
         Ok(AlignmentAndSeqs {
@@ -616,9 +628,12 @@ impl<'r, const S: usize> Reference<'r, S> {
     pub fn sw_3pass_ref_profile<'q>(&self, query: &QueryWithRc<'q, S>) -> std::io::Result<AlignmentAndSeqs<'q, 'r>> {
         let mapping = align_maybe_rc(SeqSrc::Query(&query.forward.sequence), &query.reverse, |seq| {
             self.profile.sw_3pass(seq)
-        }).with_context(format!(
-            "Failed to align the sequences with the following headers:\n    | Query: {q_header}\n    | Reference: {r_header}",
-            q_header=query.forward.header, r_header=self.forward.name
+        })
+        .with_context("Failed to align the sequences with the following headers:")
+        .with_subitem(format!(
+            "Query: {q_header}\nReference: {r_header}",
+            q_header = query.forward.header,
+            r_header = self.forward.name
         ))?;
 
         Ok(AlignmentAndSeqs {

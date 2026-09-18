@@ -5,6 +5,12 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 [Semantic Versioning]. For IRMA vs IRMA-core compatibility, please see the
 [version matrix](VERSION_MATRIX.md).
 
+## [0.12.0] - TBD
+
+### Fixed
+
+- Fixed indentation in `aligner` error messages
+
 ## [0.11.0] - 2026-09-17
 
 ### Changed
@@ -324,6 +330,7 @@ randomly downsampling FastQ or FASTA files. Deinterleaving is also supported.
 - **Added**: custom inexact matching algorithm from [Zoe]
 
 <!-- Versions -->
+[0.12.0]: https://github.com/CDCgov/irma-core/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/CDCgov/irma-core/compare/v0.10.1...v0.11.0
 [0.10.1]: https://github.com/CDCgov/irma-core/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/CDCgov/irma-core/compare/v0.9.1...v0.10.0

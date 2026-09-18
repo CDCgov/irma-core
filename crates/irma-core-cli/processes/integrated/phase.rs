@@ -191,7 +191,7 @@ impl TryFrom<String> for VariantsFileLine {
 
         let position = position
             .parse::<usize>()
-            .with_context(format!("Failed to parse variant position as integer: \"{position}\".",))?;
+            .with_context(format!("Failed to parse variant position as integer: \"{position}\"."))?;
 
         Ok(VariantsFileLine {
             line: s,
