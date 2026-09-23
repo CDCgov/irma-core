@@ -7,6 +7,12 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 
 ## [0.12.0] - TBD
 
+### Changed
+
+- `merge_pair_using_reference` now accepts a mutable reference to a
+  `PairedMergeStats` to tally into, rather than returning the struct
+- `PairedMergeStats` no longer implements `Add` or `AddAssign`
+
 ### Fixed
 
 - Fixed indentation in `aligner` error messages

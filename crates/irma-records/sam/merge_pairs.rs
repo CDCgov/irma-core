@@ -101,17 +101,15 @@ pub trait SamMergeablePairs {
     /// appears at the start of the alignment.
     #[must_use]
     fn merge_pair_using_reference(
-        &self, other: &SamData, reference: &[u8], bowtie_format: bool,
-    ) -> (SamData, PairedMergeStats);
+        &self, other: &SamData, reference: &[u8], bowtie_format: bool, stats: &mut PairedMergeStats,
+    ) -> SamData;
 }
 
 impl SamMergeablePairs for SamData {
     #[allow(clippy::too_many_lines)]
     fn merge_pair_using_reference(
-        &self, other: &SamData, reference: &[u8], bowtie_format: bool,
-    ) -> (SamData, PairedMergeStats) {
-        let mut stats = PairedMergeStats::default();
-
+        &self, other: &SamData, reference: &[u8], bowtie_format: bool, stats: &mut PairedMergeStats,
+    ) -> SamData {
         let m_qname = if bowtie_format {
             self.qname.clone()
         } else {
@@ -120,16 +118,16 @@ impl SamMergeablePairs for SamData {
         };
 
         match (self.is_unmapped(), other.is_unmapped()) {
-            (true, true) => return (SamData::unmapped(&m_qname, &self.rname), stats),
+            (true, true) => return SamData::unmapped(&m_qname, &self.rname),
             (_, true) => {
                 let mut new = self.clone();
                 new.qname = m_qname;
-                return (new, stats);
+                return new;
             }
             (true, _) => {
                 let mut new = other.clone();
                 new.qname = m_qname;
-                return (new, stats);
+                return new;
             }
             _ => {}
         }
@@ -339,22 +337,19 @@ impl SamMergeablePairs for SamData {
 
         let merged_cigars = merged_cigars.to_cigar_unchecked();
 
-        (
-            SamData::new(
-                m_qname,
-                m_flag,
-                m_rname,
-                m_pos,
-                m_mapq,
-                merged_cigars,
-                merged_seq.into(),
-                // Safety: QualityScores guarantee being in range. The merge quality
-                // scores must be from either sequence OR the integer average, which
-                // must still be valid state. Even deletions, which have no quality
-                // score, is initialized to the minimum QS encoded value `!`.
-                unsafe { QualityScores::from_vec_unchecked(merged_quals) },
-            ),
-            stats,
+        SamData::new(
+            m_qname,
+            m_flag,
+            m_rname,
+            m_pos,
+            m_mapq,
+            merged_cigars,
+            merged_seq.into(),
+            // Safety: QualityScores guarantee being in range. The merge quality
+            // scores must be from either sequence OR the integer average, which
+            // must still be valid state. Even deletions, which have no quality
+            // score, is initialized to the minimum QS encoded value `!`.
+            unsafe { QualityScores::from_vec_unchecked(merged_quals) },
         )
     }
 }

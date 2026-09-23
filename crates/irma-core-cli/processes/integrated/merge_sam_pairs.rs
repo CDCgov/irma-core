@@ -170,7 +170,7 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
 
     // Store statistics: Observations, deletion minor variants, true SNV, false
     // SNV, insertion observations, insertion discrepancy.
-    let mut paired_merging_stats = PairedMergeStats::default();
+    let mut stats = PairedMergeStats::default();
 
     for pair in pairs.values() {
         match (pair.r1, pair.r2) {
@@ -179,8 +179,7 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
 
                 // IRMA does not define read-pair merging yet for the empty quality score case.
                 if !sam1.qual.is_empty() && !sam2.qual.is_empty() {
-                    let (s, stats) = sam1.merge_pair_using_reference(sam2, &reference.sequence, args.bowtie_format);
-                    paired_merging_stats += stats;
+                    let s = sam1.merge_pair_using_reference(sam2, &reference.sequence, args.bowtie_format, &mut stats);
 
                     writeln!(sam_writer, "{s}")?;
                 } else {
@@ -205,7 +204,7 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
             deletion_errors,
             insert_obs,
             insert_errors,
-        } = paired_merging_stats;
+        } = stats;
 
         writeln!(
             &mut w,

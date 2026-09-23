@@ -1,4 +1,7 @@
-use crate::sam::merge_pairs::{SamMergeablePairs, make_merged_qname};
+use crate::sam::{
+    PairedMergeStats,
+    merge_pairs::{SamMergeablePairs, make_merged_qname},
+};
 use zoe::data::{cigar::Cigar, sam::SamData};
 
 #[test]
@@ -33,7 +36,7 @@ fn merge_no_mismatch() {
     //s2 ......... GCGGTTTT..
     //m  ....AAAAAGGCGGTTTT..
 
-    let (m, _) = s1.merge_pair_using_reference(&s2, reference, false);
+    let m = s1.merge_pair_using_reference(&s2, reference, false, &mut PairedMergeStats::default());
     assert_eq!(m.seq, b"AAAAAGGCGGTTTT".into());
     assert_eq!(m.qual, b"FFFFFFFFFFFFFF".try_into().unwrap());
     assert_eq!(Cigar::try_from(b"14M").unwrap(), m.cigar);
@@ -71,7 +74,7 @@ fn merge_with_mismatch() {
     //s2 .........GCGGCTTT...
     //m  ....AAAAAGGCGCTTT...
 
-    let (m, _) = s1.merge_pair_using_reference(&s2, reference, false);
+    let m = s1.merge_pair_using_reference(&s2, reference, false, &mut PairedMergeStats::default());
     assert_eq!(m.seq, b"AAAAAGGCGCTTT".into());
     assert_eq!(m.qual, b"FFFFFFFFFFFFA".try_into().unwrap());
     assert_eq!(Cigar::try_from(b"13M").unwrap(), m.cigar);
@@ -109,7 +112,7 @@ fn merge_no_overlap() {
     //s2 ..............TTTTAGGA
     //m  ....AAAAAGGC..TTTTAGGA
 
-    let (m, _) = s1.merge_pair_using_reference(&s2, reference, false);
+    let m = s1.merge_pair_using_reference(&s2, reference, false, &mut PairedMergeStats::default());
     assert_eq!(m.seq, b"AAAAAGGCTTTTAGGA".into());
     assert_eq!(m.qual, b"HHHHHHHHIIIIIIII".try_into().unwrap());
     assert_eq!(Cigar::try_from(b"8M2N8M").unwrap(), m.cigar);
@@ -147,7 +150,7 @@ fn merge_with_clipping() {
     //s2 ....hhhhhGGGGGsssss.
     //m  ...hAAAAAGGCGGhhhhh.
 
-    let (m, _) = s1.merge_pair_using_reference(&s2, reference, false);
+    let m = s1.merge_pair_using_reference(&s2, reference, false, &mut PairedMergeStats::default());
     assert_eq!(m.seq, s1.seq);
     assert_eq!(m.qual, s1.qual);
     assert_eq!(Cigar::try_from(b"1H10M5H").unwrap(), m.cigar);
@@ -185,7 +188,7 @@ fn merge_with_clipping2() {
     //s2 ....hhhssGGGGGssssshhh
     //m  ...hAAAAAGGCGGhhhhhhhh
 
-    let (m, _) = s1.merge_pair_using_reference(&s2, reference, false);
+    let m = s1.merge_pair_using_reference(&s2, reference, false, &mut PairedMergeStats::default());
     assert_eq!(m.seq, s1.seq);
     assert_eq!(m.qual, s1.qual);
     assert_eq!(Cigar::try_from(b"1H10M8H").unwrap(), m.cigar);
@@ -223,7 +226,7 @@ fn merge_with_clipping_past_left() {
     //s2 ........hhhssGGGGGssssshhh
     //m  hhhhhhhhAAAAAGGCGGhhhhhhhh
 
-    let (m, _) = s1.merge_pair_using_reference(&s2, reference, false);
+    let m = s1.merge_pair_using_reference(&s2, reference, false, &mut PairedMergeStats::default());
     assert_eq!(m.seq, s1.seq);
     assert_eq!(m.qual, s1.qual);
     assert_eq!(Cigar::try_from(b"8H10M8H").unwrap(), m.cigar);
