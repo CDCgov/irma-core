@@ -1,7 +1,4 @@
-use crate::sam::{
-    ExpandedCigar,
-    merge_pairs::{SamMergeablePairs, make_merged_qname},
-};
+use crate::sam::merge_pairs::{SamMergeablePairs, make_merged_qname};
 use zoe::data::{cigar::Cigar, sam::SamData};
 
 #[test]
@@ -294,22 +291,5 @@ fn test_make_merged_qname() {
 
     for (i, o) in QNAMES.iter().enumerate() {
         assert_eq!(make_merged_qname(o), merged[i], "'{o}'");
-    }
-}
-
-#[test]
-fn test_expand() {
-    let cigar = Cigar::from_slice_unchecked("4S10M2I2D3M4H4P");
-    let expanded: ExpandedCigar = "SSSSMMMMMMMMMMIIDDMMMHHHHPPPP".into();
-    assert_eq!(ExpandedCigar::from(cigar), expanded);
-}
-
-#[test]
-fn test_condense_cigar() {
-    let cigars: [&str; 5] = ["4S10M2I2D3M4H4P", "", "3M2D1M", "255M", "3M1D4I8X9=4M"];
-
-    for c in cigars {
-        let cigar = Cigar::from_slice_unchecked(c);
-        assert_eq!(ExpandedCigar::from(cigar.clone()).condense_to_cigar(), cigar);
     }
 }

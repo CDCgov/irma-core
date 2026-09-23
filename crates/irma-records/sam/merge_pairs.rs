@@ -1,7 +1,6 @@
-use crate::sam::{ExpandedCigar, PairedMergeStats, SamAligned, SamInsertion};
-use std::iter::repeat_n;
+use crate::sam::{PairedMergeStats, SamAligned, SamInsertion};
 use zoe::{
-    alignment::NextCiglet,
+    alignment::{AlignmentStates, NextCiglet},
     data::{cigar::Ciglet, sam::SamData},
     prelude::QualityScores,
     search::ByteSubstring,
@@ -169,11 +168,11 @@ impl SamMergeablePairs for SamData {
         let m_mapq = mapq1.midpoint(mapq2);
         let m_pos = paired_range.start + 1;
 
-        let mut merged_cigars = Vec::with_capacity(paired_range.len());
+        let mut merged_cigars = AlignmentStates::new();
         let mut merged_seq = Vec::with_capacity(paired_range.len());
         let mut merged_quals = Vec::with_capacity(paired_range.len());
 
-        merged_cigars.extend(std::iter::repeat_n(b'H', m_num_clipped_start));
+        merged_cigars.add_inc_op(m_num_clipped_start, b'H');
 
         // 0-based index relative to reference
         for ref_index in paired_range {
@@ -187,12 +186,12 @@ impl SamMergeablePairs for SamData {
                     if x == y {
                         if x == b'-' {
                             stats.true_variations += 1;
-                            merged_cigars.push(b'D');
+                            merged_cigars.add_state(b'D');
                         } else {
                             if x != r {
                                 stats.true_variations += 1;
                             }
-                            merged_cigars.push(b'M');
+                            merged_cigars.add_state(b'M');
 
                             merged_seq.push(x);
                             merged_quals.push(std::cmp::max(qx, qy));
@@ -200,7 +199,7 @@ impl SamMergeablePairs for SamData {
                     } else {
                         // x ≠ y
                         stats.variant_errors += 1;
-                        merged_cigars.push(b'M');
+                        merged_cigars.add_state(b'M');
 
                         if x == r {
                             if y == b'-' {
@@ -254,14 +253,14 @@ impl SamMergeablePairs for SamData {
                 }
                 (Some((base, quality)), None) | (None, Some((base, quality))) => {
                     if base == b'-' {
-                        merged_cigars.push(b'D');
+                        merged_cigars.add_state(b'D');
                     } else {
-                        merged_cigars.push(b'M');
+                        merged_cigars.add_state(b'M');
                         merged_seq.push(base);
                         merged_quals.push(quality); // ensure this is an encoded value during testing
                     }
                 }
-                (None, None) => merged_cigars.push(b'N'),
+                (None, None) => merged_cigars.add_state(b'N'),
             }
 
             let range1 = a1.get_insert_after(ref_index);
@@ -279,17 +278,17 @@ impl SamMergeablePairs for SamData {
                     if insert1 == insert2 {
                         merged_seq.extend_from_slice(insert1.to_ascii_lowercase().as_slice());
                         merged_quals.extend(quals1.iter().zip(quals2).map(|(q1, q2)| std::cmp::max(*q1, *q2)));
-                        merged_cigars.extend(repeat_n(b'I', insert1.len()));
+                        merged_cigars.add_inc_op(insert1.len(), b'I');
                     } else if insert2.contains_substring(insert1) {
                         merged_seq.extend_from_slice(insert1.to_ascii_lowercase().as_slice());
                         merged_quals.extend_from_slice(quals1);
-                        merged_cigars.extend(repeat_n(b'I', insert1.len()));
+                        merged_cigars.add_inc_op(insert1.len(), b'I');
 
                         stats.insert_errors += 1;
                     } else if insert1.contains_substring(insert2) {
                         merged_seq.extend_from_slice(insert2.to_ascii_lowercase().as_slice());
                         merged_quals.extend_from_slice(quals2);
-                        merged_cigars.extend(repeat_n(b'I', insert2.len()));
+                        merged_cigars.add_inc_op(insert2.len(), b'I');
 
                         stats.insert_errors += 1;
                     } else {
@@ -311,7 +310,7 @@ impl SamMergeablePairs for SamData {
 
                         merged_seq.extend_from_slice(insert.to_ascii_lowercase().as_slice());
                         merged_quals.extend_from_slice(quals);
-                        merged_cigars.extend(repeat_n(b'I', insert.len()));
+                        merged_cigars.add_inc_op(insert.len(), b'I');
                     }
                 }
                 (None, Some(r2)) => {
@@ -329,16 +328,16 @@ impl SamMergeablePairs for SamData {
                         // Remove lower-casing if it does nothing downstream.
                         merged_seq.extend_from_slice(insert.to_ascii_lowercase().as_slice());
                         merged_quals.extend_from_slice(quals);
-                        merged_cigars.extend(repeat_n(b'I', insert.len()));
+                        merged_cigars.add_inc_op(insert.len(), b'I');
                     }
                 }
                 _ => {}
             }
         }
 
-        merged_cigars.extend(std::iter::repeat_n(b'H', m_num_clipped_end));
+        merged_cigars.add_inc_op(m_num_clipped_end, b'H');
 
-        let merged_cigars = ExpandedCigar::from(merged_cigars).condense_to_cigar();
+        let merged_cigars = merged_cigars.to_cigar_unchecked();
 
         (
             SamData::new(
