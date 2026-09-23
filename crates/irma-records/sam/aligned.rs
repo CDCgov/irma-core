@@ -12,11 +12,8 @@ pub(crate) struct SamAligned {
     /// Query quality scores aligned to the reference (insertions removed,
     /// deletions added).
     pub(crate) qaligned:          Vec<u8>,
-    /// Start of range of reference indices. Start is inclusive.
-    pub(crate) ref_start:         usize,
-    /// End of range of reference indices. The `ref_end` is *exclusive*, thus
-    /// the final aligned query base will be at `ref_end - 1`.
-    pub(crate) ref_end:           usize,
+    /// The range of the reference that the query was aligned against.
+    pub(crate) ref_range:         Range<usize>,
     /// Vector of query insertion relative to reference. Ordered by reference
     /// indices.
     pub(crate) insertions:        Vec<SamInsertion>,
@@ -27,23 +24,6 @@ pub(crate) struct SamAligned {
 }
 
 impl SamAligned {
-    /// Initializes a new [`SamAligned`] object from the fields.
-    #[inline]
-    pub(crate) fn new(
-        aligned: Vec<u8>, qaligned: Vec<u8>, ref_start: usize, ref_end: usize, insertions: Vec<SamInsertion>,
-        num_clipped_start: usize, num_clipped_end: usize,
-    ) -> Self {
-        SamAligned {
-            aligned,
-            qaligned,
-            ref_start,
-            ref_end,
-            insertions,
-            num_clipped_start,
-            num_clipped_end,
-        }
-    }
-
     /// At the given reference index, provides the reference-aligned query's
     /// nucleotide and encoded (ASCII) quality score as an optional tuple of
     /// `(base, qs)`, otherwise, `None` is returned.
@@ -53,10 +33,10 @@ impl SamAligned {
         // `qaligned`; thus, subtracting the start of the range will render
         // appropriate 0-based index. If the reference index it outside the
         // range, then `None` is returned.
-        if self.ref_range().contains(&at_index) {
+        if self.ref_range.contains(&at_index) {
             Some((
-                self.aligned[at_index - self.ref_start],
-                self.qaligned[at_index - self.ref_start],
+                self.aligned[at_index - self.ref_range.start],
+                self.qaligned[at_index - self.ref_range.start],
             ))
         } else {
             None
@@ -71,24 +51,18 @@ impl SamAligned {
         // `qaligned`; thus, subtracting the start of the range will render
         // appropriate 0-based index. If the reference index it outside the
         // range, then `None` is returned.
-        if self.ref_range().contains(&at_index) {
-            Some(self.aligned[at_index - self.ref_start])
+        if self.ref_range.contains(&at_index) {
+            Some(self.aligned[at_index - self.ref_range.start])
         } else {
             None
         }
-    }
-
-    /// Return a half-open reference range as `Range<uize>` for the aligned query.
-    #[must_use]
-    pub(crate) fn ref_range(&self) -> Range<usize> {
-        self.ref_start..self.ref_end
     }
 
     /// Merges two aligned queries' reference ranges such that the combined
     /// range spans both aligned regions.
     #[must_use]
     pub(crate) fn merge_ref_range(&self, other: &SamAligned) -> Range<usize> {
-        std::cmp::min(self.ref_start, other.ref_start)..std::cmp::max(self.ref_end, other.ref_end)
+        std::cmp::min(self.ref_range.start, other.ref_range.start)..std::cmp::max(self.ref_range.end, other.ref_range.end)
     }
 
     /// Checks if the `SamAligned` contains an insertion after the 0-based

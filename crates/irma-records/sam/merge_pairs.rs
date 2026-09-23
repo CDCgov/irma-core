@@ -139,8 +139,8 @@ impl SamMergeablePairs for SamData {
 
         let m_num_clipped_start = {
             // How far is each read from the start of the merged read?
-            let a1_offset_from_merged = a1.ref_start - paired_range.start;
-            let a2_offset_from_merged = a2.ref_start - paired_range.start;
+            let a1_offset_from_merged = a1.ref_range.start - paired_range.start;
+            let a2_offset_from_merged = a2.ref_range.start - paired_range.start;
             // How many clipped bases extend left of paired_range.start?
             let a1_clipping_for_paired = a1.num_clipped_start.saturating_sub(a1_offset_from_merged);
             let a2_clipping_for_paired = a2.num_clipped_start.saturating_sub(a2_offset_from_merged);
@@ -150,8 +150,8 @@ impl SamMergeablePairs for SamData {
 
         let m_num_clipped_end = {
             // How far is each read from the end of the merged read?
-            let a1_offset_from_merged = paired_range.end - a1.ref_end;
-            let a2_offset_from_merged = paired_range.end - a2.ref_end;
+            let a1_offset_from_merged = paired_range.end - a1.ref_range.end;
+            let a2_offset_from_merged = paired_range.end - a2.ref_range.end;
             // How many clipped bases extend right of paired_range.end?
             let a1_clipping_for_paired = a1.num_clipped_end.saturating_sub(a1_offset_from_merged);
             let a2_clipping_for_paired = a2.num_clipped_end.saturating_sub(a2_offset_from_merged);
@@ -375,35 +375,35 @@ pub(crate) trait SamExpandableAlignment {
 impl SamExpandableAlignment for SamData {
     fn get_aligned(&self) -> SamAligned {
         // Convert SAM 1-based to 0-based
-        let mut ref_index = self.pos - 1;
+        let ref_start = self.pos - 1;
+
+        // Peek at clipping at front and back
+        let (num_clipped_start, num_clipped_end) = {
+            let mut ciglets = self.cigar.iter();
+            let num_clipped_start = ciglets.remove_clipping_front();
+            let num_clipped_end = ciglets.remove_clipping_back();
+            (num_clipped_start, num_clipped_end)
+        };
+
+        let mut ref_index = ref_start;
         let mut query_index = 0;
-
-        let mut aln: Vec<u8> = Vec::new();
-        let mut q_aln: Vec<u8> = Vec::new();
+        let mut aligned = Vec::new();
+        let mut qaligned = Vec::new();
         let mut insertions = Vec::new();
-
-        let mut ciglets = self.cigar.iter();
-
-        let num_clipped_start = ciglets.remove_clipping_front();
-        let num_clipped_end = ciglets.remove_clipping_back();
 
         for Ciglet { inc, op } in &self.cigar {
             match op {
                 b'M' | b'=' | b'X' => {
-                    for _ in 0..inc {
-                        q_aln.push(self.qual[query_index]);
-                        aln.push(self.seq[query_index]);
-                        query_index += 1;
-                        ref_index += 1;
-                    }
+                    qaligned.extend(&self.qual[query_index..query_index + inc]);
+                    aligned.extend(&self.seq[query_index..query_index + inc]);
+                    query_index += inc;
+                    ref_index += inc;
                 }
                 b'D' => {
-                    for _ in 0..inc {
-                        // We use the minimum value for deletions so that it can
-                        // still be parsed by other programs.
-                        q_aln.push(b'!');
-                        aln.push(b'-');
-                    }
+                    // We use the minimum value for deletions so that it can
+                    // still be parsed by other programs.
+                    qaligned.extend(std::iter::repeat_n(b'!', inc));
+                    aligned.extend(std::iter::repeat_n(b'-', inc));
                     ref_index += inc;
                 }
                 b'I' => {
@@ -423,10 +423,8 @@ impl SamExpandableAlignment for SamData {
                 }
                 b'S' => query_index += inc,
                 b'N' => {
-                    for _ in 0..inc {
-                        q_aln.push(b'!');
-                        aln.push(b'N');
-                    }
+                    qaligned.extend(std::iter::repeat_n(b'!', inc));
+                    aligned.extend(std::iter::repeat_n(b'N', inc));
                     ref_index += inc;
                 }
                 b'H' => {}
@@ -435,18 +433,14 @@ impl SamExpandableAlignment for SamData {
             }
         }
 
-        // Convert start position from 1-based to 0-based, then use 0-based ref_index
-        // with half-open range: (self.pos - 1)..ref_index;
-
-        SamAligned::new(
-            aln,
-            q_aln,
-            self.pos - 1,
-            ref_index,
+        SamAligned {
+            aligned,
+            qaligned,
+            ref_range: ref_start..ref_index,
             insertions,
             num_clipped_start,
             num_clipped_end,
-        )
+        }
     }
 }
 
