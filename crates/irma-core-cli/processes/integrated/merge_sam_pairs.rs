@@ -51,12 +51,22 @@ struct ParsedMergeSamArgs {
 }
 
 fn parse_merge_sam_args(args: MergeSAMArgs) -> ParsedMergeSamArgs {
-    ParsedMergeSamArgs {
-        fasta_reference:   args.fasta_reference,
-        sam_file:          args.sam_file,
-        merged_sam_file:   args.output_prefix.with_extension("sam"),
-        paired_stats_file: args.store_stats.then(|| args.output_prefix.with_extension("stats")),
-        bowtie_format:     args.bowtie_format,
+    if &args.output_prefix == "/dev/null" {
+        ParsedMergeSamArgs {
+            fasta_reference:   args.fasta_reference,
+            sam_file:          args.sam_file,
+            merged_sam_file:   args.output_prefix.clone(),
+            paired_stats_file: args.store_stats.then_some(args.output_prefix),
+            bowtie_format:     args.bowtie_format,
+        }
+    } else {
+        ParsedMergeSamArgs {
+            fasta_reference:   args.fasta_reference,
+            sam_file:          args.sam_file,
+            merged_sam_file:   args.output_prefix.with_extension("sam"),
+            paired_stats_file: args.store_stats.then(|| args.output_prefix.with_extension("stats")),
+            bowtie_format:     args.bowtie_format,
+        }
     }
 }
 

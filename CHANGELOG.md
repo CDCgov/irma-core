@@ -10,6 +10,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 ### Fixed
 
 - Fixed indentation in `aligner` error messages
+- `merge-sam` now supports passing `/dev/null` for the outputs
 
 ## [0.11.0] - 2026-09-17
 
