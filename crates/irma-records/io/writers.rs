@@ -239,9 +239,10 @@ impl<W> RecordWriters<W> {
 ///
 /// A single dedicated thread is used for writing to the underlying writer to
 /// avoid interleaved writes. Calling [`write`] is non-blocking, instead
-/// queueing the bytes in the channel. Calling [`flush`] causes the thread to
-/// block until all previous data in the channel has been written to the
-/// underlying writer.
+/// queueing the bytes in the channel, or in a per-clone buffer when batching is
+/// enabled. Flush before cloning if earlier writes must precede clone writes.
+/// Calling [`flush`] blocks until all previously queued data has been written
+/// to the underlying writer.
 ///
 /// To ensure that errors are not silently ignored, for each linked
 /// [`WriterThreaded`], ensure that either [`flush`] is called on it, or it is
@@ -251,8 +252,12 @@ impl<W> RecordWriters<W> {
 /// [`flush`]: WriterThreaded::flush
 /// [`write`]: WriterThreaded::write
 /// [`mpsc`]: std::sync::mpsc
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct WriterThreaded {
+    /// Declared before `shared` so pending bytes are sent before the last clone
+    /// finishes the writer thread.
+    batch: Option<PendingBatch>,
+
     /// The shared state between [`WriterThreaded`] clones.
     ///
     /// This enables a proper [`Finish`] implementation, since we can check
@@ -271,6 +276,49 @@ pub struct WriterThreaded {
     /// moved into the thread), but the [`Arc`] around [`WriterThreadedShared`]
     /// cannot be formed until the thread handle is available.
     writer_error: Arc<OnceLock<SharedIoError>>,
+}
+
+#[derive(Debug)]
+struct PendingBatch {
+    bytes:    Vec<u8>,
+    capacity: usize,
+    // Kept here because WriterThreaded cannot implement Drop while finish moves shared out.
+    sender:   std::sync::mpsc::Sender<Msg>,
+}
+
+const BATCH_HEADROOM: usize = 1024;
+
+impl PendingBatch {
+    fn buffer(capacity: usize) -> Vec<u8> {
+        let reserve = if capacity == 0 {
+            0
+        } else {
+            capacity.checked_add(BATCH_HEADROOM).expect("batch capacity overflow")
+        };
+        Vec::with_capacity(reserve)
+    }
+}
+
+impl Drop for PendingBatch {
+    fn drop(&mut self) {
+        if !self.bytes.is_empty() {
+            let _ = self.sender.send(Msg::Data(std::mem::take(&mut self.bytes)));
+        }
+    }
+}
+
+impl Clone for WriterThreaded {
+    fn clone(&self) -> Self {
+        Self {
+            shared:       self.shared.clone(),
+            writer_error: self.writer_error.clone(),
+            batch:        self.batch.as_ref().map(|batch| PendingBatch {
+                bytes:    PendingBatch::buffer(batch.capacity),
+                capacity: batch.capacity,
+                sender:   batch.sender.clone(),
+            }),
+        }
+    }
 }
 
 /// The inner fields of a [`WriterThreaded`].
@@ -302,16 +350,70 @@ enum Msg {
 }
 
 impl WriterThreaded {
-    /// Writes an owned buffer, avoiding any extra allocations.
+    /// Enables per-clone byte batching. Each batch reserves at least `capacity`
+    /// bytes and is sent once it reaches `capacity` bytes; remaining bytes are
+    /// sent on flush, finish, or drop. A zero `capacity` reserves nothing and
+    /// sends every write immediately. Unlike [`new`](Self::new), writes copy into
+    /// the batch.
+    #[must_use]
+    pub fn with_batch_capacity<W>(writer: W, capacity: usize) -> Self
+    where
+        W: Write + Finish + Send + 'static, {
+        let mut threaded = Self::new(writer);
+        threaded.batch = Some(PendingBatch {
+            bytes: PendingBatch::buffer(capacity),
+            capacity,
+            sender: threaded.shared.sender.clone(),
+        });
+        threaded
+    }
+
+    fn writer_failure(&self) -> std::io::Error {
+        self.writer_error.get().map_or_else(
+            || std::io::Error::new(std::io::ErrorKind::BrokenPipe, "writer thread is no longer running"),
+            Into::into,
+        )
+    }
+
+    fn send_batch(&mut self) -> std::io::Result<()> {
+        let Some(batch) = self.batch.as_mut() else { return Ok(()) };
+        if batch.bytes.is_empty() {
+            return Ok(());
+        }
+        let bytes = std::mem::replace(&mut batch.bytes, PendingBatch::buffer(batch.capacity));
+        self.shared
+            .sender
+            .send(Msg::Data(bytes))
+            .map_err(|SendError(_)| self.writer_failure())
+    }
+
+    fn append_batch(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self
+            .batch
+            .as_ref()
+            .is_some_and(|batch| !batch.bytes.is_empty() && batch.bytes.len().saturating_add(buf.len()) > batch.capacity)
+        {
+            self.send_batch()?;
+        }
+        let batch = self.batch.as_mut().expect("batching is enabled");
+        batch.bytes.extend_from_slice(buf);
+        if batch.bytes.len() >= batch.capacity {
+            self.send_batch()?;
+        }
+        Ok(buf.len())
+    }
+
+    /// Writes an owned buffer without copying when batching is disabled.
     pub fn write_vec(&mut self, buf: Vec<u8>) -> std::io::Result<usize> {
         let len = buf.len();
 
+        if self.batch.is_some() {
+            return self.append_batch(&buf);
+        }
+
         match self.shared.sender.send(Msg::Data(buf)) {
             Ok(()) => Ok(len),
-            Err(SendError(_)) => Err(self.writer_error.get().map_or_else(
-                || std::io::Error::new(std::io::ErrorKind::BrokenPipe, "writer thread is no longer running"),
-                Into::into,
-            )),
+            Err(SendError(_)) => Err(self.writer_failure()),
         }
     }
 }
@@ -320,10 +422,13 @@ impl Write for WriterThreaded {
     /// Writes a buffer into the writer, returning how many bytes were queued
     /// for writing.
     ///
-    /// This will allocate the bytes into a vector. Use
-    /// [`WriterThreaded::write_vec`] to avoid a re-allocation if the bytes
-    /// exist in a vector.
+    /// Without batching, this allocates a vector; use [`WriterThreaded::write_vec`]
+    /// to avoid copying an existing vector. With batching, bytes are copied into
+    /// the batch instead.
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.batch.is_some() {
+            return self.append_batch(buf);
+        }
         self.write_vec(buf.to_vec())
     }
 
@@ -341,34 +446,36 @@ impl Write for WriterThreaded {
     /// [`BufWriter`]: std::io::BufWriter
     /// [`flush`]: WriterThreaded::flush
     fn flush(&mut self) -> std::io::Result<()> {
+        self.send_batch()?;
         let (sender, receiver) = std::sync::mpsc::channel();
 
         match self.shared.sender.send(Msg::Flush(sender)) {
             Ok(()) => match receiver.recv() {
                 Ok(()) => Ok(()),
-                Err(RecvError) => Err(self.writer_error.get().map_or_else(
-                    || std::io::Error::new(std::io::ErrorKind::BrokenPipe, "writer thread is no longer running"),
-                    Into::into,
-                )),
+                Err(RecvError) => Err(self.writer_failure()),
             },
-            Err(SendError(_)) => Err(self.writer_error.get().map_or_else(
-                || std::io::Error::new(std::io::ErrorKind::BrokenPipe, "writer thread is no longer running"),
-                Into::into,
-            )),
+            Err(SendError(_)) => Err(self.writer_failure()),
         }
     }
 
     /// Writes a buffer into the writer.
     ///
-    /// This will allocate the bytes into a vector. Use
-    /// [`WriterThreaded::write_vec`] to avoid a re-allocation if the bytes
-    /// exist in a vector.
+    /// Without batching, this allocates a vector; use [`WriterThreaded::write_vec`]
+    /// to avoid copying an existing vector. With batching, bytes are copied into
+    /// the batch instead.
     fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
         self.write(buf)?;
         Ok(())
     }
 
     fn write_fmt(&mut self, args: std::fmt::Arguments<'_>) -> std::io::Result<()> {
+        if let Some(batch) = self.batch.as_mut() {
+            Write::write_fmt(&mut batch.bytes, args)?;
+            if batch.bytes.len() >= batch.capacity {
+                self.send_batch()?;
+            }
+            return Ok(());
+        }
         // We use write_vec to ensure only a single allocation is performed
         if let Some(s) = args.as_str() {
             self.write_vec(s.as_bytes().to_vec()).map(|_| ())
@@ -444,6 +551,7 @@ impl WriterThreaded {
                 handle: Some(handle),
             }),
             writer_error,
+            batch: None,
         }
     }
 }
@@ -463,7 +571,8 @@ impl Drop for WriterThreadedShared {
 }
 
 impl Finish for WriterThreaded {
-    fn finish(self) -> std::io::Result<()> {
+    fn finish(mut self) -> std::io::Result<()> {
+        self.send_batch()?;
         // Ensure this is the final WriterThreaded clone, and bind the shared
         // state
         let mut shared = Arc::into_inner(self.shared)

@@ -22,7 +22,8 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 
 - Fixed indentation in `aligner` error messages
 - `merge-sam` now supports passing `/dev/null` for the outputs
-- Fixed pathological performance issue for one-pass COVID alignments
+- Fixed pathological performance issue for one-pass COVID alignments as well as
+  for certain multithreaded WSL set-ups
 
 ## [0.11.0] - 2026-09-17
 

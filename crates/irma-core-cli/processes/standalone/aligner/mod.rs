@@ -21,6 +21,9 @@ use irma_records::io::WriterThreaded;
 #[cfg(not(feature = "dev_no_rayon"))]
 use rayon::iter::{ParallelBridge, ParallelIterator};
 
+#[cfg(not(feature = "dev_no_rayon"))]
+const WRITE_BATCH_CAPACITY: usize = 64 * 1024;
+
 mod arg_parsing;
 mod writers;
 
@@ -161,7 +164,7 @@ pub fn aligner_process(args: AlignerArgs) -> std::io::Result<()> {
     }
 
     #[cfg(not(feature = "dev_no_rayon"))]
-    let writer = WriterThreaded::new(writer);
+    let writer = WriterThreaded::with_batch_capacity(writer, WRITE_BATCH_CAPACITY);
 
     // Validity: No context is added to the result
     dispatch_alphabet(query_reader, references, writer, weight_matrix, &config)?;
