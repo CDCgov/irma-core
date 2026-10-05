@@ -2,13 +2,16 @@ use crate::sam::{
     PairedMergeStats,
     merge_pairs::{SamMergeablePairs, make_merged_qname},
 };
-use zoe::data::{cigar::Cigar, sam::SamData};
+use zoe::data::{
+    cigar::Cigar,
+    sam::{Flag, SamData},
+};
 
 #[test]
 fn merge_no_mismatch() {
     let s1 = SamData::new(
         "s1".to_string(),
-        0,
+        Flag::default(),
         "ref".to_string(),
         5,
         30,
@@ -19,7 +22,7 @@ fn merge_no_mismatch() {
 
     let s2 = SamData::new(
         "s2".to_string(),
-        0,
+        Flag::default(),
         "ref".to_string(),
         11,
         30,
@@ -46,7 +49,7 @@ fn merge_no_mismatch() {
 fn merge_with_mismatch() {
     let s1 = SamData::new(
         "s1".to_string(),
-        0,
+        Flag::default(),
         "ref".to_string(),
         5,
         30,
@@ -57,7 +60,7 @@ fn merge_with_mismatch() {
 
     let s2 = SamData::new(
         "s2".to_string(),
-        0,
+        Flag::default(),
         "ref".to_string(),
         10,
         30,
@@ -84,7 +87,7 @@ fn merge_with_mismatch() {
 fn merge_no_overlap() {
     let s1 = SamData::new(
         "s1".to_string(),
-        0,
+        Flag::default(),
         "ref".to_string(),
         5,
         30,
@@ -95,7 +98,7 @@ fn merge_no_overlap() {
 
     let s2 = SamData::new(
         "s2".to_string(),
-        0,
+        Flag::default(),
         "ref".to_string(),
         15,
         30,
@@ -122,7 +125,7 @@ fn merge_no_overlap() {
 fn merge_with_clipping() {
     let s1 = SamData::new(
         "SRR42.1.1".to_string(),
-        0,
+        Flag::default(),
         "ref".to_string(),
         5,
         30,
@@ -133,7 +136,7 @@ fn merge_with_clipping() {
 
     let s2 = SamData::new(
         "SRR422.1.2".to_string(),
-        0,
+        Flag::default(),
         "ref".to_string(),
         10,
         30,
@@ -160,7 +163,7 @@ fn merge_with_clipping() {
 fn merge_with_clipping2() {
     let s1 = SamData::new(
         "SRR42.1.1".to_string(),
-        0,
+        Flag::default(),
         "ref".to_string(),
         5,
         30,
@@ -171,7 +174,7 @@ fn merge_with_clipping2() {
 
     let s2 = SamData::new(
         "SRR422.1.2".to_string(),
-        0,
+        Flag::default(),
         "ref".to_string(),
         10,
         30,
@@ -198,7 +201,7 @@ fn merge_with_clipping2() {
 fn merge_with_clipping_past_left() {
     let s1 = SamData::new(
         "s1".to_string(),
-        0,
+        Flag::default(),
         "ref".to_string(),
         5,
         30,
@@ -209,7 +212,7 @@ fn merge_with_clipping_past_left() {
 
     let s2 = SamData::new(
         "s2".to_string(),
-        0,
+        Flag::default(),
         "ref".to_string(),
         10,
         30,

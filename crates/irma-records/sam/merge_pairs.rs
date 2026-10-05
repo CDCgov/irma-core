@@ -1,7 +1,10 @@
 use crate::sam::{PairedMergeStats, SamAligned, SamInsertion};
 use zoe::{
     alignment::{AlignmentStates, NextCiglet},
-    data::{cigar::Ciglet, sam::SamData},
+    data::{
+        cigar::{Ciglet, LenInAlignment},
+        sam::{Flag, SamData},
+    },
     prelude::QualityScores,
     search::ByteSubstring,
 };
@@ -117,7 +120,7 @@ impl SamMergeablePairs for SamData {
             make_merged_qname(&self.qname)
         };
 
-        match (self.is_unmapped(), other.is_unmapped()) {
+        match (is_unmapped(self), is_unmapped(other)) {
             (true, true) => return SamData::unmapped(&m_qname, &self.rname),
             (_, true) => {
                 let mut new = self.clone();
@@ -159,7 +162,7 @@ impl SamMergeablePairs for SamData {
             a1_clipping_for_paired.max(a2_clipping_for_paired)
         };
 
-        let m_flag = 0;
+        let m_flag = Flag::default();
         let m_rname = self.rname.clone();
 
         let (mapq1, mapq2) = (self.mapq, other.mapq);
@@ -352,6 +355,11 @@ impl SamMergeablePairs for SamData {
             unsafe { QualityScores::from_vec_unchecked(merged_quals) },
         )
     }
+}
+
+/// Returns whether the [`SamData`] struct represents an unmapped alignment.
+fn is_unmapped(data: &SamData) -> bool {
+    data.flag.is_unmapped() || data.cigar.ref_len_in_alignment() == 0
 }
 
 pub(crate) trait SamExpandableAlignment {

@@ -3,7 +3,10 @@
 use crate::aligner::{AlignerConfig, AlignmentAndSeqs, Strand};
 use std::io::Write;
 use zoe::{
-    data::{fasta::FastaSeq, sam::SamDataView},
+    data::{
+        fasta::FastaSeq,
+        sam::{Flag, SamDataView},
+    },
     prelude::{AsView, NucleotidesView, QualityScores, QualityScoresView},
 };
 
@@ -36,7 +39,7 @@ where
 
             match mapping.strand {
                 Strand::Forward => {
-                    let flag = 0;
+                    let flag = Flag::default();
                     let seq = &alignment.query.sequence;
                     let qual = alignment
                         .query
@@ -49,7 +52,8 @@ where
                     writeln!(writer, "{record}\tAS:i:{score}", score = mapping.inner.score)
                 }
                 Strand::Reverse => {
-                    let flag = 16;
+                    let mut flag = Flag::default();
+                    flag.set_revcomp();
                     let seq = NucleotidesView::from(alignment.query.sequence.as_slice())
                         .to_reverse_complement()
                         .into_vec();
