@@ -6,7 +6,7 @@ use zoe::{
     data::{
         CheckSequence,
         err::WithErrorContext,
-        fasta::FastaSeq,
+        fasta::Fasta,
         fastq::{FastQView, FastQViewMut},
         phred::{QualityScoresView, QualityScoresViewMut},
         records::{HeaderReadable, SequenceReadable},
@@ -130,7 +130,7 @@ pub struct FastXViewMut<'a> {
 }
 
 impl FastX {
-    /// A helper function for mapping a result of [`FastQ`] or [`FastaSeq`] to a
+    /// A helper function for mapping a result of [`FastQ`] or [`Fasta`] to a
     /// result of [`FastX`].
     #[inline]
     fn map_result<T>(result: std::io::Result<T>) -> std::io::Result<Self>
@@ -204,11 +204,11 @@ impl<'a> From<FastQViewMut<'a>> for FastXViewMut<'a> {
     }
 }
 
-impl From<FastaSeq> for FastX {
+impl From<Fasta> for FastX {
     #[inline]
-    fn from(value: FastaSeq) -> Self {
+    fn from(value: Fasta) -> Self {
         Self {
-            header:   value.name,
+            header:   value.header,
             sequence: value.sequence,
             quality:  None,
         }

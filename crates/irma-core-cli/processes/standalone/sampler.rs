@@ -274,12 +274,12 @@ where
 /// ## Assumptions
 ///
 /// This function must be called on an iterator of results. The `Ok` variant of
-/// the items should be a record such as [`FastQ`] or [`FastaSeq`], not a nested
+/// the items should be a record such as [`FastQ`] or [`Fasta`], not a nested
 /// result. Otherwise, this would permit logic errors such as silently ignoring
 /// errors.
 ///
 /// [`FastQ`]: zoe::data::records::fastq::FastQ
-/// [`FastaSeq`]: zoe::data::records::fasta::FastaSeq
+/// [`Fasta`]: zoe::data::records::fasta::Fasta
 fn sample_and_write_results<I, W, A, E>(
     iterator: I, writer: W, target: SamplingTarget, seq_count: Option<usize>, rng: Xoshiro256StarStar,
 ) -> std::io::Result<(usize, usize)>
@@ -320,7 +320,6 @@ where
 /// [`Percent`]: SamplingTarget::Percent
 /// [`Count`]: SamplingTarget::Count
 /// [`FastQ`]: zoe::data::records::fastq::FastQ
-/// [`FastaSeq`]: zoe::data::records::fasta::FastaSeq
 #[inline]
 fn sample_and_write_records<I, W>(
     iterator: &mut I, writer: W, target: SamplingTarget, seq_count: Option<usize>, mut rng: Xoshiro256StarStar,

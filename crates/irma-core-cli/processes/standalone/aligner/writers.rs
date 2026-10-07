@@ -4,7 +4,7 @@ use crate::aligner::{AlignerConfig, AlignmentAndSeqs, Strand};
 use std::io::Write;
 use zoe::{
     data::{
-        fasta::FastaSeq,
+        fasta::Fasta,
         sam::{Flag, SamDataView},
     },
     prelude::{AsView, NucleotidesView, QualityScores, QualityScoresView},
@@ -32,7 +32,7 @@ where
 
     match alignment.mapping {
         Some(mapping) if mapping.inner.score > 0 => {
-            let rname = process_header(&alignment.reference.name);
+            let rname = process_header(&alignment.reference.header);
             let pos = mapping.inner.ref_range.start + 1;
             let mapq = 255;
             let cigar = mapping.inner.states.to_cigar_unchecked();
@@ -96,13 +96,13 @@ fn process_header(header: &str) -> &str {
 
 /// Writes a SAM-style header to the writer, containing the `HD` and `SQ` lines.
 #[inline]
-pub fn write_header<W: Write>(writer: &mut W, references: &[FastaSeq]) -> std::io::Result<()> {
+pub fn write_header<W: Write>(writer: &mut W, references: &[Fasta]) -> std::io::Result<()> {
     writeln!(writer, "@HD\tVN:1.4")?;
     for reference in references {
         writeln!(
             writer,
-            "@SQ\tSN:{name}\tLN:{len}",
-            name = process_header(&reference.name),
+            "@SQ\tSN:{header}\tLN:{len}",
+            header = process_header(&reference.header),
             len = reference.sequence.len()
         )?;
     }

@@ -1,6 +1,6 @@
 use crate::sam::{PairedMergeStats, SamAligned, SamInsertion};
 use zoe::{
-    alignment::{AlignmentStates, NextCiglet},
+    alignment::{AlignOp, AlignmentStates, NextCiglet},
     data::{
         cigar::{Ciglet, LenInAlignment},
         sam::{Flag, SamData},
@@ -173,7 +173,7 @@ impl SamMergeablePairs for SamData {
         let mut merged_seq = Vec::with_capacity(paired_range.len());
         let mut merged_quals = Vec::with_capacity(paired_range.len());
 
-        merged_cigars.add_inc_op(m_num_clipped_start, b'H');
+        merged_cigars.add_inc_op(m_num_clipped_start, AlignOp::H);
 
         // 0-based index relative to reference
         for ref_index in paired_range {
@@ -187,12 +187,12 @@ impl SamMergeablePairs for SamData {
                     if x == y {
                         if x == b'-' {
                             stats.true_variations += 1;
-                            merged_cigars.add_state(b'D');
+                            merged_cigars.add_state(AlignOp::D);
                         } else {
                             if x != r {
                                 stats.true_variations += 1;
                             }
-                            merged_cigars.add_state(b'M');
+                            merged_cigars.add_state(AlignOp::M);
 
                             merged_seq.push(x);
                             merged_quals.push(std::cmp::max(qx, qy));
@@ -200,7 +200,7 @@ impl SamMergeablePairs for SamData {
                     } else {
                         // x ≠ y
                         stats.variant_errors += 1;
-                        merged_cigars.add_state(b'M');
+                        merged_cigars.add_state(AlignOp::M);
 
                         if x == r {
                             if y == b'-' {
@@ -254,14 +254,14 @@ impl SamMergeablePairs for SamData {
                 }
                 (Some((base, quality)), None) | (None, Some((base, quality))) => {
                     if base == b'-' {
-                        merged_cigars.add_state(b'D');
+                        merged_cigars.add_state(AlignOp::D);
                     } else {
-                        merged_cigars.add_state(b'M');
+                        merged_cigars.add_state(AlignOp::M);
                         merged_seq.push(base);
                         merged_quals.push(quality); // ensure this is an encoded value during testing
                     }
                 }
-                (None, None) => merged_cigars.add_state(b'N'),
+                (None, None) => merged_cigars.add_state(AlignOp::N),
             }
 
             let range1 = a1.get_insert_after(ref_index);
@@ -279,17 +279,17 @@ impl SamMergeablePairs for SamData {
                     if insert1 == insert2 {
                         merged_seq.extend_from_slice(insert1.to_ascii_lowercase().as_slice());
                         merged_quals.extend(quals1.iter().zip(quals2).map(|(q1, q2)| std::cmp::max(*q1, *q2)));
-                        merged_cigars.add_inc_op(insert1.len(), b'I');
+                        merged_cigars.add_inc_op(insert1.len(), AlignOp::I);
                     } else if insert2.contains_substring(insert1) {
                         merged_seq.extend_from_slice(insert1.to_ascii_lowercase().as_slice());
                         merged_quals.extend_from_slice(quals1);
-                        merged_cigars.add_inc_op(insert1.len(), b'I');
+                        merged_cigars.add_inc_op(insert1.len(), AlignOp::I);
 
                         stats.insert_errors += 1;
                     } else if insert1.contains_substring(insert2) {
                         merged_seq.extend_from_slice(insert2.to_ascii_lowercase().as_slice());
                         merged_quals.extend_from_slice(quals2);
-                        merged_cigars.add_inc_op(insert2.len(), b'I');
+                        merged_cigars.add_inc_op(insert2.len(), AlignOp::I);
 
                         stats.insert_errors += 1;
                     } else {
@@ -311,7 +311,7 @@ impl SamMergeablePairs for SamData {
 
                         merged_seq.extend_from_slice(insert.to_ascii_lowercase().as_slice());
                         merged_quals.extend_from_slice(quals);
-                        merged_cigars.add_inc_op(insert.len(), b'I');
+                        merged_cigars.add_inc_op(insert.len(), AlignOp::I);
                     }
                 }
                 (None, Some(r2)) => {
@@ -329,14 +329,14 @@ impl SamMergeablePairs for SamData {
                         // Remove lower-casing if it does nothing downstream.
                         merged_seq.extend_from_slice(insert.to_ascii_lowercase().as_slice());
                         merged_quals.extend_from_slice(quals);
-                        merged_cigars.add_inc_op(insert.len(), b'I');
+                        merged_cigars.add_inc_op(insert.len(), AlignOp::I);
                     }
                 }
                 _ => {}
             }
         }
 
-        merged_cigars.add_inc_op(m_num_clipped_end, b'H');
+        merged_cigars.add_inc_op(m_num_clipped_end, AlignOp::H);
 
         let merged_cigars = merged_cigars.to_cigar_unchecked();
 
@@ -387,7 +387,7 @@ impl SamExpandableAlignment for SamData {
 
         // Peek at clipping at front and back
         let (num_clipped_start, num_clipped_end) = {
-            let mut ciglets = self.cigar.iter();
+            let mut ciglets = self.cigar.iter_unchecked();
             let num_clipped_start = ciglets.remove_clipping_front();
             let num_clipped_end = ciglets.remove_clipping_back();
             (num_clipped_start, num_clipped_end)
@@ -399,22 +399,22 @@ impl SamExpandableAlignment for SamData {
         let mut qaligned = Vec::new();
         let mut insertions = Vec::new();
 
-        for Ciglet { inc, op } in &self.cigar {
+        for Ciglet { inc, op } in self.cigar.iter_unchecked() {
             match op {
-                b'M' | b'=' | b'X' => {
+                AlignOp::M | AlignOp::Eq | AlignOp::X => {
                     qaligned.extend(&self.qual[query_index..query_index + inc]);
                     aligned.extend(&self.seq[query_index..query_index + inc]);
                     query_index += inc;
                     ref_index += inc;
                 }
-                b'D' => {
+                AlignOp::D => {
                     // We use the minimum value for deletions so that it can
                     // still be parsed by other programs.
                     qaligned.extend(std::iter::repeat_n(b'!', inc));
                     aligned.extend(std::iter::repeat_n(b'-', inc));
                     ref_index += inc;
                 }
-                b'I' => {
+                AlignOp::I => {
                     debug_assert!(
                         ref_index > 0,
                         "Local alignment invariant violated: leading insertion at reference start"
@@ -429,13 +429,13 @@ impl SamExpandableAlignment for SamData {
                     insertions.push(ins);
                     query_index += inc;
                 }
-                b'S' => query_index += inc,
-                b'N' => {
+                AlignOp::S => query_index += inc,
+                AlignOp::N => {
                     qaligned.extend(std::iter::repeat_n(b'!', inc));
                     aligned.extend(std::iter::repeat_n(b'N', inc));
                     ref_index += inc;
                 }
-                b'H' => {}
+                AlignOp::H => {}
                 // TODO: Replace with a continue if type-state is adopted.
                 _ => panic!("Extended CIGAR {op} not yet supported.\n"),
             }

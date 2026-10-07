@@ -79,7 +79,7 @@ use zoe::{
 ///   parsing function is called.
 ///
 /// [`FromStr`]: std::str::FromStr
-/// [`dispatch`]: crate::io::IterWithContext::dispatch
+/// [`dispatch`]: crate::io::WithContext::dispatch
 pub struct InputOptions<'a, R> {
     /// Any context needed to properly display error context.
     context: InputContext<'a>,
@@ -689,10 +689,9 @@ where
     ///
     /// The output (after handling the error case) can be directly used as an
     /// iterator, and context will be added since it is wrapped in
-    /// [`IterWithContext`]. To instead match on whether the reader is a
-    /// [`FastaReader`] or a [`FastQReader`], call [`IterWithContext::dispatch`]
-    /// first to move the [`IterWithContext`] wrapper separately into each
-    /// variant.
+    /// [`WithContext`]. To instead match on whether the reader is a
+    /// [`FastaReader`] or a [`FastQReader`], call [`WithContext::dispatch`]
+    /// first to move the [`WithContext`] wrapper separately into each variant.
     ///
     /// ## Errors
     ///

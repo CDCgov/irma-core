@@ -12,7 +12,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use zoe::{
-    data::{fasta::FastaSeq, fastq::FastQ, types::phred::QualityScores},
+    data::{fasta::Fasta, fastq::FastQ, types::phred::QualityScores},
     prelude::Nucleotides,
 };
 
@@ -59,12 +59,12 @@ fn inflate(table_file: &Path, fasta_files: &Vec<PathBuf>) -> Result<(), std::io:
         let reader = InputOptions::new_from_path(file).use_file().parse_fasta().open()?;
 
         for record in reader {
-            let FastaSeq { name, sequence } = record?;
+            let Fasta { header, sequence } = record?;
             let mut sequence = Nucleotides::from_vec_unchecked(sequence);
 
-            let cluster_num = parse_cluster_num(&name, file)?;
+            let cluster_num = parse_cluster_num(&header, file)?;
 
-            if name.ends_with("{c}") {
+            if header.ends_with("{c}") {
                 sequence.make_reverse_complement();
             }
             sequence_by_cluster.insert(cluster_num, sequence);
@@ -163,9 +163,9 @@ pub fn xflate_process(args: XflateArgs) -> Result<(), std::io::Error> {
 ///
 /// If `name` does not meet the required format, then an error is returned,
 /// including `name` and `path` as context.
-fn parse_cluster_num(name: &str, path: &Path) -> std::io::Result<usize> {
-    if let Some(name) = name.strip_prefix(CLUSTER_PREFIX)
-        && let Some(cluster_id) = name.split('%').next()
+fn parse_cluster_num(header: &str, path: &Path) -> std::io::Result<usize> {
+    if let Some(header) = header.strip_prefix(CLUSTER_PREFIX)
+        && let Some(cluster_id) = header.split('%').next()
         && let Ok(cluster_num) = cluster_id.parse::<usize>()
     {
         Ok(cluster_num)
@@ -173,7 +173,7 @@ fn parse_cluster_num(name: &str, path: &Path) -> std::io::Result<usize> {
         Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!(
-                "Invalid header in file: {path}\nHeader: {name}\n\nInflation requires a header of the format: C<ID>%[REST], where:\n  - <ID> is a nonnegative integer\n  - [REST] is any additional optional characters",
+                "Invalid header in file: {path}\nHeader: {header}\n\nInflation requires a header of the format: C<ID>%[REST], where:\n  - <ID> is a nonnegative integer\n  - [REST] is any additional optional characters",
                 path = path.display()
             ),
         ))

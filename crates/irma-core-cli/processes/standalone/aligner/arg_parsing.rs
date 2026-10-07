@@ -8,7 +8,7 @@ use std::{fmt::Display, path::PathBuf};
 use zoe::{
     data::{
         AA_ALL_AMBIG_PROFILE_MAP_WITH_STOP, WeightMatrix,
-        fasta::FastaSeq,
+        fasta::Fasta,
         matrices::{BLOSUM_62, aa_mat_from_name},
     },
     math::AnyInt,
@@ -23,7 +23,7 @@ pub struct ParsedAlignerArgs {
     /// ## Validity
     ///
     /// This field must be non-empty.
-    pub references:    Vec<FastaSeq>,
+    pub references:    Vec<Fasta>,
     /// The weight matrix to use for the alignment
     pub weight_matrix: AnyMatrix<'static, i8>,
     /// Whether to write the SAM header

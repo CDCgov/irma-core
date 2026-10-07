@@ -9,7 +9,7 @@ use zoe::{
     alignment::{Alignment, LocalProfiles, MaybeAligned, SharedProfiles},
     data::{
         err::{ResultWithErrorContext, ResultWithSubitem},
-        fasta::FastaSeq,
+        fasta::Fasta,
         matrices::WeightMatrix,
     },
     prelude::{NucleotidesView, ProfileSets, SeqSrc},
@@ -179,7 +179,7 @@ pub fn aligner_process(args: AlignerArgs) -> std::io::Result<()> {
 ///
 /// [`OrFail`]: zoe::data::err::OrFail
 fn dispatch_alphabet(
-    query_reader: QueryReader, references: Vec<FastaSeq>, writer: SamWriter, weight_matrix: AnyMatrix<'static, i8>,
+    query_reader: QueryReader, references: Vec<Fasta>, writer: SamWriter, weight_matrix: AnyMatrix<'static, i8>,
     config: &AlignerConfig,
 ) -> std::io::Result<()> {
     // Validity: No context is added to the results
@@ -208,7 +208,7 @@ fn dispatch_alphabet(
 ///
 /// [`OrFail`]: zoe::data::err::OrFail
 fn dispatch_method<const S: usize>(
-    query_reader: QueryReader, references: Vec<FastaSeq>, writer: SamWriter, weight_matrix: &WeightMatrix<'static, i8, S>,
+    query_reader: QueryReader, references: Vec<Fasta>, writer: SamWriter, weight_matrix: &WeightMatrix<'static, i8, S>,
     config: &AlignerConfig,
 ) -> std::io::Result<()> {
     let references = References::new(
@@ -473,7 +473,7 @@ impl<'q, const S: usize> QueryWithProfile<'q, S> {
         .with_subitem(format!(
             "Query: {q_header}\nReference: {r_header}",
             q_header = self.forward.header,
-            r_header = reference.forward.name
+            r_header = reference.forward.header
         ))?;
 
         Ok(AlignmentAndSeqs {
@@ -503,7 +503,7 @@ impl<'q, const S: usize> QueryWithProfile<'q, S> {
         .with_subitem(format!(
             "Query: {q_header}\nReference: {r_header}",
             q_header = self.forward.header,
-            r_header = reference.forward.name
+            r_header = reference.forward.header
         ))?;
 
         Ok(AlignmentAndSeqs {
@@ -546,7 +546,7 @@ impl<'q, const S: usize> QueryWithRc<'q, S> {
 #[derive(Clone, Debug)]
 pub struct Reference<'r, const S: usize> {
     /// The record for the reference.
-    forward: &'r FastaSeq,
+    forward: &'r Fasta,
     /// The reverse complement of the reference, if `--rev-comp` was passed.
     reverse: MaybeRevComp,
     /// The profile set for the forward reference sequence.
@@ -562,13 +562,13 @@ impl<'r, const S: usize> Reference<'r, S> {
     /// An error containing the reference header as context is returned if a
     /// profile fails to be made from the sequence.
     pub fn new(
-        reference: &'r FastaSeq, matrix: &'r WeightMatrix<'r, i8, S>, gap_open: i8, gap_extend: i8, rev_comp: bool,
+        reference: &'r Fasta, matrix: &'r WeightMatrix<'r, i8, S>, gap_open: i8, gap_extend: i8, rev_comp: bool,
     ) -> std::io::Result<Self> {
         let forward = reference;
 
         let forward_seq = forward.sequence.as_slice();
         let reverse = MaybeRevComp::new(forward_seq, rev_comp);
-        let header = &forward.name;
+        let header = &forward.header;
         let profile = SharedProfiles::make_profile(forward_seq, header, matrix, gap_open, gap_extend)?;
 
         Ok(Self {
@@ -603,7 +603,7 @@ impl<'r, const S: usize> Reference<'r, S> {
         .with_subitem(format!(
             "Query: {q_header}\nReference: {r_header}",
             q_header = query.forward.header,
-            r_header = self.forward.name
+            r_header = self.forward.header
         ))?;
 
         Ok(AlignmentAndSeqs {
@@ -633,7 +633,7 @@ impl<'r, const S: usize> Reference<'r, S> {
         .with_subitem(format!(
             "Query: {q_header}\nReference: {r_header}",
             q_header = query.forward.header,
-            r_header = self.forward.name
+            r_header = self.forward.header
         ))?;
 
         Ok(AlignmentAndSeqs {
@@ -656,7 +656,7 @@ impl<'r, const S: usize> References<'r, S> {
     /// If any of the profiles fail to build, an error is returned with context
     /// including the header.
     pub fn new(
-        references: &'r [FastaSeq], matrix: &'r WeightMatrix<'r, i8, S>, gap_open: i8, gap_extend: i8, rev_comp: bool,
+        references: &'r [Fasta], matrix: &'r WeightMatrix<'r, i8, S>, gap_open: i8, gap_extend: i8, rev_comp: bool,
     ) -> std::io::Result<Self> {
         references
             .iter()
@@ -861,7 +861,7 @@ pub struct AlignmentAndSeqs<'q, 'r> {
     /// A reference to the query record.
     pub query:     &'q FastX,
     /// A reference to the reference record.
-    pub reference: &'r FastaSeq,
+    pub reference: &'r Fasta,
 }
 
 impl PartialOrd for AlignmentAndStrand {

@@ -100,16 +100,16 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
         )
     })??;
 
-    let Some(new_len) = reference.name.split_ascii_whitespace().next().map(str::len) else {
+    let Some(new_len) = reference.header.split_ascii_whitespace().next().map(str::len) else {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
             format!(
-                "Empty name field in FASTA header: {file}",
+                "Empty header field in FASTA file: {file}",
                 file = args.fasta_reference.display()
             ),
         ));
     };
-    reference.name.truncate(new_len);
+    reference.header.truncate(new_len);
     reference.sequence.make_ascii_uppercase();
 
     const ONE_MB: usize = 2usize.pow(20);
@@ -128,7 +128,7 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
     for sam_row in sam_records {
         let row = match sam_row? {
             SamRow::Data(mut d) => {
-                if d.rname != reference.name {
+                if d.rname != reference.header {
                     continue;
                 }
                 d.seq.as_mut_bytes().make_ascii_uppercase();
@@ -208,13 +208,13 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
 
         writeln!(
             &mut w,
-            "{name}\tobs\t{observations}\n\
-             {name}\ttmv\t{true_variations}\n\
-             {name}\tfmv\t{variant_errors}\n\
-             {name}\tdmv\t{deletion_errors}\n\
-             {name}\tinsObs\t{insert_obs}\n\
-             {name}\tinsErr\t{insert_errors}",
-            name = reference.name
+            "{header}\tobs\t{observations}\n\
+             {header}\ttmv\t{true_variations}\n\
+             {header}\tfmv\t{variant_errors}\n\
+             {header}\tdmv\t{deletion_errors}\n\
+             {header}\tinsObs\t{insert_obs}\n\
+             {header}\tinsErr\t{insert_errors}",
+            header = reference.header
         )?;
 
         w.finish()?;
