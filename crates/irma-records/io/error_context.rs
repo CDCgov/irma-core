@@ -47,7 +47,7 @@ impl<T> WithContext<T> {
     }
 
     /// Maps the inner struct while retaining the same error context.
-    pub fn map<U, F>(self, f: F) -> WithContext<U>
+    pub fn map_inner<U, F>(self, f: F) -> WithContext<U>
     where
         F: FnOnce(T) -> U, {
         WithContext {

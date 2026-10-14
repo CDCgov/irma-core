@@ -12,6 +12,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 - `merge_pair_using_reference` now accepts a mutable reference to a
   `PairedMergeStats` to tally into, rather than returning the struct
 - `PairedMergeStats` no longer implements `Add` or `AddAssign`
+- Renamed `WithContext::map` to `WithContext::map_inner`
 
 ### Fixed
 
