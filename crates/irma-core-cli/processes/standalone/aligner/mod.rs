@@ -4,9 +4,9 @@ use crate::aligner::{
 };
 use clap::{Args, builder::RangedI64ValueParser};
 use irma_records::io::{FastX, FastXReader, Finish, OutputOptions, ReadFileZipInThread, ValidatePaths, WithContext};
-use std::{cmp::Ordering, path::PathBuf};
+use std::{cell::RefCell, cmp::Ordering, path::PathBuf};
 use zoe::{
-    alignment::{Alignment, LocalProfiles, MaybeAligned, SharedProfiles},
+    alignment::{Alignment, LocalProfiles, MaybeAligned, SharedProfiles, TracebackBuffer},
     data::{
         err::{ResultWithErrorContext, ResultWithSubitem},
         fasta::Fasta,
@@ -26,6 +26,12 @@ mod writers;
 
 /// A type alias for the query reader used by `aligner`.
 type QueryReader = WithContext<FastXReader<ReadFileZipInThread>>;
+
+thread_local! {
+    /// A reusable traceback buffer for 1-pass alignment to reduce impact of
+    /// repeated large allocations.
+    static TRACEBACK_BUFFER: RefCell<TracebackBuffer> = RefCell::new(TracebackBuffer::new());
+}
 
 /// A type alias for the writer being used for the SAM file, which depends on
 /// whether `dev_no_rayon` is set.
@@ -695,14 +701,16 @@ pub trait AlignerMethods<'a, const S: usize>: ProfileSets<'a, 32, 16, 8, S> {
     ) -> std::io::Result<Self>;
 
     /// Performs the 1-pass Striped Smith Waterman alignment algorithm starting
-    /// from an `i8`, similar to [`ProfileSets::sw_align_from_i8`].
+    /// from an `i8`, using [`ProfileSets::sw_align_from_i8_with_buf`].
     ///
     /// ## Errors
     ///
     /// If the alignment overflows, then this is returned as an error.
     fn sw_1pass(&self, seq: SeqSrc<&[u8]>) -> std::io::Result<Option<Alignment<u32>>> {
         let seq = seq.map(AsRef::as_ref);
-        let alignment = self.sw_align_from_i8(seq);
+        // Within a single thread, this is only borrowed one at a time, so this
+        // will not panic
+        let alignment = TRACEBACK_BUFFER.with_borrow_mut(|buffer| self.sw_align_from_i8_with_buf(seq, buffer));
         maybe_aligned_to_option(alignment)
     }
 
@@ -902,6 +910,30 @@ impl PartialOrd for AlignmentAndSeqs<'_, '_> {
                 }
             }
             ord => ord,
+        }
+    }
+}
+
+#[cfg(test)]
+mod traceback_tests {
+    use super::*;
+
+    #[test]
+    fn reuse_across_queries_matches_allocating_api() {
+        let weights = WeightMatrix::new_dna_matrix(2, -5, None);
+        let long = b"ACGT".repeat(100);
+        let mismatch = b"T".repeat(45);
+        // Growth, smaller prefixes, unmapped results, and i8 overflow retries.
+        for query in [b"ACGT".as_slice(), long.as_slice(), mismatch.as_slice(), b"ACGT"] {
+            let local = LocalProfiles::new_with_w256(query, &weights, -10, -1).unwrap();
+            let shared = SharedProfiles::new_with_w256(query, &weights, -10, -1).unwrap();
+            for target in [b"ACGT".as_slice(), long.as_slice(), mismatch.as_slice(), b""] {
+                for seq in [SeqSrc::Reference(target), SeqSrc::Query(target)] {
+                    let expected = maybe_aligned_to_option(local.sw_align_from_i8(seq)).unwrap();
+                    assert_eq!(local.sw_1pass(seq).unwrap(), expected);
+                    assert_eq!(shared.sw_1pass(seq).unwrap(), expected);
+                }
+            }
         }
     }
 }
