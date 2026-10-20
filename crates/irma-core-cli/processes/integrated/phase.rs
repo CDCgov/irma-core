@@ -1,481 +1,884 @@
-//! Phase clustering assignment.
+//! Phase distance calculation and group assignment.
 //!
-//! Reads in the variants table and associated distance matrix for a ctype.
-//! Assigns a phase number to each variant by clustering variants connected by
-//! distances at or below a specified height. The variants table is rewritten
-//! with a trailing `Phase` column. If there is a single variant, it is assigned
-//! phase number `1` without reading the matrix.
+//! The central IRMA script supplies two TSV files exported from `call.pl`. The
+//! Frequencies TSV has header columns `Position`, `Allele`, and `Frequency`.
+//! Positions are positive and 1-based. The Counted Patterns TSV has header
+//! columns `Pattern` and `Count`. Pattern characters follow sorted unique
+//! positions in the frequency TSV.
+//!
+//! All four [legacy distance
+//! measures]https://wonder.cdc.gov/controller/pdf/Updated_Phasing_Methods.pdf)
+//! are computed once per pair, retaining the lower triangle in memory. Phase
+//! groups are determined by identifying connected components where the EXPENRD
+//! distance is below a threshold. Only explicitly selected matrices are
+//! written. After validating all inputs and writing the matrices, the variants
+//! table is overwritten in place with a trailing `Phase` column.
 
 use clap::Args;
 use irma_records::io::{Finish, InputOptions, OutputOptions};
-use std::{
-    collections::{HashMap, hash_map::Entry},
-    fmt::Display,
-    io::{BufRead, Write},
-    path::PathBuf,
-    str::Split,
+use rayon::{
+    ThreadPoolBuilder,
+    iter::{IndexedParallelIterator, ParallelIterator},
+    slice::ParallelSliceMut,
 };
-use zoe::{data::err::ResultWithErrorContext, iter_utils::ProcessResultsExt};
+use std::{
+    cmp::Reverse,
+    collections::{BTreeMap, HashMap},
+    fmt::{self, Display},
+    io::{BufRead, Write},
+    num::{NonZeroU64, NonZeroUsize},
+    ops::Index,
+    path::{Path, PathBuf},
+};
+use zoe::data::{
+    err::ResultWithErrorContext,
+    nucleotides::{CheckNucleotides, IsValidDNA::IupacWithGapsUc},
+};
 
 #[derive(Args, Debug)]
 pub struct PhaseArgs {
-    /// Variants file `<ctype>-variants.txt`
-    pub variants_file: PathBuf,
-    /// Variants square matrix file `<ctype>-EXPENRD.sqm`
-    pub sqm_file:      PathBuf,
-    /// Optional height value for phase clustering. The default height was
-    /// selected empirically on known mixture data to render 95% sensitivity and
-    /// specificity.
-    #[arg(short, long, value_parser = validate_height, default_value_t = 0.78)]
-    pub tree_height:   f64,
+    /// Prefix for the variants table and selected square matrices.
+    pub ctype:               PathBuf,
+    /// TSV with Position, Allele, Frequency columns.
+    #[arg(long)]
+    pub variant_frequencies: PathBuf,
+    /// TSV with Pattern, Count columns.
+    #[arg(long)]
+    pub counted_patterns:    PathBuf,
+    /// Maximum number of local worker threads available.
+    #[arg(short, long, default_value = "1")]
+    pub threads:             NonZeroUsize,
+    /// Maximum EXPENRD distance for connected-component phase grouping.
+    #[arg(short, long, value_parser = validate_threshold, default_value_t = 0.78)]
+    pub distance_threshold:  f64,
+    /// Comma-separated matrices: mutuald,jaccard,expenrd,njointp
+    /// (case-insensitive). At least one valid name is required.
+    #[arg(short, long, required = true, value_delimiter = ',', value_parser = parse_matrix_name)]
+    pub matrices:            Vec<DistanceType>,
 }
 
-/// Location of the "Position" column in the `variants_file`, 0-indexed
-const POSITION_COLUMN: usize = 1;
-/// Location of the "Minority_Allele" column in the `variants_file`, 0-indexed
-const MINORITY_ALLELE_COLUMN: usize = 4;
-// TODO: Replace with max operator when it becomes const compatible
-/// Minimum number of columns expected in the `variants_file`
-const MIN_COLUMNS: usize = POSITION_COLUMN + MINORITY_ALLELE_COLUMN.saturating_sub(POSITION_COLUMN) + 1;
+/// Validates the type and range of the `distance_threshold` argument.
+fn validate_threshold(value: &str) -> Result<f64, String> {
+    match value.parse::<f64>() {
+        Ok(distance) if (0.0..=1.0).contains(&distance) => Ok(distance),
+        _ => Err(String::from("Distance threshold must be a finite number between 0 and 1")),
+    }
+}
+
+/// Parses a single matrix name, ignoring case.
+fn parse_matrix_name(value: &str) -> Result<DistanceType, String> {
+    DistanceType::ALL_TYPES
+        .into_iter()
+        .find(|matrix| matrix.name().eq_ignore_ascii_case(value))
+        .ok_or_else(|| format!("Unknown matrix name {value}: expected mutuald, jaccard, expenrd, or njointp"))
+}
 
 pub fn phase_process(args: PhaseArgs) -> std::io::Result<()> {
-    let mut variants_file_lines = InputOptions::new_from_path(&args.variants_file).use_file().open()?.lines();
+    let variants_path = suffixed_path(&args.ctype, "-variants.txt");
+    let table_reader = InputOptions::new_from_path(&variants_path).use_file().open()?;
+    let table = VariantsTable::read(table_reader).with_path_context("Failed to parse variants table", &variants_path)?;
 
-    let Some(header) = variants_file_lines.next().transpose()? else {
-        return Err(std::io::Error::other(format!(
-            "File is empty: '{}'",
-            args.variants_file.display()
-        )));
+    match table.rows.len() {
+        0 => return table.overwrite(&variants_path, std::iter::empty()),
+        1 => return table.overwrite(&variants_path, std::iter::once(1)),
+        _ => {}
+    }
+
+    let variants_reader = InputOptions::new_from_path(&args.variant_frequencies).use_file().open()?;
+    let variants = read_variant_frequencies(variants_reader)
+        .with_path_context("Failed to parse variant frequencies input", args.variant_frequencies)?;
+
+    let site_count = variants.last().map_or(0, |variant| variant.site_index + 1);
+    let patterns_reader = InputOptions::new_from_path(&args.counted_patterns).use_file().open()?;
+    let patterns = read_counted_patterns(patterns_reader, &variants, site_count)
+        .with_path_context("Failed to parse counted patterns input", args.counted_patterns)?;
+
+    let num_threads = args.threads.get();
+    let distances = if num_threads == 1 || row_offset(variants.len()) < num_threads {
+        calculate_distances_sequential(&variants, &patterns, args.distance_threshold)?
+    } else {
+        let pool = ThreadPoolBuilder::new()
+            .num_threads(num_threads)
+            .build()
+            .with_context("Failed to build Rayon thread pool")?;
+        pool.install(|| calculate_distances_parallel(&variants, &patterns, args.distance_threshold))?
     };
-    validate_header(&header).with_path_context("Failed to validate header from variants file", &args.variants_file)?;
 
-    let mut variants_file_table = Vec::new();
-    for (line_ind, line) in variants_file_lines.enumerate() {
+    let phases = assign_phases(&variants, &distances.connected_pairs);
+
+    write_matrices(
+        &args.ctype,
+        &variants,
+        &distances.values,
+        &DistanceType::select(&args.matrices),
+    )?;
+
+    let row_indices = table.match_variants(&variants)?;
+    table.overwrite(&variants_path, row_indices.into_iter().map(|i| phases[i]))
+}
+
+/// A variant allele and its frequency, ordered by position and allele.
+struct Variant {
+    /// Positive, 1-based position of the variant
+    position:   usize,
+    /// Nucleotide allele.
+    allele:     u8,
+    /// Frequency of this allele in the frequency TSV.
+    frequency:  f64,
+    /// 0-based index of this variant's position among sorted unique positions.
+    site_index: usize,
+}
+
+/// Reads and validates variant frequencies, assigning an index to each unique
+/// position.
+fn read_variant_frequencies(variant_frequencies: impl BufRead) -> std::io::Result<Vec<Variant>> {
+    let mut lines = variant_frequencies.lines();
+    validate_tsv_header(lines.next().transpose()?, "Position\tAllele\tFrequency")?;
+
+    let mut variants = BTreeMap::new();
+    for (index, line) in lines.enumerate() {
         let line = line?;
         if line.trim().is_empty() {
             continue;
         }
 
-        let variants_file_line = VariantsFileLine::try_from(line).with_path_context(
-            format!(
-                "Failed to parse line number {line_num} from variants file",
-                line_num = line_ind + 2
-            ),
-            &args.variants_file,
-        )?;
-
-        variants_file_table.push(variants_file_line);
-    }
-
-    if variants_file_table.len() < 2 {
-        let mut variants_file_writer = OutputOptions::new_from_path(&args.variants_file).use_file().open()?;
-        writeln!(variants_file_writer, "{header}\tPhase", header = header.trim())?;
-
-        // If there is only a single variant, skip clustering calculation.
-        // Single variant is assigned phase number `1`.
-        for single_row in variants_file_table {
-            writeln!(variants_file_writer, "{single_row}\t1")?;
-        }
-
-        variants_file_writer.finish()
-    } else {
-        let variants_matrix_reader = InputOptions::new_from_path(&args.sqm_file).use_file().open()?;
-        // Phase clustering calculation and assignment happens here.
-        let variant_phases = variants_matrix_reader.lines().process_results(|lines| {
-            VariantPhases::from_sqm_file(lines, args.tree_height, variants_file_table.len())
-                .with_path_context("Cannot parse the .sqm file", &args.sqm_file)
-        })??;
-
-        let mut phase_nums = Vec::with_capacity(variants_file_table.len());
-
-        // Validate all variants in the .sqm first before truncating variants
-        // file
-        for line in &variants_file_table {
-            let Some(&phase_num) = variant_phases.phase_by_tag.get(&VariantTag {
-                position:   line.position,
-                min_allele: line.minority_allele,
-            }) else {
-                return Err(std::io::Error::other(format!(
-                    "Cannot find variant position \"{position}\" with minority allele \"{min_allele}\" in file: '{sqm_file}'",
-                    position = line.position,
-                    min_allele = line.minority_allele as char,
-                    sqm_file = args.sqm_file.display()
-                )));
+        // TODO: replace with a `try` block if it's ever stabilized
+        let result = (|| {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            let [pos, base, freq] = fields.as_slice() else {
+                return Err(std::io::Error::other(
+                    r#"Expected exactly three fields for "Position", "Allele", and "Frequency""#,
+                ));
             };
-            phase_nums.push(phase_num);
+
+            let position = parse_position(pos)?;
+            let allele = parse_allele(base)?;
+            let frequency = freq.parse::<f64>().map_err(std::io::Error::other)?;
+
+            if !(0.0..=1.0).contains(&frequency) {
+                return Err(std::io::Error::other("Variant frequency must be finite and between 0 and 1"));
+            }
+
+            let variant = Variant {
+                position,
+                allele,
+                frequency,
+                // placeholder, gets updated later in a second pass
+                site_index: 0,
+            };
+            if variants.insert((position, allele), variant).is_some() {
+                return Err(std::io::Error::other(format!(
+                    "Duplicate variant {position}{allele}",
+                    allele = char::from(allele)
+                )));
+            }
+
+            Ok(())
+        })();
+
+        result.with_context(format!("Frequency TSV line {}", index + 2))?;
+    }
+
+    // Update each `site_index` field placeholder here while collecting
+    let mut previous_position = None;
+    let mut site_count = 0;
+    let variants = variants
+        .into_values()
+        .map(|mut variant| {
+            if previous_position != Some(variant.position) {
+                previous_position = Some(variant.position);
+                site_count += 1;
+            }
+            variant.site_index = site_count - 1;
+            variant
+        })
+        .collect::<Vec<_>>();
+
+    Ok(variants)
+}
+
+/// A pattern across unique variant positions and its observation count.
+struct CountedPattern {
+    /// Bases in sorted unique-position order.
+    pattern: Box<[u8]>,
+    /// Number of observations represented by this pattern.
+    count:   u64,
+}
+
+/// Reads counted patterns, combining duplicate patterns and excluding patterns
+/// containing only missing (`.`) or unknown (`N`) bases.
+fn read_counted_patterns(
+    counted_patterns: impl BufRead, variants: &[Variant], site_count: usize,
+) -> std::io::Result<Vec<CountedPattern>> {
+    let mut lines = counted_patterns.lines();
+    validate_tsv_header(lines.next().transpose()?, "Pattern\tCount")?;
+
+    let mut patterns = BTreeMap::<Box<[u8]>, u64>::new();
+    let mut total_count = 0_u64;
+    for (index, line) in lines.enumerate() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
         }
 
-        let mut variants_file_writer = OutputOptions::new_from_path(&args.variants_file).use_file().open()?;
-        writeln!(variants_file_writer, "{header}\tPhase", header = header.trim())?;
-        for (line, phase_num) in variants_file_table.iter().zip(phase_nums) {
-            writeln!(variants_file_writer, "{line}\t{phase_num}")?
-        }
-        variants_file_writer.finish()
+        // TODO: another `try` block stand-in
+        let result = (|| {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            let &[pattern, count] = fields.as_slice() else {
+                return Err(std::io::Error::other(
+                    r#"Expected exactly two fields for "Pattern" and "Count""#,
+                ));
+            };
+
+            if variants.is_empty() || pattern.len() != site_count {
+                return Err(std::io::Error::other(
+                    "Patterns require variants and exactly one character per distinct variant position",
+                ));
+            }
+
+            if !pattern.as_bytes().is_valid_dna(IupacWithGapsUc) {
+                return Err(std::io::Error::other(
+                    r#"The "Pattern" field contains an unsupported character"#,
+                ));
+            }
+
+            let count = count
+                .parse::<NonZeroU64>()
+                .with_context("The pattern count must be a positive u64 integer")?
+                .get();
+
+            total_count = total_count
+                .checked_add(count)
+                .ok_or_else(|| std::io::Error::other("Total pattern count overflow"))?;
+
+            // Patterns consisting only of missing/N sites are discarded
+            // according to `call.pl`
+            if !pattern.bytes().all(|base| b".N".contains(&base)) {
+                let accumulated = patterns.entry(pattern.as_bytes().into()).or_default();
+                *accumulated = accumulated
+                    .checked_add(count)
+                    .ok_or_else(|| std::io::Error::other("Pattern count overflow"))?;
+            }
+
+            Ok(())
+        })();
+
+        result.with_context(format!("Pattern TSV line {}", index + 2))?;
+    }
+
+    let counted_patterns = patterns
+        .into_iter()
+        .map(|(pattern, count)| CountedPattern { pattern, count })
+        .collect();
+
+    Ok(counted_patterns)
+}
+
+/// Requires the first TSV line to exactly match `expected`.
+fn validate_tsv_header(header: Option<String>, expected: &str) -> std::io::Result<()> {
+    let Some(header) = header else {
+        return Err(std::io::Error::other(format!("Missing TSV header; expected {expected}")));
+    };
+    if header != expected {
+        return Err(std::io::Error::other(format!(
+            "Expected TSV header {expected}, found {header}"
+        )));
+    }
+    Ok(())
+}
+
+/// Parses a single uppercase `A`, `C`, `G`, or `T` allele.
+fn parse_allele(value: &str) -> std::io::Result<u8> {
+    match *value.as_bytes() {
+        [allele @ (b'A' | b'C' | b'G' | b'T')] => Ok(allele),
+        _ => Err(std::io::Error::other("Variant allele must be one uppercase A, C, G, or T")),
     }
 }
 
-/// Validates the type and range of the `tree_height` argument.
-fn validate_height(tree_height: &str) -> Result<f64, String> {
-    match tree_height.parse::<f64>() {
-        Ok(c) if (0.0..=1.0).contains(&c) => Ok(c),
-        Ok(_) => Err("Value must be between 0.0 and 1.0".to_string()),
-        Err(e) => Err(format!("{e}")),
-    }
+/// Parses a positive, 1-based variant position.
+fn parse_position(value: &str) -> std::io::Result<usize> {
+    let position = value
+        .parse::<std::num::NonZeroUsize>()
+        .with_context(format!("Expected a positive, 1-based position, found {value}"))?
+        .get();
+
+    Ok(position)
 }
 
-/// Validates the header in the `<ctype>-variants.txt` file.
-///
-/// Ensures the `Position` and `Minority_Allele` columns are present at the
-/// locations expected by [`VariantsFileLine`], and rejects input that already
-/// contains a `Phase` column.
-fn validate_header(input_header: &str) -> std::io::Result<()> {
-    let header_vec = input_header.split('\t').collect::<Vec<_>>();
+/// Appends `suffix` to the path's final component.
+fn suffixed_path(prefix: &Path, suffix: &str) -> PathBuf {
+    let mut path = prefix.as_os_str().to_os_string();
+    path.push(suffix);
+    PathBuf::from(path)
+}
 
-    if header_vec.len() < MIN_COLUMNS {
-        Err(std::io::Error::other(format!(
-            "Expected at least {MIN_COLUMNS} columns, found {cols}.",
-            cols = header_vec.len()
-        )))
-    } else if header_vec[POSITION_COLUMN] != "Position" {
-        Err(std::io::Error::other(format!(
-            "Header has misplaced column labeled \"Position\". Expected column number {pos_col}.",
-            pos_col = POSITION_COLUMN + 1
-        )))
-    } else if header_vec[MINORITY_ALLELE_COLUMN] != "Minority_Allele" {
-        Err(std::io::Error::other(format!(
-            "Header has misplaced column labeled \"Minority_Allele\". Expected column number {ma_col}.",
-            ma_col = MINORITY_ALLELE_COLUMN + 1
-        )))
-    } else if header_vec.into_iter().any(|header| header == "Phase") {
-        Err(std::io::Error::other("Input file already has a \"Phase\" column."))
-    } else {
+// These column locations match the variants table in IRMA v1.4.0.
+/// Index of the "Position" column in the `-variants.txt` table.
+const POSITION_COLUMN: usize = 1;
+/// Index of the "Minority_Allele" column in the `-variants.txt` table.
+const MINORITY_ALLELE_COLUMN: usize = 4;
+// TODO: Replace with max operator when it becomes const compatible
+/// Minimum number of columns expected in the `-variants.txt` table
+const MIN_COLUMNS: usize = if MINORITY_ALLELE_COLUMN > POSITION_COLUMN {
+    MINORITY_ALLELE_COLUMN + 1
+} else {
+    POSITION_COLUMN + 1
+};
+
+/// The variants table header and parsed rows.
+struct VariantsTable {
+    /// Original TSV header.
+    header: String,
+    /// Data rows in their original order.
+    rows:   Vec<VariantsFileLine>,
+}
+
+impl VariantsTable {
+    /// Imports a `-variants.txt` table
+    fn read(reader: impl BufRead) -> std::io::Result<Self> {
+        let mut lines = reader.lines();
+
+        let header = lines
+            .next()
+            .transpose()?
+            .ok_or_else(|| std::io::Error::other("Variants table is empty"))?;
+
+        Self::validate_variants_header(&header)?;
+
+        let columns = header.split('\t').count();
+        let mut rows = Vec::new();
+        for (index, line) in lines.enumerate() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            if line.split('\t').count() != columns {
+                return Err(std::io::Error::other(format!(
+                    "Variants table line {} has incorrect column count",
+                    index + 2
+                )));
+            }
+
+            rows.push(VariantsFileLine::try_from(line).with_context(format!("Variants table line {}", index + 2))?);
+        }
+        Ok(Self { header, rows })
+    }
+
+    /// Validates the header in the `<ctype>-variants.txt` file.
+    ///
+    /// Ensures the `Position` and `Minority_Allele` columns are present at the
+    /// locations expected by [`VariantsFileLine`], and rejects input that
+    /// already contains a `Phase` column.
+    fn validate_variants_header(header: &str) -> std::io::Result<()> {
+        let fields = header.split('\t').collect::<Vec<_>>();
+        if fields.len() < MIN_COLUMNS
+            || fields[POSITION_COLUMN] != "Position"
+            || fields[MINORITY_ALLELE_COLUMN] != "Minority_Allele"
+        {
+            return Err(std::io::Error::other(
+                "Variants table requires Position in column 2 and Minority_Allele in column 5",
+            ));
+        }
+        if fields.contains(&"Phase") {
+            return Err(std::io::Error::other("Input variants table already has a Phase column"));
+        }
         Ok(())
     }
+
+    /// Matches each variants-table row to an entry in `variants` by position
+    /// and allele.
+    ///
+    /// Returns indices into `variants` in table-row order, so per-variant
+    /// results can be written back in the same order as the table.
+    ///
+    /// ## Errors
+    ///
+    /// Returns an error if a table row has no matching entry, if a table
+    /// variant appears more than once, or if any entry in `variants` is not
+    /// represented in the table.
+    fn match_variants(&self, variants: &[Variant]) -> std::io::Result<Vec<usize>> {
+        let mut by_tag = variants
+            .iter()
+            .enumerate()
+            .map(|(i, v)| ((v.position, v.allele), i))
+            .collect::<HashMap<_, _>>();
+        let mut indices = Vec::with_capacity(self.rows.len());
+
+        for row in &self.rows {
+            let index = by_tag.remove(&(row.position, row.minority_allele)).ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "Unexpected or duplicate table variant {}{}",
+                    row.position,
+                    char::from(row.minority_allele)
+                ))
+            })?;
+            indices.push(index);
+        }
+
+        if !by_tag.is_empty() {
+            return Err(std::io::Error::other(
+                "Frequency TSV contains variants missing from the variants table",
+            ));
+        }
+
+        Ok(indices)
+    }
+
+    /// Overwrites the table with a trailing `Phase` column in row order.
+    fn overwrite(&self, path: &Path, phases: impl ExactSizeIterator<Item = usize>) -> std::io::Result<()> {
+        debug_assert_eq!(
+            phases.len(),
+            self.rows.len(),
+            "Phase assignment count does not match variants table row count",
+        );
+
+        let mut writer = OutputOptions::new_from_path(path).use_file().open()?;
+        writeln!(writer, "{}\tPhase", self.header)?;
+        for (row, phase) in self.rows.iter().zip(phases) {
+            writeln!(writer, "{}\t{phase}", row.line)?;
+        }
+        writer.finish()
+    }
 }
 
-/// A row from the `variants_file`, preserving the original line for output.
+/// A variants-table row, preserving its original text and parsed match key.
 struct VariantsFileLine {
+    /// Original tab-separated row text.
     line:            String,
+    /// Positive, 1-based position used to match the frequency TSV.
     position:        usize,
+    /// Minority allele used to match the frequency TSV.
     minority_allele: u8,
 }
 
 impl TryFrom<String> for VariantsFileLine {
     type Error = std::io::Error;
 
-    fn try_from(s: String) -> std::io::Result<Self> {
-        let split_line = s.split('\t').collect::<Vec<_>>();
-
-        if split_line.len() < MIN_COLUMNS {
-            return Err(std::io::Error::other(format!(
-                "Expected at least {MIN_COLUMNS} items, found {line_items}.",
-                line_items = split_line.len()
-            )));
+    fn try_from(line: String) -> std::io::Result<Self> {
+        let fields = line.split('\t').collect::<Vec<_>>();
+        if fields.len() < MIN_COLUMNS {
+            return Err(std::io::Error::other(format!("Expected at least {MIN_COLUMNS} columns")));
         }
-
-        let (position, minority_allele) = (split_line[POSITION_COLUMN], split_line[MINORITY_ALLELE_COLUMN].as_bytes());
-
-        let &[minority_allele] = minority_allele else {
-            return Err(std::io::Error::other(format!(
-                "Minority Allele field does not contain a single character: \"{min_allele}\".",
-                min_allele = split_line[MINORITY_ALLELE_COLUMN]
-            )));
-        };
-
-        if !minority_allele.is_ascii_alphabetic() {
-            return Err(std::io::Error::other(format!(
-                "Minority Allele field is not ASCII alphabetic: \"{min_allele}\".",
-                min_allele = split_line[MINORITY_ALLELE_COLUMN]
-            )));
-        }
-
-        let position = position
-            .parse::<usize>()
-            .with_context(format!("Failed to parse variant position as integer: \"{position}\"."))?;
-
-        Ok(VariantsFileLine {
-            line: s,
+        let position = parse_position(fields[POSITION_COLUMN])?;
+        let minority_allele = parse_allele(fields[MINORITY_ALLELE_COLUMN])?;
+        Ok(Self {
+            line,
             position,
             minority_allele,
         })
     }
 }
 
-impl Display for VariantsFileLine {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.line.trim())
+/// Pairwise distances in packed lower-triangle order and threshold-qualified
+/// pairs for phase assignment.
+struct DistanceMatrices {
+    /// Four distances per variant pair, excluding the diagonal.
+    values:          Vec<CalculatedDistances>,
+    /// Variant-index pairs whose EXPENRD distance is at most the threshold.
+    connected_pairs: Vec<(usize, usize)>,
+}
+
+/// Calculates the packed pairwise distance matrix and qualifying pairs
+/// serially.
+fn calculate_distances_sequential(
+    variants: &[Variant], patterns: &[CountedPattern], distance_threshold: f64,
+) -> std::io::Result<DistanceMatrices> {
+    let mut distances = vec![CalculatedDistances::SAME; row_offset(variants.len())];
+    let mut connected_pairs = Vec::new();
+
+    for i in 1..variants.len() {
+        let row_start = row_offset(i);
+        for j in 0..i {
+            let value = distance(&variants[i], &variants[j], patterns);
+            if value.expenrd <= distance_threshold {
+                connected_pairs.push((i, j));
+            }
+            distances[row_start + j] = value;
+        }
+    }
+
+    Ok(DistanceMatrices {
+        values: distances,
+        connected_pairs,
+    })
+}
+
+/// Computes all pairwise [`Distances`] between `variants`.
+///
+/// Each off-diagonal pair is computed once with [`distance`] and stored in a
+/// flattened lower-triangular matrix of per-pair structs, storing row `i`
+/// followed by row `i + 1`, with `i` entries for pairs `(i, j)` where `j < i`.
+/// Selected square matrix outputs are derived from these shared values by
+/// [`write_matrices`].
+///
+/// Equal-pair chunks are processed in parallel. Within each chunk, row segments
+/// share a fixed first variant and iterate over the corresponding column slice.
+///
+/// Pairs whose EXPENRD distance is at most `distance_threshold` are collected
+/// during calculation, in packed-matrix order, for phase assignment.
+fn calculate_distances_parallel(
+    variants: &[Variant], patterns: &[CountedPattern], distance_threshold: f64,
+) -> std::io::Result<DistanceMatrices> {
+    let pairs = row_offset(variants.len());
+    let mut distances = vec![CalculatedDistances::SAME; pairs];
+
+    // This number was tuned empirically by local benchmarks based on expected
+    // typical-sized inputs. If large numbers of variants are expected (>2,000),
+    // `32` may improve speed by ~1%.
+    const CHUNKS_PER_WORKER: usize = 8;
+    let target_chunks = rayon::current_num_threads().saturating_mul(CHUNKS_PER_WORKER);
+    let chunk_size = distances.len().div_ceil(target_chunks).max(1);
+
+    let pairs_by_chunk = distances
+        .par_chunks_mut(chunk_size)
+        .enumerate()
+        .map(|(chunk_index, chunk)| {
+            let start = chunk_index * chunk_size;
+
+            // Convert the packed index to strict lower-triangle coordinates.
+            let mut i = (1 + 8 * start).isqrt().div_ceil(2);
+            let mut j = start - row_offset(i);
+
+            let mut connected_pairs = Vec::new();
+            let mut remaining = chunk;
+
+            while !remaining.is_empty() {
+                let segment_len = remaining.len().min(i - j);
+                let (segment, rest) = remaining.split_at_mut(segment_len);
+                let first = &variants[i];
+                for (column, (value, second)) in segment.iter_mut().zip(&variants[j..j + segment_len]).enumerate() {
+                    *value = distance(first, second, patterns);
+                    if value.expenrd <= distance_threshold {
+                        connected_pairs.push((i, j + column));
+                    }
+                }
+
+                remaining = rest;
+                i += 1;
+                j = 0;
+            }
+            connected_pairs
+        })
+        .collect::<Vec<_>>();
+
+    Ok(DistanceMatrices {
+        values:          distances,
+        connected_pairs: pairs_by_chunk.into_iter().flatten().collect(),
+    })
+}
+
+/// Starting offset of a row in a packed strict lower triangle.
+fn row_offset(row: usize) -> usize {
+    let previous = row.saturating_sub(1);
+    if row.is_multiple_of(2) {
+        (row / 2) * previous
+    } else {
+        row * (previous / 2)
     }
 }
 
-/// Final phase assignment indexed by variant position and minority allele.
-struct VariantPhases {
-    phase_by_tag: HashMap<VariantTag, usize>,
+/// The four distance measures calculated for a variant pair.
+#[derive(Clone, Debug)]
+struct CalculatedDistances {
+    mutuald: f64,
+    jaccard: f64,
+    expenrd: f64,
+    njointp: f64,
 }
 
-impl VariantPhases {
-    /// Reads the `sqm_file`, parses variant tags and upper-triangle distances,
-    /// validates the expected square dimensions, and assigns phase groups.
-    fn from_sqm_file<I>(lines: I, tree_height: f64, number_of_variants: usize) -> std::io::Result<Self>
-    where
-        I: Iterator<Item = String>, {
-        let mut variants_matrix = VariantsMatrix {
-            number_of_variants,
-            tag_index: HashMap::with_capacity(number_of_variants),
-            variant_tags: Vec::with_capacity(number_of_variants),
-            tree: UnionFindTree::new(number_of_variants),
-        };
+impl CalculatedDistances {
+    const NONE: Self = Self {
+        mutuald: 1.0,
+        jaccard: 1.0,
+        expenrd: 1.0,
+        njointp: 1.0,
+    };
 
-        let mut row_ind = 0;
-        for row in lines {
-            if row.trim().is_empty() {
-                continue;
-            }
+    const SAME: Self = Self {
+        mutuald: 0.0,
+        jaccard: 0.0,
+        expenrd: 0.0,
+        njointp: 0.0,
+    };
+}
 
-            if row_ind + 1 > number_of_variants {
-                return Err(std::io::Error::other(format!(
-                    "The matrix is not square. There are {number_of_variants} columns, but there are more rows than that."
-                )));
-            }
+impl Index<DistanceType> for CalculatedDistances {
+    type Output = f64;
 
-            let mut row_iter = row.split('\t');
-            let tag = row_iter.next().expect("Split is always non-empty");
-            variants_matrix.assign_variant_tag(tag, row_ind).with_context(format!(
-                "Failed to parse variant position with minority allele on line number {line_no}",
-                line_no = row_ind + 1
-            ))?;
-            variants_matrix
-                .parse_matrix_row(row_iter, row_ind, tree_height)
-                .with_context(format!("Failed to parse matrix row number {row_num}", row_num = row_ind + 1))?;
-
-            row_ind += 1;
+    fn index(&self, index: DistanceType) -> &Self::Output {
+        match index {
+            DistanceType::Mutuald => &self.mutuald,
+            DistanceType::Jaccard => &self.jaccard,
+            DistanceType::Expenrd => &self.expenrd,
+            DistanceType::Njointp => &self.njointp,
         }
-
-        match row_ind {
-            0 => return Err(std::io::Error::other("Found no variants in .sqm file.")),
-            r if r < number_of_variants => {
-                return Err(std::io::Error::other(format!(
-                    "The matrix is not square. There are {number_of_variants} columns, but there are only {row_ind} rows."
-                )));
-            }
-            _ => {}
-        }
-
-        let phase_group = variants_matrix.assign_phase_groups();
-        Ok(variants_matrix.into_variant_phases(phase_group))
     }
 }
 
-/// Parsed square matrix data used while computing phase assignments.
-struct VariantsMatrix {
-    number_of_variants: usize,
-    /// A map from the variant position and minority allele (tag) to the variant
-    /// index.
-    tag_index:          HashMap<VariantTag, usize>,
-    /// The variant position and minority allele at each matrix row index.
-    variant_tags:       Vec<VariantTag>,
-    /// Connected components of variants whose pairwise distance is at or below
-    /// the selected tree height.
-    tree:               UnionFindTree,
+/// A distance measure and its matrix output name.
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum DistanceType {
+    Mutuald,
+    Jaccard,
+    Expenrd,
+    Njointp,
 }
 
-impl VariantsMatrix {
-    /// Parses the matrix values from one `sqm_file` row and merges variants
-    /// whose pairwise distance is at or below `tree_height`.
-    ///
-    /// This only parses the upper triangular entries of the matrix, ignoring the
-    /// diagonal and entries below it.
-    fn parse_matrix_row(&mut self, row_iter: Split<'_, char>, row_ind: usize, tree_height: f64) -> std::io::Result<()> {
-        let mut row_len = 0;
+impl DistanceType {
+    const ALL_TYPES: [Self; 4] = [Self::Mutuald, Self::Jaccard, Self::Expenrd, Self::Njointp];
 
-        for (col_ind, val) in row_iter
-            .enumerate()
-            .inspect(|(col_ind, _)| row_len = *col_ind + 1)
-            .skip(row_ind + 1)
-        {
-            let val = val.parse::<f64>().with_context(format!(
-                "Failed to parse matrix value \"{val}\" at column number {col_num}.",
-                col_num = col_ind + 1
-            ))?;
-
-            if val <= tree_height {
-                self.tree.union(row_ind, col_ind);
-            }
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Mutuald => "MUTUALD",
+            Self::Jaccard => "JACCARD",
+            Self::Expenrd => "EXPENRD",
+            Self::Njointp => "NJOINTP",
         }
+    }
 
-        if row_len != self.number_of_variants {
-            if row_ind == 0 {
-                Err(std::io::Error::other(format!(
-                    "Incorrect number of variants found. This row contained {row_len}."
-                )))
-            } else {
-                Err(std::io::Error::other(format!(
-                    "Incorrect number of variants found. Row 1 contained {expected} values but this row contained {row_len}.",
-                    expected = self.number_of_variants
-                )))
-            }
+    /// Deduplicates the `parsed_matrices`.
+    fn select(parsed_matrices: &[Self]) -> Vec<Self> {
+        Self::ALL_TYPES
+            .into_iter()
+            .filter(|matrix_type| parsed_matrices.contains(matrix_type))
+            .collect()
+    }
+}
+
+impl Display for DistanceType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+/// Computes the four legacy distance measures between two variants from the
+/// counted `patterns`.
+///
+/// The returned [`Distances`] holds, in [`Distance::VARIANTS`] order:
+///
+/// 1. MUTUALD
+/// 2. JACCARD
+/// 3. EXPENRD
+/// 4. NJOINTP
+///
+/// A pattern covers the pair unless either site is missing (`.`). Ambiguous
+/// bases, `N`, and gaps (`-`) count toward coverage but never match an allele.
+///
+/// The following special cases apply:
+///
+/// - Two variants at the same site return [`Distances::SAME`] if they share an
+///   allele, and [`Distances::NONE`] otherwise.
+/// - If either variant has a frequency of zero, or there is no coverage, no
+///   joint observation, or no observation of either allele, this returns
+///   [`Distances::NONE`].
+///
+/// All measures are symmetric, so the order of `first` and `second` does not
+/// matter.
+fn distance(first: &Variant, second: &Variant, patterns: &[CountedPattern]) -> CalculatedDistances {
+    if first.site_index == second.site_index {
+        return if first.allele == second.allele {
+            CalculatedDistances::SAME
         } else {
-            Ok(())
-        }
-    }
-
-    /// Records the relationship between an `.sqm` variant tag and its row
-    /// index.
-    ///
-    /// The tag from the `.sqm` file should be of the form
-    /// `<position><minority_allele>` where `<position>` is numeric digits and
-    /// `<minority_allele>` is always a single character.
-    fn assign_variant_tag(&mut self, tag: &str, row_ind: usize) -> std::io::Result<()> {
-        let Some((&min_allele, position)) = tag.as_bytes().split_last() else {
-            return Err(std::io::Error::other("Variant field is empty."));
+            CalculatedDistances::NONE
         };
-
-        if !min_allele.is_ascii_alphabetic() {
-            return Err(std::io::Error::other(format!(
-                "The first field must end in an alphabetic character as the minority allele. Found: \"{tag}\""
-            )));
-        }
-
-        let position_str = str::from_utf8(position).with_context(format!(
-            "Variant position and allele must contain ASCII data. Found: \"{tag}\""
-        ))?;
-
-        let position = position_str.parse::<usize>().with_context(format!(
-            "Failed to parse variant position as integer. Found: \"{position_str}\""
-        ))?;
-
-        match self.tag_index.entry(VariantTag { position, min_allele }) {
-            Entry::Vacant(entry) => {
-                entry.insert(row_ind);
-                self.variant_tags.push(VariantTag { position, min_allele });
-            }
-            Entry::Occupied(_) => {
-                return Err(std::io::Error::other(format!(
-                    "Duplicate variant position and minority allele \"{tag}\" found."
-                )));
-            }
-        };
-
-        Ok(())
+    }
+    if first.frequency == 0.0 || second.frequency == 0.0 {
+        return CalculatedDistances::NONE;
     }
 
-    /// Labels phase clusters by size (descending), then by the lowest variant
-    /// position, then by the lowest minority allele byte value.
-    fn assign_phase_groups(&mut self) -> Vec<usize> {
-        struct ClusterSummary {
-            /// Size of the cluster.
-            size:              usize,
-            /// Smallest variant position within the cluster.
-            min_position:      usize,
-            /// Lowest minority allele byte value.
-            lowest_min_allele: u8,
+    let (mut total, mut joint, mut first_count, mut second_count) = (0.0, 0.0, 0.0, 0.0);
+
+    for counted_pattern in patterns {
+        let count = counted_pattern.count as f64;
+        let (a, b) = (
+            counted_pattern.pattern[first.site_index],
+            counted_pattern.pattern[second.site_index],
+        );
+        if a == b'.' || b == b'.' {
+            continue;
         }
-
-        let mut clusters_by_root: HashMap<usize, ClusterSummary> = HashMap::with_capacity(self.number_of_variants);
-        for (variant_index, tag) in self.variant_tags.iter().enumerate() {
-            let root = self.tree.find(variant_index);
-
-            clusters_by_root
-                .entry(root)
-                .and_modify(|cluster| {
-                    cluster.size += 1;
-                    cluster.min_position = cluster.min_position.min(tag.position);
-                    cluster.lowest_min_allele = cluster.lowest_min_allele.min(tag.min_allele);
-                })
-                .or_insert_with(|| ClusterSummary {
-                    size:              1,
-                    min_position:      tag.position,
-                    lowest_min_allele: tag.min_allele,
-                });
+        total += count;
+        if a == first.allele {
+            first_count += count;
         }
-
-        let mut clusters_ordered = clusters_by_root.into_iter().collect::<Vec<_>>();
-        clusters_ordered.sort_unstable_by_key(|(_, cluster)| {
-            (
-                std::cmp::Reverse(cluster.size),
-                cluster.min_position,
-                // breaks ties for same-size, same-position clusters
-                cluster.lowest_min_allele,
-            )
-        });
-
-        let mut phase_by_root = vec![0; self.tree.parents.len()];
-        for (label, (root, _)) in clusters_ordered.into_iter().enumerate() {
-            phase_by_root[root] = label + 1;
+        if b == second.allele {
+            second_count += count;
         }
-
-        let mut phase_group = vec![0; self.number_of_variants];
-        for (variant_index, phase) in phase_group.iter_mut().enumerate() {
-            *phase = phase_by_root[self.tree.find(variant_index)];
+        if a == first.allele && b == second.allele {
+            joint += count;
         }
-
-        phase_group
+    }
+    if total == 0.0 || joint == 0.0 || first_count == 0.0 || second_count == 0.0 {
+        return CalculatedDistances::NONE;
     }
 
-    /// Converts row-indexed phase assignments into final tag-indexed lookup.
-    fn into_variant_phases(self, phase_group: Vec<usize>) -> VariantPhases {
-        VariantPhases {
-            phase_by_tag: self.variant_tags.into_iter().zip(phase_group).collect(),
-        }
+    let joint = joint / total;
+    let first_local = first_count / total;
+    let second_local = second_count / total;
+    let minimum = first_local.min(first.frequency).min(second_local.min(second.frequency));
+    let first_max = first_local.max(first.frequency);
+    let second_max = second_local.max(second.frequency);
+
+    let mutuald = 1.0 - joint * joint / (first_max * second_max);
+    let jaccard = 1.0 - joint / (first_max + second_max - joint);
+    let expenrd = if total <= 20.0 || mutuald == 0.0 || jaccard == 0.0 {
+        1.0 - (joint * minimum) / (first_max * second_max)
+    } else {
+        jaccard
+    };
+    let njointp = 1.0 - 2.0 * joint;
+
+    CalculatedDistances {
+        mutuald,
+        jaccard,
+        expenrd,
+        njointp,
     }
 }
 
-/// Position and minority allele identifier for a variant.
-#[derive(Eq, PartialEq, Hash)]
-struct VariantTag {
-    /// Variant's position.
-    position:   usize,
-    /// Variant's minority allele.
-    min_allele: u8,
+/// Assigns each variant a phase number from the connected components of the
+/// graph defined by the threshold-qualified `connected_pairs`.
+///
+/// Each pair contains two indices into `variants`. Linking is transitive, so
+/// two variants share a phase whenever a chain of qualifying pairs connects
+/// them, even if their own distance is above the threshold.
+///
+/// Phases are numbered from 1, and components are ordered by:
+///
+/// 1. Size, largest first
+/// 2. Smallest position in the component
+/// 3. Smallest allele in the component
+///
+/// The returned vector has one phase per variant, in the same order as
+/// `variants`.
+fn assign_phases(variants: &[Variant], connected_pairs: &[(usize, usize)]) -> Vec<usize> {
+    let mut components = UnionFindTree::new(variants.len());
+    for &(i, j) in connected_pairs {
+        components.union(i, j);
+    }
+
+    let roots = (0..variants.len()).map(|i| components.find(i)).collect::<Vec<_>>();
+    let mut summaries = HashMap::new();
+    for (variant, &root) in variants.iter().zip(&roots) {
+        let summary = summaries.entry(root).or_insert((0_usize, usize::MAX, u8::MAX));
+        summary.0 += 1;
+        summary.1 = summary.1.min(variant.position);
+        summary.2 = summary.2.min(variant.allele);
+    }
+    let mut ordered = summaries.into_iter().collect::<Vec<_>>();
+    ordered.sort_unstable_by_key(|&(root, (size, position, allele))| (Reverse(size), position, allele, root));
+    let mut phase_by_root = vec![0; variants.len()];
+    for (index, (root, _)) in ordered.into_iter().enumerate() {
+        phase_by_root[root] = index + 1;
+    }
+    roots.into_iter().map(|root| phase_by_root[root]).collect()
 }
 
-/// A union-find tree structure for storing the phase clusters.
+/// Union-find tree structure for grouping variants connected by qualifying
+/// pairs.
 struct UnionFindTree {
-    /// Parent links for each variant row index.
+    /// Parent variant index for each node. Roots point to themselves.
     parents: Vec<usize>,
-    /// Component sizes for roots.
+    /// Component size stored at each root.
     sizes:   Vec<usize>,
 }
 
 impl UnionFindTree {
-    fn new(number_of_variants: usize) -> Self {
+    fn new(n: usize) -> Self {
         Self {
-            parents: (0..number_of_variants).collect::<Vec<_>>(),
-            sizes:   vec![1; number_of_variants],
+            parents: (0..n).collect(),
+            sizes:   vec![1; n],
         }
     }
 
-    /// Returns the canonical root cluster for `cluster`, compressing the path
-    /// on a second pass.
-    fn find(&mut self, cluster: usize) -> usize {
-        let mut root = cluster;
-        while root != self.parents[root] {
-            root = self.parents[root];
+    /// Merges the components containing `first` and `second`.
+    fn union(&mut self, first: usize, second: usize) {
+        let (mut a, mut b) = (self.find(first), self.find(second));
+        if a != b {
+            if self.sizes[a] < self.sizes[b] {
+                std::mem::swap(&mut a, &mut b);
+            }
+            self.parents[b] = a;
+            self.sizes[a] += self.sizes[b];
         }
-
-        let mut node = cluster;
-        while node != root {
-            let parent = self.parents[node];
-            self.parents[node] = root;
-            node = parent;
-        }
-
-        root
     }
 
-    /// Merges two variants into the same connected component.
-    fn union(&mut self, cluster1: usize, cluster2: usize) {
-        let mut parent_cluster1 = self.find(cluster1);
-        let mut parent_cluster2 = self.find(cluster2);
-
-        if parent_cluster1 == parent_cluster2 {
-            return;
+    /// Finds a component root while compressing the traversed path.
+    fn find(&mut self, mut index: usize) -> usize {
+        while self.parents[index] != index {
+            self.parents[index] = self.parents[self.parents[index]];
+            index = self.parents[index];
         }
-
-        if self.sizes[parent_cluster1] < self.sizes[parent_cluster2] {
-            std::mem::swap(&mut parent_cluster1, &mut parent_cluster2);
-        }
-
-        self.parents[parent_cluster2] = parent_cluster1;
-        self.sizes[parent_cluster1] += self.sizes[parent_cluster2];
+        index
     }
+}
+
+/// Writes selected packed distance measures as symmetric square matrices.
+///
+/// Lower-triangle entries advance sequentially. Upper-triangle entries skip
+/// between packed rows with an increasing stride.
+fn write_matrices(
+    prefix: &Path, variants: &[Variant], distances: &[CalculatedDistances], matrix_types: &[DistanceType],
+) -> std::io::Result<()> {
+    if row_offset(variants.len()) != distances.len() {
+        return Err(std::io::Error::other("Matrix size must match the number of variants"));
+    }
+
+    let mut outputs = matrix_types
+        .iter()
+        .map(|&matrix_type| {
+            let path = suffixed_path(prefix, &format!("-{matrix_type}.sqm"));
+            let writer = OutputOptions::new_from_path(&path).use_file().open()?;
+            Ok((matrix_type, writer))
+        })
+        .collect::<std::io::Result<Vec<_>>>()?;
+
+    let mut idx = 0;
+    for (row, variant) in variants.iter().enumerate() {
+        // The upper triangle has the values and linear indexes of the lower
+        // triangle reflected about the diagonal. In the lower triangle, each
+        // row has one more entry than the previous. `idx + row` is the start of
+        // packed reflected row `row + 1` which corresponds to the column of the
+        // first upper triangle entry.
+        let mut upper_triangular_idx = idx + row;
+        for (_, writer) in &mut outputs {
+            write!(
+                writer,
+                "{position}{allele}",
+                position = variant.position,
+                allele = char::from(variant.allele)
+            )?;
+        }
+
+        for column in 0..variants.len() {
+            let pair_distances = if column < row {
+                let pair_distances = &distances[idx];
+                idx += 1;
+                pair_distances
+            } else if column == row {
+                &CalculatedDistances::SAME
+            } else {
+                // For each upper-triangle column, skip `column - 1` entries to
+                // reach the position in the next packed reflected row. The `-1`
+                // is there because the reflected row immediately before column
+                // has `column - 1` entries.
+                upper_triangular_idx += column - 1;
+                &distances[upper_triangular_idx]
+            };
+            for (matrix_type, writer) in &mut outputs {
+                write!(writer, "\t{}", pair_distances[*matrix_type])?;
+            }
+        }
+
+        for (_, writer) in &mut outputs {
+            writeln!(writer)?;
+        }
+    }
+
+    for (_, output) in outputs {
+        output.finish()?;
+    }
+
+    Ok(())
 }

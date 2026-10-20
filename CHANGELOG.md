@@ -15,6 +15,9 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 
 ### Changed
 
+- The `phase` process now calculates four distance matrices from
+  variant-frequency and counted-pattern TSVs before assigning phases using
+  thresholded EXPENRD connected components
 - `merge_pair_using_reference` now accepts a mutable reference to a
   `PairedMergeStats` to tally into, rather than returning the struct
 - `PairedMergeStats` no longer implements `Add` or `AddAssign`
@@ -129,8 +132,10 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 
 ### Fixes
 
-- Fixes error in `aligner` tally diagnostics when reverse complement is not enabled
-- Fixes error in `phase` when trying to read matrix file when no variants are present
+- Fixes error in `aligner` tally diagnostics when reverse complement is not
+  enabled
+- Fixes error in `phase` when trying to read matrix file when no variants are
+  present
 
 ### Changed
 
