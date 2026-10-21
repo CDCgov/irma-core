@@ -1,11 +1,13 @@
 use std::{
     fmt::{Display, Write},
+    fs::File,
     io::{BufRead, ErrorKind, Read},
+    path::Path,
 };
 use zoe::{
     data::{
         CheckSequence,
-        err::WithErrorContext,
+        err::{ResultWithErrorContext, WithErrorContext},
         fasta::Fasta,
         fastq::{FastQView, FastQViewMut},
         phred::{QualityScoresView, QualityScoresViewMut},
@@ -96,6 +98,24 @@ impl<R: std::io::Read> FastXReader<R> {
             FastXReader::Fastq(_) => FastXType::Fastq,
             FastXReader::Fasta(_) => FastXType::Fasta,
         }
+    }
+}
+
+impl FastXReader<File> {
+    /// Creates an iterator over either FASTA or FASTQ data contained in a path,
+    /// using a buffered reader.
+    ///
+    /// ## Errors
+    ///
+    /// Will return `Err` if an IO error occurs, or if the file does not contain
+    /// `@` or `>` as its first non-whitespace character. The path is included
+    /// in the error message.
+    pub fn from_path<P>(path: P) -> std::io::Result<FastXReader<File>>
+    where
+        P: AsRef<Path>, {
+        let path = path.as_ref();
+        let file = File::open(path).with_path_context("Failed to open path", path)?;
+        Ok(Self::from_readable(file).with_path_context("Failed to read data at path", path)?)
     }
 }
 
