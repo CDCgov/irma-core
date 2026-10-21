@@ -1,4 +1,4 @@
-use clap::{Args, ValueEnum, builder::PossibleValue};
+use clap::{Args, ValueEnum};
 use foldhash::fast::SeedableRandomState;
 use irma_records::hashing::get_hasher;
 use std::{fmt::Debug, num::NonZeroUsize, path::PathBuf};
@@ -22,7 +22,7 @@ pub struct ClippingArgs {
     /// sequencing) found at the ends of a sequence
     pub polyg_trim: Option<NonZeroUsize>,
 
-    #[arg(long, default_value = "b", requires = "polyg_trim")]
+    #[arg(long, default_value = "b", requires = "polyg_trim", ignore_case = true)]
     /// Specifies the end of the sequence for poly-g trimming : 'l' (left), 'r'
     /// (right), or 'b' (both)
     pub g_polyg_end: TrimEnd,
@@ -42,7 +42,7 @@ pub struct ClippingArgs {
     /// matching. Requires literal barcode as argument
     pub barcode_trim: Option<Nucleotides>,
 
-    #[arg(long, value_enum, default_value = "b", requires = "barcode_trim")]
+    #[arg(long, value_enum, default_value = "b", requires = "barcode_trim", ignore_case = true)]
     /// Specifies the end of the sequence for barcode trimming : 'l' (left), 'r'
     /// (right), or 'b' (both)
     pub b_end: TrimEnd,
@@ -89,7 +89,7 @@ pub struct ClippingArgs {
     /// Length of k-mer used for matching primers.
     pub p_kmer_length: Option<usize>,
 
-    #[arg(long, default_value = "b", requires = "primer_trim")]
+    #[arg(long, default_value = "b", requires = "primer_trim", ignore_case = true)]
     /// Specifies the end of the sequence for primer trimming : 'l' (left), 'r'
     /// (right), or 'b' (both)
     pub p_end: TrimEnd,
@@ -124,28 +124,11 @@ pub struct ClippingArgs {
 }
 
 /// Enum for trimming end options
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum TrimEnd {
     L, // Left
     R, // Right
     B, // Both
-}
-
-// Allows case insensitivity for trim ends
-impl ValueEnum for TrimEnd {
-    #[inline]
-    fn value_variants<'a>() -> &'a [Self] {
-        &[Self::L, Self::R, Self::B]
-    }
-
-    #[inline]
-    fn to_possible_value(&self) -> Option<PossibleValue> {
-        match self {
-            TrimEnd::L => Some(PossibleValue::new("l").alias("L")),
-            TrimEnd::R => Some(PossibleValue::new("r").alias("R")),
-            TrimEnd::B => Some(PossibleValue::new("b").alias("B")),
-        }
-    }
 }
 
 /// Ensures user has entered valid non-empty adapter or barcode literal for

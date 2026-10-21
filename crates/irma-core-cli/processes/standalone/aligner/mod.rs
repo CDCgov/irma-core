@@ -85,7 +85,7 @@ pub struct AlignerArgs {
 
     #[arg(long, conflicts_with_all = ["matching", "mismatch", "ignore_n"])]
     /// The protein substitution matrix to use, specified by name. This defaults
-    /// to `blosum62` when `alphabet` is `AA`
+    /// to `blosum62` when `alphabet` is `aa`
     matrix: Option<String>,
 
     #[arg(long)]
@@ -93,8 +93,8 @@ pub struct AlignerArgs {
     /// allowed when alphabet is DNA
     ignore_n: bool,
 
-    #[arg(long)]
-    /// The alphabet to use. [defaults: DNA, if --matrix, then AA]
+    #[arg(long, ignore_case = true)]
+    /// The alphabet to use. [defaults: dna, if --matrix, then aa]
     alphabet: Option<Alphabet>,
 
     #[arg(long, conflicts_with = "profile_from_query")]
@@ -107,7 +107,7 @@ pub struct AlignerArgs {
     /// --method 1pass is used
     profile_from_query: bool,
 
-    #[arg(long, default_value_t = NumPasses::ThreePass)]
+    #[arg(long, default_value_t = NumPasses::ThreePass, ignore_case = true)]
     /// The method to use for alignment
     method: NumPasses,
 

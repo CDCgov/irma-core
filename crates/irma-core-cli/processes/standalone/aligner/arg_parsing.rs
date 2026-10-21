@@ -2,7 +2,7 @@ use crate::{
     aligner::{AlignerArgs, QueryReader},
     args::abort_clap,
 };
-use clap::{ValueEnum, builder::PossibleValue, error::ErrorKind};
+use clap::{ValueEnum, error::ErrorKind};
 use irma_records::io::InputOptions;
 use std::{fmt::Display, path::PathBuf};
 use zoe::{
@@ -141,42 +141,19 @@ pub fn parse_aligner_args(mut args: AlignerArgs) -> std::io::Result<ParsedAligne
 }
 
 /// A clap enum for specifying the alphabet.
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, ValueEnum)]
 pub enum Alphabet {
     Dna,
     Aa,
 }
 
-impl Display for Alphabet {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Alphabet::Dna => write!(f, "DNA"),
-            Alphabet::Aa => write!(f, "AA"),
-        }
-    }
-}
-
-impl ValueEnum for Alphabet {
-    #[inline]
-    fn value_variants<'a>() -> &'a [Self] {
-        &[Self::Dna, Self::Aa]
-    }
-
-    #[inline]
-    fn to_possible_value(&self) -> Option<PossibleValue> {
-        match self {
-            Self::Dna => Some(PossibleValue::new("DNA").alias("dna")),
-            Self::Aa => Some(PossibleValue::new("AA").alias("aa")),
-        }
-    }
-}
-
 /// A clap enum for specifying the method to use when aligning (one-pass or
 /// three-pass).
-#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, ValueEnum)]
 pub enum NumPasses {
+    #[value(name = "1pass", alias = "1-pass")]
     OnePass,
+    #[value(name = "3pass", alias = "3-pass")]
     ThreePass,
 }
 
@@ -190,51 +167,11 @@ impl Display for NumPasses {
     }
 }
 
-impl ValueEnum for NumPasses {
-    #[inline]
-    fn value_variants<'a>() -> &'a [Self] {
-        &[Self::OnePass, Self::ThreePass]
-    }
-
-    #[inline]
-    fn to_possible_value(&self) -> Option<PossibleValue> {
-        match self {
-            Self::OnePass => Some(PossibleValue::new("1pass").alias("1-pass")),
-            Self::ThreePass => Some(PossibleValue::new("3pass").alias("3-pass")),
-        }
-    }
-}
-
 /// A clap enum for specifying which sequence to build the profile from.
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub enum WhichSequence {
     Query,
     Reference,
-}
-
-impl Display for WhichSequence {
-    #[inline]
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            WhichSequence::Query => write!(f, "query"),
-            WhichSequence::Reference => write!(f, "reference"),
-        }
-    }
-}
-
-impl ValueEnum for WhichSequence {
-    #[inline]
-    fn value_variants<'a>() -> &'a [Self] {
-        &[Self::Query, Self::Reference]
-    }
-
-    #[inline]
-    fn to_possible_value(&self) -> Option<PossibleValue> {
-        match self {
-            Self::Query => Some(PossibleValue::new("query").alias("Query")),
-            Self::Reference => Some(PossibleValue::new("reference").aliases(["ref", "Reference", "Ref"])),
-        }
-    }
 }
 
 /// An enum abstracting over the different weight matrices supported by
