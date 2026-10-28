@@ -511,24 +511,24 @@ fn parse_trimmer_args(args: TrimmerArgs) -> std::io::Result<ParsedTrimmerArgs> {
 fn trim_filter<'a>(
     read: &'a mut FastQ, args: &ParsedTrimmerOptions, trim_counts: &mut TrimmedCounts,
 ) -> Option<FastQViewMut<'a>> {
-    if args.mask {
-        let fq_view = read.as_view_mut();
-        trim_read(fq_view, args.mask, &args.clipping_args, trim_counts, args.verbose);
-        if read.len() >= args.min_length {
-            Some(read.as_view_mut())
-        } else {
-            trim_counts.length_filtered += 1;
-            None
-        }
+    // Create a mutable view from the full read, which is shrunk with each
+    // subsequent trimming or masking operation
+    let full_read_view = read.as_view_mut();
+
+    // Perform trimming or masking, returning the shrunk view
+    let trimmed_view = trim_read(full_read_view, args.mask, &args.clipping_args, trim_counts, args.verbose);
+
+    // If masking, return the full read which has been mutated through
+    // `full_read_view`. Otherwise, return the shrunk `trimmed_view`.
+    let clipped_read = if args.mask { read.as_view_mut() } else { trimmed_view };
+
+    // Check for length filtering, using the length of the full read for masking
+    // and the length of the trimmed read for trimming
+    if clipped_read.len() >= args.min_length {
+        Some(clipped_read)
     } else {
-        let fq_view = read.as_view_mut();
-        let edited = trim_read(fq_view, args.mask, &args.clipping_args, trim_counts, args.verbose);
-        if edited.len() >= args.min_length {
-            Some(edited)
-        } else {
-            trim_counts.length_filtered += 1;
-            None
-        }
+        trim_counts.length_filtered += 1;
+        None
     }
 }
 
