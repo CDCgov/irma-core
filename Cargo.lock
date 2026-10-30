@@ -570,9 +570,9 @@ checksum = "b268e58e7c693d7c271f93ffc4ba3b380412554231c85bf61ca7af91042a4112"
 
 [[package]]
 name = "zoe"
-version = "0.0.35"
+version = "0.0.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4250da37b5a34f05886918d5d989e17bd8badac2e5524fbdf42323afb39e6003"
+checksum = "0fcde2b3b44eac3a7c64a5c75c2da41be074ce93677a0697e03229b3aafb54e2"
 dependencies = [
  "multiversion",
  "rand",
