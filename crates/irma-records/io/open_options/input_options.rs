@@ -373,7 +373,7 @@ where
     }
 
     /// Parses the input as a SAM file, via the iterator [`SAMReader`].
-    pub fn parse_sam(self) -> InputOptions<'a, SAMReader<R, true>> {
+    pub fn parse_sam(self) -> InputOptions<'a, SAMReader<R>> {
         let src = match self.input {
             Ok(src) => src,
             Err(e) => {
@@ -474,7 +474,7 @@ where
     }
 
     /// Parses the input(s) as SAM files, via the iterator [`SAMReader`].
-    pub fn parse_sam(self) -> InputOptions<'a, RecordReaders<SAMReader<R, true>>> {
+    pub fn parse_sam(self) -> InputOptions<'a, RecordReaders<SAMReader<R>>> {
         let srcs = match self.input {
             Ok(src) => src,
             Err(e) => {
@@ -704,7 +704,7 @@ where
     }
 }
 
-impl<R> InputOptions<'_, SAMReader<R, true>>
+impl<R> InputOptions<'_, SAMReader<R>>
 where
     R: Read,
 {
@@ -717,7 +717,7 @@ where
     /// during parsing. Any items that are errors in the iterator will also have
     /// similar context due to the [`WithContext`] wrapper.
     #[allow(dead_code)]
-    pub fn open(self) -> std::io::Result<WithContext<SAMReader<R, true>>> {
+    pub fn open(self) -> std::io::Result<WithContext<SAMReader<R>>> {
         self.open_iter()
     }
 }
@@ -841,7 +841,7 @@ where
     }
 }
 
-impl<R> InputOptions<'_, RecordReaders<SAMReader<R, true>>>
+impl<R> InputOptions<'_, RecordReaders<SAMReader<R>>>
 where
     R: Read,
 {
@@ -854,7 +854,7 @@ where
     /// during parsing. Any items that are errors in the iterator will also have
     /// similar context due to the [`WithContext`] wrapper.
     #[allow(dead_code)]
-    pub fn open(self) -> std::io::Result<RecordReaders<WithContext<SAMReader<R, true>>>> {
+    pub fn open(self) -> std::io::Result<RecordReaders<WithContext<SAMReader<R>>>> {
         self.open_iter()
     }
 }
