@@ -221,7 +221,9 @@ irma-core trimmer input.fastq \
 
 ## Length Filtering and Output
 
-IRMA-core will filter reads from the output that have fewer than the set `--min-length` amount of bases. Additionally, the `--mask` flag will mask bases with `N`, rather than trimming them from the reads. Masking will ***not*** alter the quality scores of the masked bases.
+IRMA-core will filter reads from the output that have fewer than the set `--min-length` amount of bases after trimming.
+
+The `--mask` flag will mask bases with `N`, rather than trimming them from the reads. Masking will ***not*** alter the quality scores of the masked bases. When masking is enabled, the `--min-length` filter applies to the full read length (including any portions that were masked).
 
 ### Arguments
 
