@@ -21,6 +21,7 @@ use irma_records::io::WriterThreaded;
 #[cfg(not(feature = "dev_no_rayon"))]
 use rayon::iter::{ParallelBridge, ParallelIterator};
 
+/// The capacity to use for [`WriterThreaded::with_batch_capacity`].
 #[cfg(not(feature = "dev_no_rayon"))]
 const WRITE_BATCH_CAPACITY: usize = 64 * 1024;
 

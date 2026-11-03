@@ -4,7 +4,7 @@ use std::{
     error::Error,
     fmt::Display,
     fs::File,
-    io::{BufWriter, Stdout, Write, stdout},
+    io::{BufWriter, ErrorKind, Stdout, Write, stdout},
     path::Path,
     sync::{
         Arc, OnceLock,
@@ -238,25 +238,51 @@ impl<W> RecordWriters<W> {
 /// channel.
 ///
 /// A single dedicated thread is used for writing to the underlying writer to
-/// avoid interleaved writes. Calling [`write`] is non-blocking, instead
-/// queueing the bytes in the channel, or in a per-clone buffer when batching is
-/// enabled. Flush before cloning if earlier writes must precede clone writes.
-/// Calling [`flush`] blocks until all previously queued data has been written
-/// to the underlying writer.
+/// avoid interleaved writes. When batching writes is not enabled (i.e.,
+/// [`WriterThreaded::new`] is used), then calling [`write`] on any clone is
+/// non-blocking and queues the write using a channel. Calling [`flush`] blocks
+/// until all previously queued data has been written to the underlying writer
+/// within the dedicated writing thread.
+///
+/// Batching writes is supported via [`WriterThreaded::with_batch_capacity`] and
+/// can recover performance if lost to frequent channel operations. Each clone
+/// has an internal buffer for batching writes. When necessary, the buffer either
+/// re-allocates to accomodate a larger-than-anticipated write, or the buffer
+/// gets sent through the channel and replaced with an empty buffer.
+/// Specifically:
+///
+/// - Writes of a *known* size (using [`Write::write`] or [`Write::write_all`])
+///   will first check whether the write fits in the buffer's remaining
+///   configured capacity. If not (and the buffer is non-empty), then the buffer
+///   is sent over the channel and the write occurs in a fresh buffer. After the
+///   write, if the configured capacity has been met or exceeded, then the
+///   buffer is once again sent over the channel. The buffer may need to
+///   reallocate if a single write is larger than the capacity of the buffer.
+/// - Writes of an *unknown* size (using [`Write::write_fmt`]) write directly into
+///   the buffer, growing it as needed. The current implementation reserves some
+///   extra space to minimize the chance of this. The buffer then gets sent over
+///   the channel if the capacity was met or exceeded.
 ///
 /// To ensure that errors are not silently ignored, for each linked
 /// [`WriterThreaded`], ensure that either [`flush`] is called on it, or it is
 /// dropped before a [`flush`] call on a different clone of the
 /// [`WriterThreaded`].
 ///
+/// When batching is enabled, cloning produces a new writer with a fresh buffer.
+/// As a result, no order is guaranteed between the batched writes of the
+/// original writer and any new writes in the cloned writer.
+///
 /// [`flush`]: WriterThreaded::flush
 /// [`write`]: WriterThreaded::write
 /// [`mpsc`]: std::sync::mpsc
 #[derive(Debug)]
 pub struct WriterThreaded {
-    /// Declared before `shared` so pending bytes are sent before the last clone
-    /// finishes the writer thread.
-    batch: Option<PendingBatch>,
+    /// If batching is enabled, this contains the buffer to which writes are
+    /// performed, and which must be flushed at the end or when full.
+    ///
+    /// This is declared before `shared` so that it is dropped first, causing
+    /// pending bytes to be sent before the channel in `shared` is dropped.
+    buffer: Option<PendingBuffer>,
 
     /// The shared state between [`WriterThreaded`] clones.
     ///
@@ -278,28 +304,52 @@ pub struct WriterThreaded {
     writer_error: Arc<OnceLock<SharedIoError>>,
 }
 
+/// A buffer to which writes are performed before sending through the channel.
 #[derive(Debug)]
-struct PendingBatch {
+struct PendingBuffer {
+    /// The buffer containing the batched, pending writes.
     bytes:    Vec<u8>,
+    /// The user-requested capacity for the buffer.
+    ///
+    /// This excludes additional space used by [`BUFFER_HEADROOM`] or any growth
+    /// to `bytes` caused by exceeding the headroom.
     capacity: usize,
-    // Kept here because WriterThreaded cannot implement Drop while finish moves shared out.
+    /// The sender for sending `bytes` to the writing thread.
+    ///
+    /// This is a member of this struct so that [`PendingBuffer`] can implement
+    /// [`Drop`] and properly flush it's buffer. [`WriterThreaded`] is unable to
+    /// implement [`Drop`] since its [`Finish`] implementation moves out of
+    /// [`WriterThreaded::shared`], so we must have this inner helper type
+    /// implement [`Drop`] instead.
     sender:   std::sync::mpsc::Sender<Msg>,
 }
 
-const BATCH_HEADROOM: usize = 1024;
+/// Extra space reserved in [`PendingBuffer`] in addition to the user-requested
+/// capacity.
+///
+/// This allows for writes at most [`BUFFER_HEADROOM`] in length to not overflow
+/// the buffer and cause it to grow.
+const BUFFER_HEADROOM: usize = 1024;
 
-impl PendingBatch {
+impl PendingBuffer {
+    /// Constructs a new buffer for use in [`PendingBuffer`] from the
+    /// user-requested `capacity`.
+    ///
+    /// If the capacity is 0, then nothing is allocated. Otherwise, the returned
+    /// [`Vec`] has a capacity of at least `capacity` (more specificaly, at
+    /// least `capacity` plus [`BUFFER_HEADROOM`]).
     fn buffer(capacity: usize) -> Vec<u8> {
         let reserve = if capacity == 0 {
             0
         } else {
-            capacity.checked_add(BATCH_HEADROOM).expect("batch capacity overflow")
+            // Headroom reduces the likelihood of immediate buffer reallocation
+            capacity.saturating_add(BUFFER_HEADROOM)
         };
         Vec::with_capacity(reserve)
     }
 }
 
-impl Drop for PendingBatch {
+impl Drop for PendingBuffer {
     fn drop(&mut self) {
         if !self.bytes.is_empty() {
             let _ = self.sender.send(Msg::Data(std::mem::take(&mut self.bytes)));
@@ -312,10 +362,10 @@ impl Clone for WriterThreaded {
         Self {
             shared:       self.shared.clone(),
             writer_error: self.writer_error.clone(),
-            batch:        self.batch.as_ref().map(|batch| PendingBatch {
-                bytes:    PendingBatch::buffer(batch.capacity),
-                capacity: batch.capacity,
-                sender:   batch.sender.clone(),
+            buffer:       self.buffer.as_ref().map(|buffer| PendingBuffer {
+                bytes:    PendingBuffer::buffer(buffer.capacity),
+                capacity: buffer.capacity,
+                sender:   buffer.sender.clone(),
             }),
         }
     }
@@ -350,66 +400,93 @@ enum Msg {
 }
 
 impl WriterThreaded {
-    /// Enables per-clone byte batching. Each batch reserves at least `capacity`
-    /// bytes and is sent once it reaches `capacity` bytes; remaining bytes are
-    /// sent on flush, finish, or drop. A zero `capacity` reserves nothing and
-    /// sends every write immediately. Unlike [`new`](Self::new), writes copy into
-    /// the batch.
+    /// Enables batching within the [`WriterThreaded`].
+    ///
+    /// Instead of immediately sending writes through the channel, if batching
+    /// is enabled, each [`WriterThreaded`] clone will hold a buffer. The buffer
+    /// will be at least `capacity` bytes in size. If a capacity of zero is
+    /// specified, then batching is not enabled.
+    ///
+    /// See the docs for [`WriterThreaded`] for more details on batching.
     #[must_use]
     pub fn with_batch_capacity<W>(writer: W, capacity: usize) -> Self
     where
         W: Write + Finish + Send + 'static, {
         let mut threaded = Self::new(writer);
-        threaded.batch = Some(PendingBatch {
-            bytes: PendingBatch::buffer(capacity),
-            capacity,
-            sender: threaded.shared.sender.clone(),
-        });
+
+        if capacity > 0 {
+            threaded.buffer = Some(PendingBuffer {
+                bytes: PendingBuffer::buffer(capacity),
+                capacity,
+                sender: threaded.shared.sender.clone(),
+            });
+        }
+
         threaded
     }
 
+    /// Retrieves the stored error, or a [`BrokenPipe`] error if none is stored.
+    ///
+    /// [`BrokenPipe`]: ErrorKind::BrokenPipe
     fn writer_failure(&self) -> std::io::Error {
         self.writer_error.get().map_or_else(
-            || std::io::Error::new(std::io::ErrorKind::BrokenPipe, "writer thread is no longer running"),
+            || std::io::Error::new(ErrorKind::BrokenPipe, "writer thread is no longer running"),
             Into::into,
         )
     }
 
-    fn send_batch(&mut self) -> std::io::Result<()> {
-        let Some(batch) = self.batch.as_mut() else { return Ok(()) };
-        if batch.bytes.is_empty() {
+    /// Sends the contained [`PendingBuffer`] in the channel, if present and
+    /// non-empty.
+    fn send_buffer(&mut self) -> std::io::Result<()> {
+        let Some(buffer) = self.buffer.as_mut() else { return Ok(()) };
+        if buffer.bytes.is_empty() {
             return Ok(());
         }
-        let bytes = std::mem::replace(&mut batch.bytes, PendingBatch::buffer(batch.capacity));
+        let bytes = std::mem::replace(&mut buffer.bytes, PendingBuffer::buffer(buffer.capacity));
         self.shared
             .sender
             .send(Msg::Data(bytes))
             .map_err(|SendError(_)| self.writer_failure())
     }
 
-    fn append_batch(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        if self
-            .batch
-            .as_ref()
-            .is_some_and(|batch| !batch.bytes.is_empty() && batch.bytes.len().saturating_add(buf.len()) > batch.capacity)
-        {
-            self.send_batch()?;
+    /// Appends the contents of `bytes` to the [`PendingBuffer`].
+    ///
+    /// If appending `bytes` would cause the user-defined capacity to be
+    /// exceeded and the [`PendingBuffer`] is non-empty, then it is sent in the
+    /// queue via [`send_buffer`] first.
+    ///
+    /// ## Panics
+    ///
+    /// Batching must be enabled.
+    ///
+    /// [`send_buffer`]: Self::send_buffer
+    fn append_buffer(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        // Avoid exceeding user-defined capacity for write of a known size.
+        if self.buffer.as_ref().is_some_and(|buffer| {
+            !buffer.bytes.is_empty() && buffer.bytes.len().saturating_add(bytes.len()) > buffer.capacity
+        }) {
+            self.send_buffer()?;
         }
-        let batch = self.batch.as_mut().expect("batching is enabled");
-        batch.bytes.extend_from_slice(buf);
-        if batch.bytes.len() >= batch.capacity {
-            self.send_batch()?;
+
+        let buffer = self.buffer.as_mut().expect("batching is enabled");
+        buffer.bytes.extend_from_slice(bytes);
+
+        // This extra check is necessary since writes of an unknown size do not
+        // check the capacity before writing.
+        if buffer.bytes.len() >= buffer.capacity {
+            self.send_buffer()?;
         }
-        Ok(buf.len())
+        Ok(bytes.len())
     }
 
-    /// Writes an owned buffer without copying when batching is disabled.
+    /// Writes an owned buffer without copying when batching is disabled;
+    /// otherwise, appends to the buffer.
     pub fn write_vec(&mut self, buf: Vec<u8>) -> std::io::Result<usize> {
-        let len = buf.len();
-
-        if self.batch.is_some() {
-            return self.append_batch(&buf);
+        if self.buffer.is_some() {
+            return self.append_buffer(&buf);
         }
+
+        let len = buf.len();
 
         match self.shared.sender.send(Msg::Data(buf)) {
             Ok(()) => Ok(len),
@@ -422,20 +499,24 @@ impl Write for WriterThreaded {
     /// Writes a buffer into the writer, returning how many bytes were queued
     /// for writing.
     ///
-    /// Without batching, this allocates a vector; use [`WriterThreaded::write_vec`]
-    /// to avoid copying an existing vector. With batching, bytes are copied into
-    /// the batch instead.
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        if self.batch.is_some() {
-            return self.append_batch(buf);
+    /// Without batching, this allocates a vector; use
+    /// [`WriterThreaded::write_vec`] to avoid copying an existing vector. With
+    /// batching, bytes are copied into the buffer instead.
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if self.buffer.is_some() {
+            return self.append_buffer(bytes);
         }
-        self.write_vec(buf.to_vec())
+        self.write_vec(bytes.to_vec())
     }
 
-    /// Flushes the contents of the queue, which includes all writes made by
-    /// this clone before this call was made. The relative ordering between this
-    /// flush call and other clones of [`WriterThreaded`] cannot be guaranteed.
-    /// This function will block until the flush is successful.
+    /// Flushes previously-performed writes.
+    ///
+    /// First, any pending batched writes in this clone are queued in the
+    /// channel. Then, the queue itself is flushed, which includes all writes
+    /// made by this clone before this call was made. The relative ordering
+    /// between this flush call and other clones of [`WriterThreaded`] cannot be
+    /// guaranteed. Finally, the underlying contained writer is flushed. This
+    /// function will block until the flush is successful.
     ///
     /// To ensure that errors are not silently ignored, for each linked
     /// [`WriterThreaded`], ensure that either [`flush`] is called on it, or it
@@ -446,7 +527,7 @@ impl Write for WriterThreaded {
     /// [`BufWriter`]: std::io::BufWriter
     /// [`flush`]: WriterThreaded::flush
     fn flush(&mut self) -> std::io::Result<()> {
-        self.send_batch()?;
+        self.send_buffer()?;
         let (sender, receiver) = std::sync::mpsc::channel();
 
         match self.shared.sender.send(Msg::Flush(sender)) {
@@ -460,22 +541,23 @@ impl Write for WriterThreaded {
 
     /// Writes a buffer into the writer.
     ///
-    /// Without batching, this allocates a vector; use [`WriterThreaded::write_vec`]
-    /// to avoid copying an existing vector. With batching, bytes are copied into
-    /// the batch instead.
+    /// Without batching, this allocates a vector; use
+    /// [`WriterThreaded::write_vec`] to avoid copying an existing vector. With
+    /// batching, bytes are copied into the buffer instead.
     fn write_all(&mut self, buf: &[u8]) -> std::io::Result<()> {
         self.write(buf)?;
         Ok(())
     }
 
     fn write_fmt(&mut self, args: std::fmt::Arguments<'_>) -> std::io::Result<()> {
-        if let Some(batch) = self.batch.as_mut() {
-            Write::write_fmt(&mut batch.bytes, args)?;
-            if batch.bytes.len() >= batch.capacity {
-                self.send_batch()?;
+        if let Some(buffer) = self.buffer.as_mut() {
+            Write::write_fmt(&mut buffer.bytes, args)?;
+            if buffer.bytes.len() >= buffer.capacity {
+                self.send_buffer()?;
             }
             return Ok(());
         }
+
         // We use write_vec to ensure only a single allocation is performed
         if let Some(s) = args.as_str() {
             self.write_vec(s.as_bytes().to_vec()).map(|_| ())
@@ -551,7 +633,7 @@ impl WriterThreaded {
                 handle: Some(handle),
             }),
             writer_error,
-            batch: None,
+            buffer: None,
         }
     }
 }
@@ -572,7 +654,7 @@ impl Drop for WriterThreadedShared {
 
 impl Finish for WriterThreaded {
     fn finish(mut self) -> std::io::Result<()> {
-        self.send_batch()?;
+        self.send_buffer()?;
         // Ensure this is the final WriterThreaded clone, and bind the shared
         // state
         let mut shared = Arc::into_inner(self.shared)
