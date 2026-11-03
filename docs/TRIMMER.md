@@ -2,9 +2,15 @@
 
 ## Motivation and Goals
 
-With Next Generation Sequencing (NGS) available on different platforms, having a portable, efficient, and customizable tool for quality control is important. FASTQ quality control can involve multiple tools and I/O operations with intermediate data left behind that may not get cleaned up.
+With Next Generation Sequencing (NGS) available on different platforms, having a
+portable, efficient, and customizable tool for quality control is important.
+FASTQ quality control can involve multiple tools and I/O operations with
+intermediate data left behind that may not get cleaned up.
 
-Consider a FASTQ file provided by an Illumina NGS pipeline. It may be necessary to find and trim adapters, remove primers, and perhaps also hard trim bases. This stand-alone IRMA-core process can achieve the necessary cleanup in a single pass:
+Consider a FASTQ file provided by an Illumina NGS pipeline. It may be necessary
+to find and trim adapters, remove primers, and perhaps also hard trim bases.
+This stand-alone IRMA-core process can achieve the necessary cleanup in a single
+pass:
 
 ```mermaid
     flowchart LR
@@ -16,7 +22,10 @@ Consider a FASTQ file provided by an Illumina NGS pipeline. It may be necessary 
 
 ## Order of Operations
 
-IRMA-core's trimmer process allows for multiple trimming operations to be performed on each sequence. These operations follow a set order, based on the position in which the artifacts to be trimmed are expected to occur within the sequence.
+IRMA-core's trimmer process allows for multiple trimming operations to be
+performed on each sequence. These operations follow a set order, based on the
+position in which the artifacts to be trimmed are expected to occur within the
+sequence.
 
 ```mermaid
     flowchart LR
@@ -31,11 +40,19 @@ IRMA-core's trimmer process allows for multiple trimming operations to be perfor
         H --> I([Trimmed FASTQ])
 ```
 
-Every step in the process is optional, but if multiple operations are selected, the above chart shows the order in which trimming operations will proceed. Note that `Adapter Trim` and `Barcode Trim` are *mutually exclusive*, since [adapters](https://support-docs.illumina.com/SHARE/AdapterSequences/Content/SHARE/AdapterSeq/Overview.htm) are associated with Illumina sequencing while more error-prone [barcodes](https://nanoporetech.com/document/chemistry-technical-document) might be needed for Oxford Nanopore Technologies sequencing.
+Every step in the process is optional, but if multiple operations are selected,
+the above chart shows the order in which trimming operations will proceed. Note
+that `Adapter Trim` and `Barcode Trim` are *mutually exclusive*, since
+[adapters](https://support-docs.illumina.com/SHARE/AdapterSequences/Content/SHARE/AdapterSeq/Overview.htm)
+are associated with Illumina sequencing while more error-prone
+[barcodes](https://nanoporetech.com/document/chemistry-technical-document) might
+be needed for Oxford Nanopore Technologies sequencing.
 
 ### Example Chained Command
 
-The following will perform poly-g trimming, followed by barcode trimming, primer trimming, and then hard trimming on every sequence in the FASTQ file. Diagnostic output on the number of reads processed and trimmed will be written to `stderr`.
+The following will perform poly-g trimming, followed by barcode trimming, primer
+trimming, and then hard trimming on every sequence in the FASTQ file. Diagnostic
+output on the number of reads processed and trimmed will be written to `stderr`.
 
 ```bash
 irma-core trimmer input.fastq \
@@ -51,25 +68,29 @@ Details about each trimming operation and their arguments are given below.
 
 ## Input, Output, and Compressed Files
 
-`trimmer` takes `.fastq` files as inputs and outputs. IRMA-core is also able to handle compressed input and output files for files compressed with `gzip`. For the both, simply include the path to your `.fastq` or `.fastq.gz` input and output filepaths. Inputs are taken as positional arguments, and outputs use `-o` or `-1` and `-2`.
+`trimmer` takes `.fastq` files as inputs and outputs. IRMA-core is also able to
+handle compressed input and output files for files compressed with `gzip`. For
+the both, simply include the path to your `.fastq` or `.fastq.gz` input and
+output filepaths. Inputs are taken as positional arguments, and outputs use `-o`
+or `-1` and `-2`.
 
-| Parameter                       | Default  | Kind              | Description                                                                                                                          |
-| ------------------------------- | -------- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `--output` (`-1` or `-o`) | `STDOUT` | Filepath          | Path to the output file for trimmed FASTQ. If not provided, the output will print to STDOUT.                                         |
-| `--output2` (`-2`)        | `None`   | Optional Filepath | Optional path to secondary output file for paired FASTQ. If this argument is omitted, output is interleaved.
+| Parameter                       | Default  | Kind              | Description                                                                                                  |
+| ------------------------------- | -------- | ----------------- | ------------------------------------------------------------------------------------------------------------ |
+| `--output` (`-1` or `-o`)       | `STDOUT` | Filepath          | Path to the output file for trimmed FASTQ. If not provided, the output will print to STDOUT.                 |
+| `--output2` (`-2`)              | `None`   | Optional Filepath | Optional path to secondary output file for paired FASTQ. If this argument is omitted, output is interleaved. |
 
 Below is a table describing `trimmer`'s behavior for different IO args:
 
-| Number of Inputs | Number of Outputs | `--filter-widows` | Description |
-| ---------------- | ----------------- | ----------------- | ----------- |
-| 1                | 1                 | Not enabled       | The reads are interpretted as single-end reads and are trimmed/filtered independently. |
-| 1                | 1                 | Enabled           | The reads are de-interleaved, pairs are trimmed/filtered, and then the output is interleaved again |
-| 1                | 2                 | Not enabled       | The reads are de-interleaved, then are trimmed/filtered independently, output to two files |
-| 1                | 2                 | Enabled           | The reads are de-interleaved, pairs are trimmed/filtered, and then are output to two files. |
-| 2                | 1                 | Not enabled       | The reads are interleaved, then are trimmed/filtered independently |
-| 2                | 1                 | Enabled           | The pairs are trimmed/filtered, and then the outputs are interleaved. |
+| Number of Inputs | Number of Outputs | `--filter-widows` | Description                                                                                               |
+| ---------------- | ----------------- | ----------------- | --------------------------------------------------------------------------------------------------------- |
+| 1                | 1                 | Not enabled       | The reads are interpretted as single-end reads and are trimmed/filtered independently.                    |
+| 1                | 1                 | Enabled           | The reads are de-interleaved, pairs are trimmed/filtered, and then the output is interleaved again.       |
+| 1                | 2                 | Not enabled       | The reads are de-interleaved, then are trimmed/filtered independently, output to two files.               |
+| 1                | 2                 | Enabled           | The reads are de-interleaved, pairs are trimmed/filtered, and then are output to two files.               |
+| 2                | 1                 | Not enabled       | The reads are interleaved, then are trimmed/filtered independently.                                       |
+| 2                | 1                 | Enabled           | The pairs are trimmed/filtered, and then the outputs are interleaved.                                     |
 | 2                | 2                 | Not enabled       | The reads from each file are trimmed/filtered independently and written to the corresponding output file. |
-| 2                | 2                 | Enabled           | The pairs are trimmed/filtered, and then each read is output to the corresponding file. |
+| 2                | 2                 | Enabled           | The pairs are trimmed/filtered, and then each read is output to the corresponding file.                   |
 
 ### Example Zipped Input/Output
 
@@ -83,13 +104,25 @@ irma-core trimmer input.fastq.gz \
 
 ## Paired Reads
 
-Some sequencers (including Illumina sequencers) generate reads from both ends of the DNA fragments, resulting in two FASTQ files of paired reads. To handle these, you can optionally include a second FASTQ file as *input*. For paired read *output*, you can include two output files, or if only a single output file is provided, the paired reads will be interleaved.
+Some sequencers (including Illumina sequencers) generate reads from both ends of
+the DNA fragments, resulting in two FASTQ files of paired reads. To handle
+these, you can optionally include a second FASTQ file as *input*. For paired
+read *output*, you can include two output files, or if only a single output file
+is provided, the paired reads will be interleaved.
 
 ### Widowed or Orphaned Reads
 
-When handling paired reads, a widowed (or orphaned) read may occur,  where one of the reads was filtered and leaves the second one behind. If it is desired to not include widowed reads in the output, IRMA-core will inspect the headers of paired reads to ensure the reads match. If this option is selected and one paired read is filtered due to post-trimming length filtering, the widowed read will not be included in the output.
+When handling paired reads, a widowed (or orphaned) read may occur,  where one
+of the reads was filtered and leaves the second one behind. If it is desired to
+not include widowed reads in the output, IRMA-core will inspect the headers of
+paired reads to ensure the reads match. If this option is selected and one
+paired read is filtered due to post-trimming length filtering, the widowed read
+will not be included in the output.
 
-It is important to note that if the `--filter-widows` flag is selected, the input FASTQ files are assumed to contain reads in the same order. Therefore, if non-matching headers are found while reading through the paired inputs, the program will terminate early with an error message.
+It is important to note that if the `--filter-widows` flag is selected, the
+input FASTQ files are assumed to contain reads in the same order. Therefore, if
+non-matching headers are found while reading through the paired inputs, the
+program will terminate early with an error message.
 
 ### Arguments
 
@@ -99,7 +132,10 @@ It is important to note that if the `--filter-widows` flag is selected, the inpu
 
 ## Base Recoding
 
-By default, bases in the input FASTQ files are recoded into uppercase canonical bases (`ACGTN`). Gaps, ambiguous IUPAC bases, and non-IUPAC characters are automatically changed to `N`. This behavior can be disabled with the `--preserve-fastq` flag.
+By default, bases in the input FASTQ files are recoded into uppercase canonical
+bases (`ACGTN`). Gaps, ambiguous IUPAC bases, and non-IUPAC characters are
+automatically changed to `N`. This behavior can be disabled with the
+`--preserve-fastq` flag.
 
 ### Arguments
 
@@ -109,7 +145,13 @@ By default, bases in the input FASTQ files are recoded into uppercase canonical 
 
 ## Poly-G Trim
 
-[Poly-G Artifacts](https://speciationgenomics.github.io/fastp/) appear as a series of multiple consecutive high-confidence G bases at the end of Illumina reads sequenced close to the end of the sequencing process. For these to be trimmed, the user must specify the threshold number of consecutive `G` bases. If the sequence does have at least that many `G` bases at the end, the trimmer will continue matching until it finds a non-`G` base, then will trim all consecutive `G`s from the end of the sequence.
+[Poly-G Artifacts](https://speciationgenomics.github.io/fastp/) appear as a
+series of multiple consecutive high-confidence G bases at the end of Illumina
+reads sequenced close to the end of the sequencing process. For these to be
+trimmed, the user must specify the threshold number of consecutive `G` bases. If
+the sequence does have at least that many `G` bases at the end, the trimmer will
+continue matching until it finds a non-`G` base, then will trim all consecutive
+`G`s from the end of the sequence.
 
 ### Arguments
 
@@ -122,7 +164,9 @@ By default, bases in the input FASTQ files are recoded into uppercase canonical 
 
 ### Example Command
 
-The following checks if the first 10 bases on the left end of each sequence are `G`, then continue to attempt to match further consecutive `G`'s and trim all. Then performs the same for the right ends of the sequences.
+The following checks if the first 10 bases on the left end of each sequence are
+`G`, then continue to attempt to match further consecutive `G`'s and trim all.
+Then performs the same for the right ends of the sequences.
 
 ```bash
 irma-core trimmer input.fastq \
@@ -131,7 +175,13 @@ irma-core trimmer input.fastq \
 
 ## Adapter Trim
 
-Some high-throughput sequencing processes, such as those developed by Illumina, use [adapters](https://support-docs.illumina.com/SHARE/AdapterSequences/Content/SHARE/AdapterSeq/Overview.htm) to allow DNA fragments to bind to the flow cell where the sequencing reaction occurs. The `adapter-trim` subprocess uses a string search starting from the left end to search the sequence for the provided adapter, and starts at the right end of each sequence searching for the adapter's **reverse complement**.
+Some high-throughput sequencing processes, such as those developed by Illumina,
+use
+[adapters](https://support-docs.illumina.com/SHARE/AdapterSequences/Content/SHARE/AdapterSeq/Overview.htm)
+to allow DNA fragments to bind to the flow cell where the sequencing reaction
+occurs. The `adapter-trim` subprocess uses a string search starting from the
+left end to search the sequence for the provided adapter, and starts at the
+right end of each sequence searching for the adapter's **reverse complement**.
 
 ### Arguments
 
@@ -142,7 +192,10 @@ Some high-throughput sequencing processes, such as those developed by Illumina, 
 
 ### Example Command
 
-The following will attempt to match the provided adapter sequence, with up to one mismatch, at the left end of each read and the reverse complement of the adapter sequence at the right end of each read. If either is found, the adapter and any bases before it (or after for right end trimming) will be trimmed.
+The following will attempt to match the provided adapter sequence, with up to
+one mismatch, at the left end of each read and the reverse complement of the
+adapter sequence at the right end of each read. If either is found, the adapter
+and any bases before it (or after for right end trimming) will be trimmed.
 
 ```bash
 irma-core trimmer input.fastq \
@@ -151,22 +204,32 @@ irma-core trimmer input.fastq \
 
 ## Barcode Trim
 
-In Oxford Nanopore Technologies' sequencing workflow, short DNA sequences or [barcodes](https://nanoporetech.com/document/chemistry-technical-document) are appended for demultiplexing, but possibly may not be removed. The `barcode-trim` subprocess uses a fuzzy string search, which can be a full scan of the sequence, or constrained to the ends of the sequence, to locate and trim barcodes. If the option `--b-end b` (both) or `--b-end r` (right) is selected, IRMA-core will automatically compute the **reverse complement** of the provided barcode for searching and trimming on the right end.
+In Oxford Nanopore Technologies' sequencing workflow, short DNA sequences or
+[barcodes](https://nanoporetech.com/document/chemistry-technical-document) are
+appended for demultiplexing, but possibly may not be removed. The `barcode-trim`
+subprocess uses a fuzzy string search, which can be a full scan of the sequence,
+or constrained to the ends of the sequence, to locate and trim barcodes. If the
+option `--b-end b` (both) or `--b-end r` (right) is selected, IRMA-core will
+automatically compute the **reverse complement** of the provided barcode for
+searching and trimming on the right end.
 
 ### Arguments
 
-| Parameter                   | Default   | Kind    | Description                                                                                                                                                             |
-| --------------------------- | --------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`--barcode-trim` (`-B`)** |           | String  | A literal nucleotide sequence for the barcode to be trimmed. Non-canonical (ACGTN) characters will cause an error.                                                      |
-| `--b-end`                   | b         | l, r, b | The end(s) of the sequence that barcode trimming should occur on. If `b` or `r` is selected, the reverse complement of the provided barcode will be computed and used for right-end barcode trimming.                                                                                                      |
-| `--b-restrict`              | full scan | ≥ 1     | Window size for barcode trimming on both ends of the sequence. If no size is provided, the trimmer will perform a full-scan barcode search, checking the full sequence. |
-| `--b-restrict-left`         |           | ≥ 1     | Overrides `--b-restrict` for the left end.                                                                                                                              |
-| `--b-restrict-right`        |           | ≥ 1     | Overrides `--b-restrict` for the right end.                                                                                                                             |
-| `--b-hdist`                 | 0         | [0-3]   | Number of allowed mismatches for barcode matching and trimming.                                                                                                         |
+| Parameter                   | Default   | Kind    | Description                                                                                                                                                                                           |
+| --------------------------- | --------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`--barcode-trim` (`-B`)** |           | String  | A literal nucleotide sequence for the barcode to be trimmed. Non-canonical (ACGTN) characters will cause an error.                                                                                    |
+| `--b-end`                   | b         | l, r, b | The end(s) of the sequence that barcode trimming should occur on. If `b` or `r` is selected, the reverse complement of the provided barcode will be computed and used for right-end barcode trimming. |
+| `--b-restrict`              | full scan | ≥ 1     | Window size for barcode trimming on both ends of the sequence. If no size is provided, the trimmer will perform a full-scan barcode search, checking the full sequence.                               |
+| `--b-restrict-left`         |           | ≥ 1     | Overrides `--b-restrict` for the left end.                                                                                                                                                            |
+| `--b-restrict-right`        |           | ≥ 1     | Overrides `--b-restrict` for the right end.                                                                                                                                                           |
+| `--b-hdist`                 | 0         | [0-3]   | Number of allowed mismatches for barcode matching and trimming.                                                                                                                                       |
 
 ### Example Command
 
-The following will attempt to match the provided barcode sequence, allowing 2 mismatches, in the leftmost 30 bases of the sequence. If found, the barcode and any bases before it will be trimmed. The same process will be repeated for the reverse complement of the barcode on the right end of the sequence.
+The following will attempt to match the provided barcode sequence, allowing 2
+mismatches, in the leftmost 30 bases of the sequence. If found, the barcode and
+any bases before it will be trimmed. The same process will be repeated for the
+reverse complement of the barcode on the right end of the sequence.
 
 ```bash
 irma-core trimmer input.fastq \
@@ -175,7 +238,13 @@ irma-core trimmer input.fastq \
 
 ## Primer Trim
 
-[Primers](https://www.cd-genomics.com/resource-sequencing-primers.html) provide a starting point for DNA synthesis during the Polymerase Chain Reaction proccess. They are designed to bind to specific sites in the sample and are annealed to the ends of the sequence. The `primer-trim` subprocess uses a kmer-based approach to match a kmer set generated from a provided FASTA file of primers to a DNA sequence. The farthest inward matched primer kmer will be trimmed along with all bases before it (or after for right end trimming).
+[Primers](https://www.cd-genomics.com/resource-sequencing-primers.html) provide
+a starting point for DNA synthesis during the Polymerase Chain Reaction
+proccess. They are designed to bind to specific sites in the sample and are
+annealed to the ends of the sequence. The `primer-trim` subprocess uses a
+kmer-based approach to match a kmer set generated from a provided FASTA file of
+primers to a DNA sequence. The farthest inward matched primer kmer will be
+trimmed along with all bases before it (or after for right end trimming).
 
 ### Arguments
 
@@ -191,7 +260,11 @@ irma-core trimmer input.fastq \
 
 ### Example Command
 
-The following will build a set of every 17-mer within the primer fasta, along with each possible one-mismatch 17-mer. Then IRMA-core will attempt to match these to 17-mers within the first 30 bases on the left of each sequence, and last 30 bases on the right, and will trim the 17-mer if found along with all bases before it (or after for right end trimming).
+The following will build a set of every 17-mer within the primer fasta, along
+with each possible one-mismatch 17-mer. Then IRMA-core will attempt to match
+these to 17-mers within the first 30 bases on the left of each sequence, and
+last 30 bases on the right, and will trim the 17-mer if found along with all
+bases before it (or after for right end trimming).
 
 ```bash
 irma-core trimmer input.fastq \
@@ -200,7 +273,9 @@ irma-core trimmer input.fastq \
 
 ## Hard Trim
 
-Trims a specified number of bases on one or both ends of the sequence. If `hard-trim` would trim more bases than the length of a sequence in the input, that sequence will be excluded from the output.
+Trims a specified number of bases on one or both ends of the sequence. If
+`hard-trim` would trim more bases than the length of a sequence in the input,
+that sequence will be excluded from the output.
 
 ### Arguments
 
@@ -212,7 +287,8 @@ Trims a specified number of bases on one or both ends of the sequence. If `hard-
 
 ### Example Command
 
-The following will take the input sequences and remove the first 15 and last 20 bases from each sequence.
+The following will take the input sequences and remove the first 15 and last 20
+bases from each sequence.
 
 ```bash
 irma-core trimmer input.fastq \
@@ -234,15 +310,16 @@ The `--mask` flag will mask bases with `N`, rather than trimming them from the r
 
 ## Verbose
 
-An optional flag of `--verbose` or `-v` can be used to print diagnostics to `stderr`. Using the following arguments:
+An optional flag of `--verbose` or `-v` can be used to print diagnostics to
+`stderr`. Using the following arguments:
 
-```
+```bash
 trimmer input_R1.fastq input_R2.fastq --primer-trim primers.fasta --p-kmer-length 17 -1 test_out.fastq --h-left 10 --polyg-trim 5 --min-length 15 --verbose
 ```
 
 Gives the following diagnostic output:
 
-```
+```text
 IRMA-core trimmer processed reads from two paired inputs and wrote to one interleaved output with filtering of widowed reads
 Input:                  1582156 reads
 PolyG trimmed:            21953 reads (1.39%) with a PolyG threshold of 5 bases
@@ -261,3 +338,27 @@ by the second. If the first read does not meet the length threshold, the second
 read will not be trimmed, and its respective trimming operations will therefore
 not be counted. Thus, in cases where widow filtering is enabled, the various
 trimmed counts may be lower than expected.
+
+## Read Length Counts
+
+`trimmer` can output counts of read lengths before and/or after trimming. These
+outputs are in a `csv` format and are enabled by providing output paths with the
+`--pretrim-lengths-path` and `--posttrim-lengths-path` command-line arguments.
+
+**Note:** The pre-trim length counts output will include counts for lengths for
+*all* reads in the input, and the post-trim length counts will only include
+lengths of reads that were output by `trimmer`. Reads that are length-filtered
+or widow-filtered will not have their lengths included in the post-trim lengths.
+
+Example output:
+
+```csv
+length,count
+35,702
+36,36
+37,2
+...
+149,3017
+150,10814
+151,10761
+```

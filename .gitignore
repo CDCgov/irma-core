@@ -3,7 +3,7 @@
 *.fastq
 *.fasta
 *.log
-*test*/
+*test*
 snip.pl
 /debug
 .DS_Store

@@ -54,6 +54,16 @@ pub struct TrimmerArgs {
     #[arg(short = 'v', long)]
     /// Prints the number of records trimmed for each method to stderr
     verbose: bool,
+
+    #[arg(long)]
+    /// Output path for a csv file containing the distribution of read lengths
+    /// before trimming
+    pretrim_lengths_path: Option<PathBuf>,
+
+    /// Output path for a csv file containing the distribution of read lengths
+    /// after trimming
+    #[arg(long)]
+    posttrim_lengths_path: Option<PathBuf>,
 }
 
 impl ValidatePaths for TrimmerArgs {
@@ -67,8 +77,10 @@ impl ValidatePaths for TrimmerArgs {
     fn outputs(&self) -> impl IntoIterator<Item = &PathBuf> {
         let output1 = self.output.iter();
         let output2 = self.output2.iter();
+        let pretrim_lengths = self.pretrim_lengths_path.iter();
+        let posttrim_lengths = self.posttrim_lengths_path.iter();
 
-        output1.chain(output2)
+        output1.chain(output2).chain(pretrim_lengths).chain(posttrim_lengths)
     }
 }
 
@@ -79,6 +91,8 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
         strategy,
         trimming_args,
         primer_file,
+        pretrim_lengths_path,
+        posttrim_lengths_path,
     } = parse_trimmer_args(args)?;
 
     let mut counts = TrimmedCounts::default();
@@ -214,6 +228,8 @@ pub fn trimmer_process(args: TrimmerArgs) -> Result<(), std::io::Error> {
     if trimming_args.verbose {
         counts.write_counts(&trimming_args.clipping_args, strategy, &trimming_args, primer_file);
     }
+
+    counts.write_lengths(pretrim_lengths_path, posttrim_lengths_path)?;
     Ok(())
 }
 
@@ -325,10 +341,12 @@ impl fmt::Display for PairedIoStrategy {
 
 /// Parsed arguments for the `trimmer` subprocess
 struct ParsedTrimmerArgs {
-    io_args:       PairedIoArgs<WithContext<FastQReader<ReadFileZipInThread>>, WriteFileZipStdout>,
-    strategy:      PairedIoStrategy,
-    trimming_args: ParsedTrimmerOptions,
-    primer_file:   Option<PathBuf>,
+    io_args:               PairedIoArgs<WithContext<FastQReader<ReadFileZipInThread>>, WriteFileZipStdout>,
+    strategy:              PairedIoStrategy,
+    trimming_args:         ParsedTrimmerOptions,
+    primer_file:           Option<PathBuf>,
+    pretrim_lengths_path:  Option<PathBuf>,
+    posttrim_lengths_path: Option<PathBuf>,
 }
 
 /// Arguments related to clipping/masking reads, including length/widow
@@ -362,6 +380,8 @@ fn parse_trimmer_args(args: TrimmerArgs) -> std::io::Result<ParsedTrimmerArgs> {
         min_length,
         clipping_args,
         verbose,
+        pretrim_lengths_path,
+        posttrim_lengths_path,
     } = args;
 
     let readers = InputOptions::new_from_paths(&fastq_input, fastq_input2.as_ref())
@@ -479,6 +499,8 @@ fn parse_trimmer_args(args: TrimmerArgs) -> std::io::Result<ParsedTrimmerArgs> {
             verbose,
         },
         primer_file,
+        pretrim_lengths_path,
+        posttrim_lengths_path,
     };
 
     Ok(parsed)
@@ -517,7 +539,10 @@ fn trim_and_write_seq<W: Write>(
 ) -> std::io::Result<()> {
     counts.total_processed += 1;
     if let Some(trimmed) = trim_filter(&mut read, args, counts) {
-        trimmed.write_record(writer)
+        let length = trimmed.len();
+        trimmed.write_record(writer)?;
+        counts.tally_posttrim_length(length);
+        Ok(())
     } else {
         Ok(())
     }
@@ -542,13 +567,18 @@ where
         counts.widow_filtered += 1;
         return Ok(());
     };
-    [r1_trimmed, r2_trimmed].write_record(writer)
+    let lengths = [r1_trimmed.len(), r2_trimmed.len()];
+    [r1_trimmed, r2_trimmed].write_record(writer)?;
+    for length in lengths {
+        counts.tally_posttrim_length(length);
+    }
+    Ok(())
 }
 
 impl TrimmedCounts {
     /// Writes the trimmed and filtered counts for verbose output
     fn write_counts(
-        self, args: &ParsedClippingArgs, strategy: PairedIoStrategy, options: &ParsedTrimmerOptions,
+        &self, args: &ParsedClippingArgs, strategy: PairedIoStrategy, options: &ParsedTrimmerOptions,
         primer_file: Option<PathBuf>,
     ) {
         let ParsedClippingArgs {
@@ -674,4 +704,29 @@ impl TrimmedCounts {
             )
         }
     }
+
+    /// Writes read lengths counts out to files
+    fn write_lengths(
+        &self, pretrim_length_path: Option<PathBuf>, posttrim_length_path: Option<PathBuf>,
+    ) -> std::io::Result<()> {
+        if let Some(pretrim_path) = pretrim_length_path {
+            write_length_vec(&self.pretrim_lengths, pretrim_path)?;
+        }
+        if let Some(posttrim_path) = posttrim_length_path {
+            write_length_vec(&self.posttrim_lengths, posttrim_path)?;
+        }
+        Ok(())
+    }
+}
+
+fn write_length_vec(lengths: &[u32], path: PathBuf) -> std::io::Result<()> {
+    let mut writer = OutputOptions::new_from_path(&path).use_file().open()?;
+    writeln!(writer, "length,count")?;
+    for (length, count) in lengths.iter().enumerate() {
+        // filter lengths with 0 reads
+        if *count != 0 {
+            writeln!(writer, "{length},{count}")?;
+        }
+    }
+    writer.flush()
 }
