@@ -290,18 +290,6 @@ pub struct WriterThreaded {
     /// whether a single writer clone remains and we can store the
     /// [`JoinHandle`].
     shared: Arc<WriterThreadedShared>,
-
-    /// The first IO error produced by the underlying writer in a
-    /// commonly-accessible location. The outer [`Arc`] ensures that the memory
-    /// is shared between all the threads. The [`OnceLock`] acts as an `Option`
-    /// that is written to once. The [`SharedIoError`] contains another [`Arc`]
-    /// to allow the inner error to be clone-able.
-    ///
-    /// This is not in [`WriterThreadedShared`] since the thread cannot be
-    /// formed until the error is wrapped in [`Arc`] (so that a clone can be
-    /// moved into the thread), but the [`Arc`] around [`WriterThreadedShared`]
-    /// cannot be formed until the thread handle is available.
-    writer_error: Arc<OnceLock<SharedIoError>>,
 }
 
 /// A buffer to which writes are performed before sending through the channel.
@@ -320,7 +308,9 @@ struct PendingBuffer {
     /// [`Drop`] and properly flush it's buffer. [`WriterThreaded`] is unable to
     /// implement [`Drop`] since its [`Finish`] implementation moves out of
     /// [`WriterThreaded::shared`], so we must have this inner helper type
-    /// implement [`Drop`] instead.
+    /// implement [`Drop`] instead. This also allows [`PendingBuffer::send`] and
+    /// [`PendingBuffer::append`] to borrow only the buffer rather than the
+    /// entire [`WriterThreaded`].
     sender:   std::sync::mpsc::Sender<Msg>,
 }
 
@@ -347,6 +337,37 @@ impl PendingBuffer {
         };
         Vec::with_capacity(reserve)
     }
+
+    /// Sends the pending bytes through the channel, if non-empty, replacing
+    /// them with a fresh buffer.
+    fn send(&mut self) -> Result<(), SendError<Msg>> {
+        if self.bytes.is_empty() {
+            return Ok(());
+        }
+        let bytes = std::mem::replace(&mut self.bytes, Self::buffer(self.capacity));
+        self.sender.send(Msg::Data(bytes))
+    }
+
+    /// Appends `bytes` to the buffer.
+    ///
+    /// If appending `bytes` would exceed the user-defined capacity and the
+    /// buffer is non-empty, it is sent first. If the buffer is at or above
+    /// capacity afterwards, it is sent again.
+    fn append(&mut self, bytes: &[u8]) -> Result<(), SendError<Msg>> {
+        // Avoid exceeding user-defined capacity for write of a known size.
+        if !self.bytes.is_empty() && self.bytes.len().saturating_add(bytes.len()) > self.capacity {
+            self.send()?;
+        }
+
+        self.bytes.extend_from_slice(bytes);
+
+        // This extra check is necessary since writes of an unknown size do not
+        // check the capacity before writing.
+        if self.bytes.len() >= self.capacity {
+            self.send()?;
+        }
+        Ok(())
+    }
 }
 
 impl Drop for PendingBuffer {
@@ -360,9 +381,8 @@ impl Drop for PendingBuffer {
 impl Clone for WriterThreaded {
     fn clone(&self) -> Self {
         Self {
-            shared:       self.shared.clone(),
-            writer_error: self.writer_error.clone(),
-            buffer:       self.buffer.as_ref().map(|buffer| PendingBuffer {
+            shared: self.shared.clone(),
+            buffer: self.buffer.as_ref().map(|buffer| PendingBuffer {
                 bytes:    PendingBuffer::buffer(buffer.capacity),
                 capacity: buffer.capacity,
                 sender:   buffer.sender.clone(),
@@ -386,6 +406,13 @@ struct WriterThreadedShared {
     /// [`finish`]: Finish::finish
     /// [`ManuallyDrop`]: std::mem::ManuallyDrop
     handle: Option<JoinHandle<std::io::Result<()>>>,
+
+    /// The first IO error produced by the underlying writer. The [`OnceLock`]
+    /// stores it once, and [`SharedIoError`] allows it to be cloned.
+    ///
+    /// This has its own [`Arc`] so that a clone can be moved into the writing
+    /// thread before [`WriterThreadedShared`] is constructed.
+    writer_error: Arc<OnceLock<SharedIoError>>,
 }
 
 enum Msg {
@@ -429,7 +456,7 @@ impl WriterThreaded {
     ///
     /// [`BrokenPipe`]: ErrorKind::BrokenPipe
     fn writer_failure(&self) -> std::io::Error {
-        self.writer_error.get().map_or_else(
+        self.shared.writer_error.get().map_or_else(
             || std::io::Error::new(ErrorKind::BrokenPipe, "writer thread is no longer running"),
             Into::into,
         )
@@ -439,59 +466,33 @@ impl WriterThreaded {
     /// non-empty.
     fn send_buffer(&mut self) -> std::io::Result<()> {
         let Some(buffer) = self.buffer.as_mut() else { return Ok(()) };
-        if buffer.bytes.is_empty() {
-            return Ok(());
-        }
-        let bytes = std::mem::replace(&mut buffer.bytes, PendingBuffer::buffer(buffer.capacity));
-        self.shared
-            .sender
-            .send(Msg::Data(bytes))
-            .map_err(|SendError(_)| self.writer_failure())
+        buffer.send().map_err(|SendError(_)| self.writer_failure())
     }
 
-    /// Appends the contents of `bytes` to the [`PendingBuffer`].
+    /// Appends the contents of `bytes` to the [`PendingBuffer`], sending it
+    /// as needed to respect the user-defined capacity.
     ///
-    /// If appending `bytes` would cause the user-defined capacity to be
-    /// exceeded and the [`PendingBuffer`] is non-empty, then it is sent in the
-    /// queue via [`send_buffer`] first.
-    ///
-    /// ## Panics
-    ///
-    /// Batching must be enabled.
-    ///
-    /// [`send_buffer`]: Self::send_buffer
+    /// If batching is not enabled, `bytes` are sent directly instead.
     fn append_buffer(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        // Avoid exceeding user-defined capacity for write of a known size.
-        if self.buffer.as_ref().is_some_and(|buffer| {
-            !buffer.bytes.is_empty() && buffer.bytes.len().saturating_add(bytes.len()) > buffer.capacity
-        }) {
-            self.send_buffer()?;
-        }
-
-        let buffer = self.buffer.as_mut().expect("batching is enabled");
-        buffer.bytes.extend_from_slice(bytes);
-
-        // This extra check is necessary since writes of an unknown size do not
-        // check the capacity before writing.
-        if buffer.bytes.len() >= buffer.capacity {
-            self.send_buffer()?;
-        }
+        let Some(buffer) = self.buffer.as_mut() else {
+            return self.write_vec(bytes.to_vec());
+        };
+        buffer.append(bytes).map_err(|SendError(_)| self.writer_failure())?;
         Ok(bytes.len())
     }
 
     /// Writes an owned buffer without copying when batching is disabled;
     /// otherwise, appends to the buffer.
     pub fn write_vec(&mut self, buf: Vec<u8>) -> std::io::Result<usize> {
-        if self.buffer.is_some() {
-            return self.append_buffer(&buf);
-        }
-
         let len = buf.len();
 
-        match self.shared.sender.send(Msg::Data(buf)) {
-            Ok(()) => Ok(len),
-            Err(SendError(_)) => Err(self.writer_failure()),
+        match self.buffer.as_mut() {
+            Some(buffer) => buffer.append(&buf),
+            None => self.shared.sender.send(Msg::Data(buf)),
         }
+        .map_err(|SendError(_)| self.writer_failure())?;
+
+        Ok(len)
     }
 }
 
@@ -503,10 +504,7 @@ impl Write for WriterThreaded {
     /// [`WriterThreaded::write_vec`] to avoid copying an existing vector. With
     /// batching, bytes are copied into the buffer instead.
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        if self.buffer.is_some() {
-            return self.append_buffer(bytes);
-        }
-        self.write_vec(bytes.to_vec())
+        self.append_buffer(bytes)
     }
 
     /// Flushes previously-performed writes.
@@ -553,7 +551,7 @@ impl Write for WriterThreaded {
         if let Some(buffer) = self.buffer.as_mut() {
             Write::write_fmt(&mut buffer.bytes, args)?;
             if buffer.bytes.len() >= buffer.capacity {
-                self.send_buffer()?;
+                buffer.send().map_err(|SendError(_)| self.writer_failure())?;
             }
             return Ok(());
         }
@@ -631,8 +629,8 @@ impl WriterThreaded {
             shared: Arc::new(WriterThreadedShared {
                 sender,
                 handle: Some(handle),
+                writer_error,
             }),
-            writer_error,
             buffer: None,
         }
     }
@@ -640,8 +638,6 @@ impl WriterThreaded {
 
 impl Drop for WriterThreadedShared {
     /// Drops the [`WriterThreadedShared`].
-    ///
-    /// [`flush`]: WriterThreaded::flush
     fn drop(&mut self) {
         let Some(handle) = self.handle.take() else {
             return;
@@ -677,7 +673,8 @@ impl Finish for WriterThreaded {
         // the result.
         let _ = shared.sender.send(Msg::Finish);
 
-        // Drop the final shared writer so that the thread can terminate
+        // Drop the final shared state. The thread terminates upon receiving
+        // Finish, so this is not required for the join to complete.
         drop(shared);
 
         // Join the handle, waiting for the thread to finish and propagating any
