@@ -348,12 +348,13 @@ impl PendingBuffer {
         self.sender.send(Msg::Data(bytes))
     }
 
-    /// Appends `bytes` to the buffer.
+    /// Appends `bytes` to the buffer, returning the length of `bytes` (similar
+    /// to [`Write::write`]).
     ///
     /// If appending `bytes` would exceed the user-defined capacity and the
     /// buffer is non-empty, it is sent first. If the buffer is at or above
     /// capacity afterwards, it is sent again.
-    fn append(&mut self, bytes: &[u8]) -> Result<(), SendError<Msg>> {
+    fn append(&mut self, bytes: &[u8]) -> Result<usize, SendError<Msg>> {
         // Avoid exceeding user-defined capacity for write of a known size.
         if !self.bytes.is_empty() && self.bytes.len().saturating_add(bytes.len()) > self.capacity {
             self.send()?;
@@ -366,7 +367,8 @@ impl PendingBuffer {
         if self.bytes.len() >= self.capacity {
             self.send()?;
         }
-        Ok(())
+
+        Ok(bytes.len())
     }
 }
 
@@ -462,37 +464,29 @@ impl WriterThreaded {
         )
     }
 
-    /// Sends the contained [`PendingBuffer`] in the channel, if present and
-    /// non-empty.
-    fn send_buffer(&mut self) -> std::io::Result<()> {
-        let Some(buffer) = self.buffer.as_mut() else { return Ok(()) };
-        buffer.send().map_err(|SendError(_)| self.writer_failure())
-    }
-
-    /// Appends the contents of `bytes` to the [`PendingBuffer`], sending it
-    /// as needed to respect the user-defined capacity.
+    /// Sends the vector of `bytes` directly via the channel, returning the
+    /// number of bytes sent (equal to `bytes.len()`).
     ///
-    /// If batching is not enabled, `bytes` are sent directly instead.
-    fn append_buffer(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        let Some(buffer) = self.buffer.as_mut() else {
-            return self.write_vec(bytes.to_vec());
-        };
-        buffer.append(bytes).map_err(|SendError(_)| self.writer_failure())?;
-        Ok(bytes.len())
+    /// This is used in [`WriterThreaded::write_vec`] and other methods when
+    /// batching is not enabled.
+    fn send_vec(&mut self, bytes: Vec<u8>) -> std::io::Result<usize> {
+        let len = bytes.len();
+
+        self.shared
+            .sender
+            .send(Msg::Data(bytes))
+            .map_err(|SendError(_)| self.writer_failure())?;
+
+        Ok(len)
     }
 
     /// Writes an owned buffer without copying when batching is disabled;
     /// otherwise, appends to the buffer.
-    pub fn write_vec(&mut self, buf: Vec<u8>) -> std::io::Result<usize> {
-        let len = buf.len();
-
+    pub fn write_vec(&mut self, bytes: Vec<u8>) -> std::io::Result<usize> {
         match self.buffer.as_mut() {
-            Some(buffer) => buffer.append(&buf),
-            None => self.shared.sender.send(Msg::Data(buf)),
+            Some(buffer) => buffer.append(&bytes).map_err(|SendError(_)| self.writer_failure()),
+            None => self.send_vec(bytes),
         }
-        .map_err(|SendError(_)| self.writer_failure())?;
-
-        Ok(len)
     }
 }
 
@@ -504,7 +498,12 @@ impl Write for WriterThreaded {
     /// [`WriterThreaded::write_vec`] to avoid copying an existing vector. With
     /// batching, bytes are copied into the buffer instead.
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        self.append_buffer(bytes)
+        if let Some(buffer) = self.buffer.as_mut() {
+            buffer.append(bytes).map_err(|SendError(_)| self.writer_failure())?;
+            Ok(bytes.len())
+        } else {
+            self.send_vec(bytes.to_vec())
+        }
     }
 
     /// Flushes previously-performed writes.
@@ -525,7 +524,10 @@ impl Write for WriterThreaded {
     /// [`BufWriter`]: std::io::BufWriter
     /// [`flush`]: WriterThreaded::flush
     fn flush(&mut self) -> std::io::Result<()> {
-        self.send_buffer()?;
+        if let Some(buffer) = self.buffer.as_mut() {
+            buffer.send().map_err(|SendError(_)| self.writer_failure())?
+        };
+
         let (sender, receiver) = std::sync::mpsc::channel();
 
         match self.shared.sender.send(Msg::Flush(sender)) {
@@ -556,12 +558,14 @@ impl Write for WriterThreaded {
             return Ok(());
         }
 
-        // We use write_vec to ensure only a single allocation is performed
+        // We use `send_vec` to ensure only a single allocation is performed
         if let Some(s) = args.as_str() {
-            self.write_vec(s.as_bytes().to_vec()).map(|_| ())
+            self.send_vec(s.as_bytes().to_vec())?;
         } else {
-            self.write_vec(std::fmt::format(args).into_bytes()).map(|_| ())
+            self.send_vec(std::fmt::format(args).into_bytes())?;
         }
+
+        Ok(())
     }
 }
 
@@ -650,7 +654,10 @@ impl Drop for WriterThreadedShared {
 
 impl Finish for WriterThreaded {
     fn finish(mut self) -> std::io::Result<()> {
-        self.send_buffer()?;
+        if let Some(buffer) = self.buffer.as_mut() {
+            buffer.send().map_err(|SendError(_)| self.writer_failure())?
+        };
+
         // Ensure this is the final WriterThreaded clone, and bind the shared
         // state
         let mut shared = Arc::into_inner(self.shared)
