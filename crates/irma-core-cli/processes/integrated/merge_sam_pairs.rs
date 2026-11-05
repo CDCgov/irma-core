@@ -3,13 +3,11 @@
 
 use clap::Args;
 use irma_records::{
-    hashing::get_hasher,
     io::{Finish, InputOptions, OutputOptions, ValidatePaths},
-    paired::get_molecular_id_side,
-    sam::{PairedMergeStats, SamMergeablePairs},
+    sam::{PairedMergeStats, pair_and_merge},
 };
-use std::{collections::HashMap, io::Write, path::PathBuf};
-use zoe::data::{sam::*, views::Len};
+use std::{io::Write, path::PathBuf};
+use zoe::data::sam::*;
 
 #[derive(Args, Debug)]
 pub struct MergeSAMArgs {
@@ -110,7 +108,6 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
         ));
     };
     reference.header.truncate(new_len);
-    reference.sequence.make_ascii_uppercase();
 
     const ONE_MB: usize = 2usize.pow(20);
 
@@ -119,79 +116,38 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
         .use_file()
         .open()?;
 
-    let mut sam_data: Vec<SamData> = Vec::new();
-    let mut pairs: HashMap<String, IndexPair, _> = HashMap::with_hasher(get_hasher());
-    let mut index = 0;
+    let mut sam_rows = InputOptions::new_from_path(&args.sam_file)
+        .use_file()
+        .parse_sam()
+        .open()?
+        .peekable();
 
-    let sam_records = InputOptions::new_from_path(&args.sam_file).use_file().parse_sam().open()?;
-
-    for sam_row in sam_records {
-        let row = match sam_row? {
-            SamRow::Data(mut d) => {
-                if d.rname != reference.header {
-                    continue;
-                }
-                d.seq.as_mut_bytes().make_ascii_uppercase();
-                d
-            }
-            SamRow::Header(h) => {
-                writeln!(sam_writer, "{h}")?;
-                continue;
-            }
-        };
-
-        match get_molecular_id_side(&row.qname, '0') {
-            Some((mol_name_id, read_side @ ('1' | '2'))) => {
-                let new_pair = read_side.into_indexpair(index);
-                pairs
-                    .entry(mol_name_id.to_string())
-                    .and_modify(|old_pair| old_pair.merge(&new_pair))
-                    .or_insert(new_pair);
-            }
-            // If the header is parseable but does not encode an explicit read
-            // side, fall back to order-based pairing instead of panicking.
-            Some((mol_name_id, _)) => {
-                pairs
-                    .entry(mol_name_id.to_string())
-                    .and_modify(|pair| pair.merge(&IndexPair::new_r2(index)))
-                    .or_insert(IndexPair::new_r1(index));
-            }
-            None => {
-                pairs
-                    .entry(row.qname.clone())
-                    .and_modify(|pair| pair.merge(&IndexPair::new_r2(index)))
-                    .or_insert(IndexPair::new_r1(index));
-            }
-        }
-
-        sam_data.push(row);
-        index += 1;
+    // Write the header section before streaming the records to be merged
+    while let Some(Ok(SamRow::Header(h))) = sam_rows.next_if(|row| matches!(row, Ok(SamRow::Header(_)))) {
+        writeln!(sam_writer, "{h}")?;
     }
 
-    // Store statistics: Observations, deletion minor variants, true SNV, false
-    // SNV, insertion observations, insertion discrepancy.
+    let records = sam_rows.map(|row| match row? {
+        SamRow::Data(record) => Ok(record),
+        SamRow::Header(_) => Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "SAM header lines must precede alignment records in: {file}",
+                file = args.sam_file.display()
+            ),
+        )),
+    });
+
     let mut stats = PairedMergeStats::default();
 
-    for pair in pairs.values() {
-        match (pair.r1, pair.r2) {
-            (Some(pair_index1), Some(pair_index2)) => {
-                let (sam1, sam2) = (&sam_data[pair_index1], &sam_data[pair_index2]);
-
-                // IRMA does not define read-pair merging yet for the empty quality score case.
-                if !sam1.qual.is_empty() && !sam2.qual.is_empty() {
-                    let s = sam1.merge_pair_using_reference(sam2, &reference.sequence, args.bowtie_format, &mut stats);
-
-                    writeln!(sam_writer, "{s}")?;
-                } else {
-                    writeln!(sam_writer, "{sam1}")?;
-                    writeln!(sam_writer, "{sam2}")?;
-                }
-            }
-            (Some(index), None) | (None, Some(index)) => {
-                writeln!(sam_writer, "{}", sam_data[index])?;
-            }
-            _ => continue,
-        }
+    for record in pair_and_merge(
+        records,
+        &reference.header,
+        &reference.sequence,
+        args.bowtie_format,
+        &mut stats,
+    ) {
+        writeln!(sam_writer, "{}", record?)?;
     }
 
     if let Some(paired_stats_file) = args.paired_stats_file {
@@ -221,56 +177,4 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
     }
 
     sam_writer.finish()
-}
-
-#[derive(Debug)]
-struct IndexPair {
-    r1: Option<usize>,
-    r2: Option<usize>,
-}
-
-impl IndexPair {
-    fn merge(&mut self, other: &IndexPair) {
-        if let (None, Some(p)) = (self.r1, other.r1) {
-            self.r1 = Some(p);
-        }
-
-        if let (None, Some(p)) = (self.r2, other.r2) {
-            self.r2 = Some(p);
-        }
-    }
-
-    fn new_r1(index: usize) -> Self {
-        Self {
-            r1: Some(index),
-            r2: None,
-        }
-    }
-
-    fn new_r2(index: usize) -> Self {
-        Self {
-            r1: None,
-            r2: Some(index),
-        }
-    }
-}
-
-trait IntoIndexPair {
-    fn into_indexpair(self, index: usize) -> IndexPair;
-}
-
-impl IntoIndexPair for char {
-    fn into_indexpair(self, index: usize) -> IndexPair {
-        match self {
-            '1' => IndexPair {
-                r1: Some(index),
-                r2: None,
-            },
-            '2' => IndexPair {
-                r1: None,
-                r2: Some(index),
-            },
-            _ => panic!("Unexpected value for SAM pair side for read-pair merging: {self}"),
-        }
-    }
 }

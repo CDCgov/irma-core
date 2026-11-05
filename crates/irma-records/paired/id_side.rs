@@ -3,7 +3,7 @@ use std::simd::Simd;
 use zoe::data::records::HeaderReadable;
 
 /// An enum representing the read side for paired or unpaired reads.
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 pub enum ReadSide {
     R1,
     R2,

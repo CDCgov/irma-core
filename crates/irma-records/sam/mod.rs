@@ -1,7 +1,9 @@
 mod aligned;
+mod merge_all;
 mod merge_pairs;
 mod paired_stats;
 
+pub use merge_all::*;
 pub use merge_pairs::*;
 pub use paired_stats::*;
 
