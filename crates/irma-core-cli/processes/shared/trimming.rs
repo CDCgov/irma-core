@@ -1,6 +1,6 @@
 use crate::args::clipping::ParsedClippingArgs;
 use irma_records::fastq::ReadTransforms;
-use std::ops::Add;
+use std::ops::{Add, Index, IndexMut};
 use zoe::prelude::{FastQViewMut, Len};
 
 /// Trims or masks a read based on user provided arguments. This edits the
@@ -13,14 +13,7 @@ pub fn trim_read<'a>(
     counts.last_read_len = fq_view.sequence.len();
 
     let mut original_len = fq_view.sequence.len();
-    if let Some(count) = counts.pretrim_lengths.get_mut(original_len) {
-        *count += 1;
-    } else {
-        counts
-            .pretrim_lengths
-            .extend(std::iter::repeat_n(0, original_len - counts.pretrim_lengths.len()));
-        counts.pretrim_lengths.push(1);
-    }
+    counts.pretrim_lengths[original_len] += 1;
 
     fq_view.process_polyg(args.polyg_left, args.polyg_right, mask);
     update_trimmed_counts_field(&mut counts.poly_g, &fq_view, &mut counts.last_read_len, verbose);
@@ -59,6 +52,52 @@ pub fn trim_read<'a>(
     fq_view
 }
 
+/// Counts observed read lengths, using the read length as the index.
+#[derive(Default, Debug)]
+pub struct LengthCounts(Vec<u32>);
+
+impl LengthCounts {
+    pub fn iter(&self) -> impl Iterator<Item = &u32> {
+        self.0.iter()
+    }
+}
+
+impl Index<usize> for LengthCounts {
+    type Output = u32;
+
+    fn index(&self, length: usize) -> &Self::Output {
+        self.0.get(length).unwrap_or(&0)
+    }
+}
+
+impl IndexMut<usize> for LengthCounts {
+    fn index_mut(&mut self, length: usize) -> &mut Self::Output {
+        if length >= self.0.len() {
+            self.0.resize(length + 1, 0);
+        }
+
+        &mut self.0[length]
+    }
+}
+
+impl Add for LengthCounts {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self::Output {
+        let (mut longer, shorter) = if self.0.len() >= other.0.len() {
+            (self, other)
+        } else {
+            (other, self)
+        };
+
+        for (total, count) in longer.0.iter_mut().zip(shorter.0) {
+            *total += count;
+        }
+
+        longer
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct TrimmedCounts {
     pub last_read_len:    usize,
@@ -71,32 +110,8 @@ pub struct TrimmedCounts {
     pub widow_filtered:   usize,
     pub total_trimmed:    usize,
     pub total_processed:  usize,
-    pub pretrim_lengths:  Vec<u32>,
-    pub posttrim_lengths: Vec<u32>,
-}
-
-impl TrimmedCounts {
-    /// Records the length of a read that was written after trimming and filtering.
-    pub fn tally_posttrim_length(&mut self, length: usize) {
-        if let Some(count) = self.posttrim_lengths.get_mut(length) {
-            *count += 1;
-        } else {
-            self.posttrim_lengths
-                .extend(std::iter::repeat_n(0, length - self.posttrim_lengths.len()));
-            self.posttrim_lengths.push(1);
-        }
-    }
-}
-
-/// Helper function for pairwise adding the counts of two read lengths vecs
-fn add_length_vecs(a: Vec<u32>, b: Vec<u32>) -> Vec<u32> {
-    let (mut longer, shorter) = if a.len() >= b.len() { (a, b) } else { (b, a) };
-
-    for (total, count) in longer.iter_mut().zip(shorter) {
-        *total += count;
-    }
-
-    longer
+    pub pretrim_lengths:  LengthCounts,
+    pub posttrim_lengths: LengthCounts,
 }
 
 impl Add for TrimmedCounts {
@@ -114,8 +129,8 @@ impl Add for TrimmedCounts {
             widow_filtered:   self.widow_filtered + other.widow_filtered,
             total_trimmed:    self.total_trimmed + other.total_trimmed,
             total_processed:  self.total_processed + other.total_processed,
-            pretrim_lengths:  add_length_vecs(self.pretrim_lengths, other.pretrim_lengths),
-            posttrim_lengths: add_length_vecs(self.posttrim_lengths, other.posttrim_lengths),
+            pretrim_lengths:  self.pretrim_lengths + other.pretrim_lengths,
+            posttrim_lengths: self.posttrim_lengths + other.posttrim_lengths,
         }
     }
 }
@@ -131,15 +146,24 @@ pub fn update_trimmed_counts_field(field: &mut usize, read: &FastQViewMut<'_>, l
 
 #[cfg(test)]
 mod test {
-    use crate::shared::trimming::add_length_vecs;
+    use crate::shared::trimming::LengthCounts;
 
     // tests for the issue that simply zipping and adding the two vectors containing
     // counts of seen lengths could possibly lose data at the end if the two vecs
     // are of different lengths
     #[test]
-    fn add_length_vecs_test() {
-        assert_eq!(add_length_vecs(vec![1, 2], vec![3, 4, 5, 6]), vec![4, 6, 5, 6],);
-        assert_eq!(add_length_vecs(vec![3, 4, 5, 6], vec![1, 2]), vec![4, 6, 5, 6],);
-        assert_eq!(add_length_vecs(vec![3, 4, 5, 6], vec![3, 4, 5, 6]), vec![6, 8, 10, 12],);
+    fn adds_length_counts() {
+        assert_eq!(
+            (LengthCounts(vec![1, 2]) + LengthCounts(vec![3, 4, 5, 6])).0,
+            vec![4, 6, 5, 6]
+        );
+        assert_eq!(
+            (LengthCounts(vec![3, 4, 5, 6]) + LengthCounts(vec![1, 2])).0,
+            vec![4, 6, 5, 6]
+        );
+        assert_eq!(
+            (LengthCounts(vec![3, 4, 5, 6]) + LengthCounts(vec![3, 4, 5, 6])).0,
+            vec![6, 8, 10, 12],
+        );
     }
 }

@@ -10,6 +10,8 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 ### Added
 
 - Added `FastXReader::from_path`
+- Added read lengths summary output to `trimmer` via `--pretrim-lengths-path`
+  and `--posttrim-lengths-path` CLI arguments
 
 ### Changed
 

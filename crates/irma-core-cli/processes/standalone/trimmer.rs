@@ -2,7 +2,7 @@
 
 use crate::{
     args::clipping::{ClippingArgs, ParsedClippingArgs, parse_clipping_args},
-    shared::trimming::{TrimmedCounts, trim_read},
+    shared::trimming::{LengthCounts, TrimmedCounts, trim_read},
 };
 use clap::Args;
 use core::fmt;
@@ -541,7 +541,7 @@ fn trim_and_write_seq<W: Write>(
     if let Some(trimmed) = trim_filter(&mut read, args, counts) {
         let length = trimmed.len();
         trimmed.write_record(writer)?;
-        counts.tally_posttrim_length(length);
+        counts.posttrim_lengths[length] += 1;
         Ok(())
     } else {
         Ok(())
@@ -570,7 +570,7 @@ where
     let lengths = [r1_trimmed.len(), r2_trimmed.len()];
     [r1_trimmed, r2_trimmed].write_record(writer)?;
     for length in lengths {
-        counts.tally_posttrim_length(length);
+        counts.posttrim_lengths[length] += 1;
     }
     Ok(())
 }
@@ -710,16 +710,16 @@ impl TrimmedCounts {
         &self, pretrim_length_path: Option<PathBuf>, posttrim_length_path: Option<PathBuf>,
     ) -> std::io::Result<()> {
         if let Some(pretrim_path) = pretrim_length_path {
-            write_length_vec(&self.pretrim_lengths, pretrim_path)?;
+            write_length_counts(&self.pretrim_lengths, pretrim_path)?;
         }
         if let Some(posttrim_path) = posttrim_length_path {
-            write_length_vec(&self.posttrim_lengths, posttrim_path)?;
+            write_length_counts(&self.posttrim_lengths, posttrim_path)?;
         }
         Ok(())
     }
 }
 
-fn write_length_vec(lengths: &[u32], path: PathBuf) -> std::io::Result<()> {
+fn write_length_counts(lengths: &LengthCounts, path: PathBuf) -> std::io::Result<()> {
     let mut writer = OutputOptions::new_from_path(&path).use_file().open()?;
     writeln!(writer, "length,count")?;
     for (length, count) in lengths.iter().enumerate() {
