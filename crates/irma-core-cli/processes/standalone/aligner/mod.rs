@@ -1,16 +1,15 @@
 use crate::aligner::{
-    arg_parsing::{AlignerConfig, Alphabet, AnyMatrix, NumPasses, ParsedAlignerArgs, WhichSequence, parse_aligner_args},
+    arg_parsing::{AlignerConfig, Alphabet, EitherParams, NumPasses, ParsedAlignerArgs, WhichSequence, parse_aligner_args},
     writers::{write_alignment, write_header},
 };
 use clap::{Args, builder::RangedI64ValueParser};
 use irma_records::io::{FastX, FastXReader, Finish, OutputOptions, ReadFileZipInThread, ValidatePaths, WithContext};
 use std::{cell::RefCell, cmp::Ordering, path::PathBuf};
 use zoe::{
-    alignment::{Alignment, LocalProfiles, MaybeAligned, SharedProfiles, TracebackBuffer},
+    alignment::{Alignment, LocalProfiles, MaybeAligned, ScoreParams, SharedProfiles, TracebackBuffer},
     data::{
         err::{ResultWithErrorContext, ResultWithSubitem},
         fasta::Fasta,
-        matrices::WeightMatrix,
     },
     prelude::{NucleotidesView, ProfileSets, SeqSrc},
 };
@@ -146,7 +145,7 @@ pub fn aligner_process(args: AlignerArgs) -> std::io::Result<()> {
     let ParsedAlignerArgs {
         query_reader,
         references,
-        weight_matrix,
+        params,
         header,
         config,
     } = parse_aligner_args(args)?;
@@ -167,8 +166,7 @@ pub fn aligner_process(args: AlignerArgs) -> std::io::Result<()> {
     #[cfg(not(feature = "dev_no_rayon"))]
     let writer = WriterThreaded::with_batch_capacity(writer, WRITE_BATCH_CAPACITY);
 
-    // Validity: No context is added to the result
-    dispatch_alphabet(query_reader, references, writer, weight_matrix, &config)?;
+    dispatch_alphabet(query_reader, references, writer, params, &config)?;
 
     Ok(())
 }
@@ -177,26 +175,15 @@ pub fn aligner_process(args: AlignerArgs) -> std::io::Result<()> {
 ///
 /// ## Errors
 ///
-/// Errors while reading the queries, building the profiles, performing the
-/// alignment, and writing the alignment are propagated. Context containing the
-/// header(s) is added for failed profile building or alignment.
-///
-/// ## Validity
-///
-/// This function returns an error intended to be displayed at the top-level. No
-/// callers should add additional context other than calling a method in
-/// [`OrFail`].
-///
-/// [`OrFail`]: zoe::data::err::OrFail
+/// Errors while reading the queries, performing the alignment, and writing the
+/// alignment are propagated. Context containing the header(s) is added for
+/// failed alignment.
 fn dispatch_alphabet(
-    query_reader: QueryReader, references: Vec<Fasta>, writer: SamWriter, weight_matrix: AnyMatrix<'static, i8>,
-    config: &AlignerConfig,
+    query_reader: QueryReader, references: Vec<Fasta>, writer: SamWriter, params: EitherParams, config: &AlignerConfig,
 ) -> std::io::Result<()> {
-    // Validity: No context is added to the results
-    match weight_matrix {
-        AnyMatrix::Dna(weight_matrix) => dispatch_method(query_reader, references, writer, &weight_matrix, config),
-        AnyMatrix::AaNamed(weight_matrix) => dispatch_method(query_reader, references, writer, weight_matrix, config),
-        AnyMatrix::AaSimple(weight_matrix) => dispatch_method(query_reader, references, writer, &weight_matrix, config),
+    match params {
+        EitherParams::Dna(params) => dispatch_method(query_reader, references, writer, params, config),
+        EitherParams::Aa(params) => dispatch_method(query_reader, references, writer, params, config),
     }
 }
 
@@ -206,170 +193,104 @@ fn dispatch_alphabet(
 ///
 /// ## Errors
 ///
-/// Errors while reading the queries, building the profiles, performing the
-/// alignment, and writing the alignment are propagated. Context containing the
-/// header(s) is added for failed profile building or alignment.
-///
-/// ## Validity
-///
-/// This function returns an error intended to be displayed at the top-level. No
-/// callers should add additional context other than calling a method in
-/// [`OrFail`].
-///
-/// [`OrFail`]: zoe::data::err::OrFail
+/// Errors while reading the queries, performing the alignment, and writing the
+/// alignment are propagated. Context containing the header(s) is added for
+/// failed alignment.
 fn dispatch_method<const S: usize>(
-    query_reader: QueryReader, references: Vec<Fasta>, writer: SamWriter, weight_matrix: &WeightMatrix<'static, i8, S>,
+    query_reader: QueryReader, references: Vec<Fasta>, writer: SamWriter, params: ScoreParams<'static, i8, S>,
     config: &AlignerConfig,
 ) -> std::io::Result<()> {
-    let references = References::new(
-        &references,
-        weight_matrix,
-        config.gap_open,
-        config.gap_extend,
-        config.rev_comp,
-    )?;
+    let references = References::new(&references, &params, config.rev_comp);
 
     if config.best_match {
-        align_best_match(query_reader, references, writer, weight_matrix, config)
+        align_queries(query_reader, writer, |writer, query| {
+            align_query_best_match(query, &references, writer, &params, config)
+        })
     } else {
-        align_all(query_reader, references, writer, weight_matrix, config)
+        align_queries(query_reader, writer, |writer, query| {
+            align_query_all(query, &references, writer, &params, config)
+        })
     }
 }
 
-/// Aligns all the queries in `query_reader` to the `references`, writing the
-/// outputs to `writer`. The method used is specified by the first argument.
+/// Aligns a query against all references, writing the outputs to `writer`.
 ///
 /// ## Errors
 ///
-/// Errors while reading the queries, building the profiles, performing the
-/// alignment, and writing the alignment are propagated. Context containing the
-/// header(s) is added for failed profile building or alignment.
-///
-/// ## Validity
-///
-/// This function returns an error intended to be displayed at the top-level. No
-/// callers should add additional context other than calling a method in
-/// [`OrFail`].
-///
-/// [`OrFail`]: zoe::data::err::OrFail
-fn align_all<'r, const S: usize>(
-    query_reader: QueryReader, references: References<'r, S>, writer: SamWriter,
-    weight_matrix: &WeightMatrix<'static, i8, S>, config: &AlignerConfig,
+/// Errors while performing and writing the alignment are propagated. Context
+/// containing the header is added for failed alignment.
+fn align_query_all<'r, const S: usize>(
+    query: FastX, references: &References<'r, S>, writer: &mut SamWriter, params: &ScoreParams<i8, S>,
+    config: &AlignerConfig,
 ) -> std::io::Result<()> {
-    align_queries(query_reader, writer, |writer, query| {
-        let query = query?;
+    match (config.method, config.profile_from) {
+        (NumPasses::OnePass, WhichSequence::Query) => {
+            let query = QueryWithProfile::new(&query, params);
 
-        match (config.method, config.profile_from) {
-            (NumPasses::OnePass, WhichSequence::Query) => {
-                let query = QueryWithProfile::new(&query, weight_matrix, config.gap_open, config.gap_extend)?;
-
-                for reference in &references {
-                    let alignment = query.sw_1pass_query_profile(reference)?;
-                    write_alignment(writer, alignment, config)?;
-                }
-            }
-            (NumPasses::OnePass, WhichSequence::Reference) => {
-                let query = QueryWithRc::new(&query, config.rev_comp);
-
-                for reference in &references.0 {
-                    let alignment = reference.sw_1pass_ref_profile(&query)?;
-                    write_alignment(writer, alignment, config)?;
-                }
-            }
-            (NumPasses::ThreePass, WhichSequence::Query) => {
-                let query = QueryWithProfile::new(&query, weight_matrix, config.gap_open, config.gap_extend)?;
-
-                for reference in references.0.iter() {
-                    let alignment = query.sw_3pass_query_profile(reference)?;
-                    write_alignment(writer, alignment, config)?;
-                }
-            }
-            (NumPasses::ThreePass, WhichSequence::Reference) => {
-                let query = QueryWithRc::new(&query, config.rev_comp);
-
-                for reference in references.0.iter() {
-                    let alignment = reference.sw_3pass_ref_profile(&query)?;
-                    write_alignment(writer, alignment, config)?;
-                }
+            for reference in references {
+                let alignment = query.sw_1pass_query_profile(reference)?;
+                write_alignment(writer, alignment, config)?;
             }
         }
+        (NumPasses::OnePass, WhichSequence::Reference) => {
+            let query = QueryWithRc::new(&query, config.rev_comp);
 
-        Ok(())
-    })
+            for reference in references {
+                let alignment = reference.sw_1pass_ref_profile(&query)?;
+                write_alignment(writer, alignment, config)?;
+            }
+        }
+        (NumPasses::ThreePass, WhichSequence::Query) => {
+            let query = QueryWithProfile::new(&query, params);
+
+            for reference in references {
+                let alignment = query.sw_3pass_query_profile(reference)?;
+                write_alignment(writer, alignment, config)?;
+            }
+        }
+        (NumPasses::ThreePass, WhichSequence::Reference) => {
+            let query = QueryWithRc::new(&query, config.rev_comp);
+
+            for reference in references {
+                let alignment = reference.sw_3pass_ref_profile(&query)?;
+                write_alignment(writer, alignment, config)?;
+            }
+        }
+    }
+
+    Ok(())
 }
 
-/// Aligns all the queries in `query_reader` to the `references`, picking the
-/// best reference for each and writing that alignment to `writer`. The method
-/// used is specified by the first argument.
+/// Aligns a query against all references, writing the best match to `writer`.
 ///
 /// ## Errors
 ///
-/// Errors while reading the queries, building the profiles, performing the
-/// alignment, and writing the alignment are propagated. Context containing the
-/// header(s) is added for failed profile building or alignment.
-///
-/// ## Validity
-///
-/// This function returns an error intended to be displayed at the top-level. No
-/// callers should add additional context other than calling a method in
-/// [`OrFail`].
-///
-/// [`OrFail`]: zoe::data::err::OrFail
-fn align_best_match<'r, const S: usize>(
-    query_reader: QueryReader, references: References<'r, S>, writer: SamWriter,
-    weight_matrix: &WeightMatrix<'static, i8, S>, config: &AlignerConfig,
+/// Errors while performing and writing the alignment are propagated. Context
+/// containing the header is added for failed alignment.
+fn align_query_best_match<'r, const S: usize>(
+    query: FastX, references: &References<'r, S>, writer: &mut SamWriter, params: &ScoreParams<i8, S>,
+    config: &AlignerConfig,
 ) -> std::io::Result<()> {
-    align_queries(query_reader, writer, |writer, query| {
-        let query = query?;
-
-        // Each match statement ends with a write, which appears redundant.
-        // However, this is needed since the lifetime of the query is limited to
-        // the match statement scope, and hence the alignment will not live long
-        // enough to move this after
-
-        match (config.method, config.profile_from) {
-            (NumPasses::OnePass, WhichSequence::Query) => {
-                let query = QueryWithProfile::new(&query, weight_matrix, config.gap_open, config.gap_extend)?;
-
-                let best_alignment = align_best_ref(&references, |reference| {
-                    let alignment = query.sw_1pass_query_profile(reference)?;
-                    Ok(alignment)
-                })?;
-
-                write_alignment(writer, best_alignment, config)
-            }
-            (NumPasses::OnePass, WhichSequence::Reference) => {
-                let query = QueryWithRc::new(&query, config.rev_comp);
-
-                let best_alignment = align_best_ref(&references, |reference| {
-                    let alignment = reference.sw_1pass_ref_profile(&query)?;
-                    Ok(alignment)
-                })?;
-
-                write_alignment(writer, best_alignment, config)
-            }
-            (NumPasses::ThreePass, WhichSequence::Query) => {
-                let query = QueryWithProfile::new(&query, weight_matrix, config.gap_open, config.gap_extend)?;
-
-                let best_alignment = align_best_ref(&references, |reference| {
-                    let alignment = query.sw_3pass_query_profile(reference)?;
-                    Ok(alignment)
-                })?;
-
-                write_alignment(writer, best_alignment, config)
-            }
-            (NumPasses::ThreePass, WhichSequence::Reference) => {
-                let query = QueryWithRc::new(&query, config.rev_comp);
-
-                let best_alignment = align_best_ref(&references, |reference| {
-                    let alignment = reference.sw_3pass_ref_profile(&query)?;
-                    Ok(alignment)
-                })?;
-
-                write_alignment(writer, best_alignment, config)
-            }
+    let best_alignment = match (config.method, config.profile_from) {
+        (NumPasses::OnePass, WhichSequence::Query) => {
+            let query = QueryWithProfile::new(&query, params);
+            align_best_ref(references, |reference| query.sw_1pass_query_profile(reference))?
         }
-    })
+        (NumPasses::OnePass, WhichSequence::Reference) => {
+            let query = QueryWithRc::new(&query, config.rev_comp);
+            align_best_ref(references, |reference| reference.sw_1pass_ref_profile(&query))?
+        }
+        (NumPasses::ThreePass, WhichSequence::Query) => {
+            let query = QueryWithProfile::new(&query, params);
+            align_best_ref(references, |reference| query.sw_3pass_query_profile(reference))?
+        }
+        (NumPasses::ThreePass, WhichSequence::Reference) => {
+            let query = QueryWithRc::new(&query, config.rev_comp);
+            align_best_ref(references, |reference| reference.sw_3pass_ref_profile(&query))?
+        }
+    };
+
+    write_alignment(writer, best_alignment, config)
 }
 
 /// Performs all alignments as indicated by closure `f`, using either a parallel
@@ -380,15 +301,15 @@ fn align_best_match<'r, const S: usize>(
 ///
 /// ## Errors
 ///
-/// Any IO errors occurring while calling `f` or flusing `writer` are
-/// propagated.
+/// Any IO errors occurring within the [`QueryReader`], while writing to
+/// `writer`, while finalizing `writer`, or while calling `f` are propagated.
 #[inline]
 #[cfg(feature = "dev_no_rayon")]
 fn align_queries<F>(query_reader: QueryReader, mut writer: SamWriter, f: F) -> std::io::Result<()>
 where
-    F: Fn(&mut SamWriter, std::io::Result<FastX>) -> std::io::Result<()> + Sync + Send, {
+    F: Fn(&mut SamWriter, FastX) -> std::io::Result<()> + Sync + Send, {
     let mut query_reader = query_reader;
-    query_reader.try_for_each(|query| f(&mut writer, query))?;
+    query_reader.try_for_each(|record| f(&mut writer, record?))?;
     writer.finish()
 }
 
@@ -400,17 +321,16 @@ where
 ///
 /// ## Errors
 ///
-/// Any IO errors occurring within the writer thread, while finalizing `writer`,
-/// or while calling `f` are propagated.
+/// Any IO errors occurring within the [`QueryReader`], within the writer
+/// thread, while finalizing `writer`, or while calling `f` are propagated.
 #[inline]
 #[cfg(not(feature = "dev_no_rayon"))]
 fn align_queries<F>(query_reader: QueryReader, writer: WriterThreaded, f: F) -> std::io::Result<()>
 where
-    F: Fn(&mut WriterThreaded, std::io::Result<FastX>) -> std::io::Result<()> + Sync + Send, {
+    F: Fn(&mut WriterThreaded, FastX) -> std::io::Result<()> + Sync + Send, {
     query_reader
         .par_bridge()
-        .try_for_each_with(writer.clone(), |w, record| f(w, record))?;
-
+        .try_for_each_with(writer.clone(), |w, record| f(w, record?))?;
     writer.finish()
 }
 
@@ -451,16 +371,13 @@ impl<'q, const S: usize> QueryWithProfile<'q, S> {
     ///
     /// An error containing the query header as context is returned if a profile
     /// fails to be made from the sequence.
-    pub fn new(
-        query: &'q FastX, matrix: &'q WeightMatrix<'q, i8, S>, gap_open: i8, gap_extend: i8,
-    ) -> std::io::Result<Self> {
+    pub fn new(query: &'q FastX, params: &'q ScoreParams<i8, S>) -> Self {
         let forward = query;
 
         let forward_seq = forward.sequence.as_slice();
-        let header = &forward.header;
-        let profile = LocalProfiles::make_profile(forward_seq, header, matrix, gap_open, gap_extend)?;
+        let profile = LocalProfiles::new(forward_seq, params);
 
-        Ok(Self { forward, profile })
+        Self { forward, profile }
     }
 
     /// Aligns the query profile against the provided reference using the 1-pass
@@ -475,7 +392,7 @@ impl<'q, const S: usize> QueryWithProfile<'q, S> {
     /// If the alignment fails (due to overflow), context with the query and
     /// reference header is added. If it was the reverse complement alignment
     /// that failed, context is also added mentioning this.
-    pub fn sw_1pass_query_profile<'r>(&'q self, reference: &Reference<'r, S>) -> std::io::Result<AlignmentAndSeqs<'q, 'r>> {
+    pub fn sw_1pass_query_profile<'r>(&self, reference: &Reference<'r, S>) -> std::io::Result<AlignmentAndSeqs<'q, 'r>> {
         let mapping = align_maybe_rc(SeqSrc::Reference(&reference.forward.sequence), &reference.reverse, |seq| {
             self.profile.sw_1pass(seq)
         })
@@ -505,7 +422,7 @@ impl<'q, const S: usize> QueryWithProfile<'q, S> {
     /// If the alignment fails (due to overflow), context with the query and
     /// reference header is added. If it was the reverse complement alignment
     /// that failed, context is also added mentioning this.
-    pub fn sw_3pass_query_profile<'r>(&'q self, reference: &Reference<'r, S>) -> std::io::Result<AlignmentAndSeqs<'q, 'r>> {
+    pub fn sw_3pass_query_profile<'r>(&self, reference: &Reference<'r, S>) -> std::io::Result<AlignmentAndSeqs<'q, 'r>> {
         let mapping = align_maybe_rc(SeqSrc::Reference(&reference.forward.sequence), &reference.reverse, |seq| {
             self.profile.sw_3pass(seq)
         })
@@ -553,7 +470,6 @@ impl<'q, const S: usize> QueryWithRc<'q, S> {
 
 /// A reference record, together with its reverse complement and a profile set
 /// for alignment.
-#[derive(Clone, Debug)]
 pub struct Reference<'r, const S: usize> {
     /// The record for the reference.
     forward: &'r Fasta,
@@ -566,26 +482,18 @@ pub struct Reference<'r, const S: usize> {
 impl<'r, const S: usize> Reference<'r, S> {
     /// Bundles a reference together with its reverse complement (if `rev_comp`
     /// is true) and a profile set for use in alignment.
-    ///
-    /// ## Errors
-    ///
-    /// An error containing the reference header as context is returned if a
-    /// profile fails to be made from the sequence.
-    pub fn new(
-        reference: &'r Fasta, matrix: &'r WeightMatrix<'r, i8, S>, gap_open: i8, gap_extend: i8, rev_comp: bool,
-    ) -> std::io::Result<Self> {
+    pub fn new(reference: &'r Fasta, params: &'r ScoreParams<'static, i8, S>, rev_comp: bool) -> Self {
         let forward = reference;
 
         let forward_seq = forward.sequence.as_slice();
         let reverse = MaybeRevComp::new(forward_seq, rev_comp);
-        let header = &forward.header;
-        let profile = SharedProfiles::make_profile(forward_seq, header, matrix, gap_open, gap_extend)?;
+        let profile = SharedProfiles::new(forward_seq, params);
 
-        Ok(Self {
+        Self {
             forward,
             reverse,
             profile,
-        })
+        }
     }
 
     /// Returns whether `--rev-comp` is being used.
@@ -660,19 +568,13 @@ pub struct References<'r, const S: usize>(Vec<Reference<'r, S>>);
 impl<'r, const S: usize> References<'r, S> {
     /// Bundles the `references` with reverse complement and profile information
     /// for alignment.
-    ///
-    /// ## Errors
-    ///
-    /// If any of the profiles fail to build, an error is returned with context
-    /// including the header.
-    pub fn new(
-        references: &'r [Fasta], matrix: &'r WeightMatrix<'r, i8, S>, gap_open: i8, gap_extend: i8, rev_comp: bool,
-    ) -> std::io::Result<Self> {
-        references
-            .iter()
-            .map(|reference| Reference::new(reference, matrix, gap_open, gap_extend, rev_comp))
-            .collect::<Result<_, _>>()
-            .map(References)
+    pub fn new(references: &'r [Fasta], params: &'r ScoreParams<'static, i8, S>, rev_comp: bool) -> Self {
+        References(
+            references
+                .iter()
+                .map(|reference| Reference::new(reference, params, rev_comp))
+                .collect(),
+        )
     }
 
     /// Returns an iterator over the references.
@@ -693,17 +595,6 @@ impl<'r, 'c, const S: usize> IntoIterator for &'c References<'r, S> {
 
 /// A trait extending [`ProfileSets`] with methods that add context to errors.
 pub trait AlignerMethods<'a, const S: usize>: ProfileSets<'a, 32, 16, 8, S> {
-    /// Constructs a new profile, similar to [`LocalProfiles::new`] or
-    /// [`SharedProfiles::new`].
-    ///
-    /// ## Errors
-    ///
-    /// Context is added that includes the header of the sequence if it fails to
-    /// be preprocessed.
-    fn make_profile(
-        seq: &'a [u8], header: &str, matrix: &'a WeightMatrix<'a, i8, S>, gap_open: i8, gap_extend: i8,
-    ) -> std::io::Result<Self>;
-
     /// Performs the 1-pass Striped Smith Waterman alignment algorithm starting
     /// from an `i8`, using [`ProfileSets::sw_align_from_i8_with_buf`].
     ///
@@ -747,25 +638,8 @@ fn maybe_aligned_to_option(alignment: MaybeAligned<Alignment<u32>>) -> std::io::
     }
 }
 
-impl<'a, const S: usize> AlignerMethods<'a, S> for LocalProfiles<'a, 32, 16, 8, S> {
-    fn make_profile(
-        seq: &'a [u8], header: &str, matrix: &'a WeightMatrix<'a, i8, S>, gap_open: i8, gap_extend: i8,
-    ) -> std::io::Result<Self> {
-        Ok(Self::new(seq, matrix, gap_open, gap_extend).with_context(format!(
-            "The sequence with the following header failed to be preprocessed: {header}"
-        ))?)
-    }
-}
-
-impl<'a, const S: usize> AlignerMethods<'a, S> for SharedProfiles<'a, 32, 16, 8, S> {
-    fn make_profile(
-        seq: &'a [u8], header: &str, matrix: &'a WeightMatrix<'a, i8, S>, gap_open: i8, gap_extend: i8,
-    ) -> std::io::Result<Self> {
-        Ok(Self::new(seq, matrix, gap_open, gap_extend).with_context(format!(
-            "The sequence with the following header failed to be preprocessed: {header}"
-        ))?)
-    }
-}
+impl<'a, const S: usize> AlignerMethods<'a, S> for LocalProfiles<'a, 32, 16, 8, S> {}
+impl<'a, const S: usize> AlignerMethods<'a, S> for SharedProfiles<'a, 32, 16, 8, S> {}
 
 /// Performs an alignment involving `seq`, as well as its reverse complement if
 /// it was precomputed in `seq_rc`.
@@ -924,13 +798,13 @@ mod traceback_tests {
 
     #[test]
     fn reuse_across_queries_matches_allocating_api() {
-        let weights = WeightMatrix::new_dna_matrix(2, -5, None);
+        let params = ScoreParams::new_dna_params(2, -5, -10, -1, None).unwrap();
         let long = b"ACGT".repeat(100);
         let mismatch = b"T".repeat(45);
         // Growth, smaller prefixes, unmapped results, and i8 overflow retries.
         for query in [b"ACGT".as_slice(), long.as_slice(), mismatch.as_slice(), b"ACGT"] {
-            let local = LocalProfiles::new_with_w256(query, &weights, -10, -1).unwrap();
-            let shared = SharedProfiles::new_with_w256(query, &weights, -10, -1).unwrap();
+            let local = LocalProfiles::new_with_w256(query, &params);
+            let shared = SharedProfiles::new_with_w256(query, &params);
             for target in [b"ACGT".as_slice(), long.as_slice(), mismatch.as_slice(), b""] {
                 for seq in [SeqSrc::Reference(target), SeqSrc::Query(target)] {
                     let expected = maybe_aligned_to_option(local.sw_align_from_i8(seq)).unwrap();

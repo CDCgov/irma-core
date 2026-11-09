@@ -6,38 +6,34 @@ use clap::{ValueEnum, builder::PossibleValue, error::ErrorKind};
 use irma_records::io::InputOptions;
 use std::{fmt::Display, path::PathBuf};
 use zoe::{
+    alignment::{ProfileError, ScoreParams},
     data::{
         AA_ALL_AMBIG_PROFILE_MAP_WITH_STOP, WeightMatrix,
         fasta::Fasta,
         matrices::{BLOSUM_62, aa_mat_from_name},
     },
-    math::AnyInt,
 };
 
 /// The parsed and validated command line arguments for `aligner`
 pub struct ParsedAlignerArgs {
     /// The streamed query sequences
-    pub query_reader:  QueryReader,
+    pub query_reader: QueryReader,
     /// The slurped reference sequences
     ///
     /// ## Validity
     ///
     /// This field must be non-empty.
-    pub references:    Vec<Fasta>,
-    /// The weight matrix to use for the alignment
-    pub weight_matrix: AnyMatrix<'static, i8>,
+    pub references:   Vec<Fasta>,
+    /// The parameters for scoring the alignment
+    pub params:       EitherParams,
     /// Whether to write the SAM header
-    pub header:        bool,
+    pub header:       bool,
     /// Any additional configuration
-    pub config:        AlignerConfig,
+    pub config:       AlignerConfig,
 }
 
 /// The parsed and validated configuration options for `aligner`
 pub struct AlignerConfig {
-    /// The gap open weight (should be non-positive)
-    pub gap_open:         i8,
-    /// The gap extend weight (should be non-positive)
-    pub gap_extend:       i8,
     /// Whether to also align the reverse complements
     pub rev_comp:         bool,
     /// Any override for which sequence to build the profile from
@@ -60,9 +56,8 @@ pub struct AlignerConfig {
 ///
 /// [`abort_clap`] will be called if:
 ///
-/// - [`AnyMatrix::parse_from_clap`] fails (see the docs)
+/// - [`EitherParams::parse_from_clap`] fails (see the docs)
 /// - The alphabet is [`Aa`] and `rev_comp` is true
-/// - The gap open penalty is smaller than the gap extend penalty
 ///
 /// ## Errors
 ///
@@ -78,29 +73,22 @@ pub struct AlignerConfig {
 /// [`Aa`]: Alphabet::Aa
 #[allow(unused_mut)]
 pub fn parse_aligner_args(mut args: AlignerArgs) -> std::io::Result<ParsedAlignerArgs> {
-    let weight_matrix = AnyMatrix::parse_from_clap(args.alphabet, args.matrix, args.matching, args.mismatch, args.ignore_n);
+    let params = EitherParams::parse_from_clap(
+        args.alphabet,
+        args.matrix,
+        args.matching,
+        args.mismatch,
+        args.gap_open,
+        args.gap_extend,
+        args.ignore_n,
+    );
 
-    if weight_matrix.alphabet() == Alphabet::Aa && args.rev_comp {
+    if matches!(params, EitherParams::Aa(_)) && args.rev_comp {
         abort_clap(
             ErrorKind::ArgumentConflict,
             "`--rev-comp` or `-r` cannot be specified with an amino acid alphabet",
             Some("aligner"),
         );
-    }
-
-    let gap_open = -(args.gap_open as i8);
-    let gap_extend = -(args.gap_extend as i8);
-
-    if gap_extend < gap_open {
-        abort_clap(
-            ErrorKind::InvalidValue,
-            format!(
-                "The gap open penalty must be greater than or equal to the gap extend penalty, but {gap_open} (gap open) and {gap_extend} (gap extend) were provided",
-                gap_open = args.gap_open,
-                gap_extend = args.gap_extend
-            ),
-            Some("aligner"),
-        )
     }
 
     let query_reader = InputOptions::new_from_path(&args.query_file)
@@ -137,11 +125,9 @@ pub fn parse_aligner_args(mut args: AlignerArgs) -> std::io::Result<ParsedAligne
     Ok(ParsedAlignerArgs {
         query_reader,
         references,
-        weight_matrix,
+        params,
         header: args.header,
         config: AlignerConfig {
-            gap_open,
-            gap_extend,
             rev_comp: args.rev_comp,
             profile_from,
             method: args.method,
@@ -253,34 +239,17 @@ impl ValueEnum for WhichSequence {
 
 /// An enum abstracting over the different weight matrices supported by
 /// `aligner`.
-///
-/// This is required because different alphabets require different const
-/// generics.
-pub enum AnyMatrix<'a, T: AnyInt + 'static> {
-    /// A weight matrix for a DNA alphabet
-    Dna(WeightMatrix<'a, T, 5>),
-    /// A named weight matrix for a protein alphabet, obtained from Zoe
-    AaNamed(&'static WeightMatrix<'static, T, 25>),
-    /// A simple weight matrix for a protein alphabet
-    AaSimple(WeightMatrix<'a, T, 25>),
+#[allow(clippy::large_enum_variant)]
+pub enum EitherParams {
+    /// Scoring parameters for a DNA alphabet
+    Dna(ScoreParams<'static, i8, 5>),
+    /// Scoring parameters for a protein alphabet
+    Aa(ScoreParams<'static, i8, 25>),
 }
 
-impl<'a, T: AnyInt + 'static> AnyMatrix<'a, T> {
-    /// Gets the alphabet associated with the weight matrix variant
-    #[inline]
-    #[must_use]
-    fn alphabet(&self) -> Alphabet {
-        match self {
-            AnyMatrix::Dna(_) => Alphabet::Dna,
-            AnyMatrix::AaNamed(_) => Alphabet::Aa,
-            AnyMatrix::AaSimple(_) => Alphabet::Aa,
-        }
-    }
-}
-
-impl<'a> AnyMatrix<'a, i8> {
-    /// Parses a [`AnyMatrix`] from clap arguments, determining the appropriate
-    /// enum variant.
+impl EitherParams {
+    /// Parses a [`EitherParams`] from clap arguments, determining the
+    /// appropriate enum variant.
     ///
     /// The alphabet will default to [`Dna`], unless `matrix` is `Some`. When
     /// the alphabet is DNA, the scores default to `match = 2` and `mismatch =
@@ -289,6 +258,7 @@ impl<'a> AnyMatrix<'a, i8> {
     ///
     /// [`abort_clap`] will be called if:
     ///
+    /// - `gap_extend` is a larger penalty than `gap_open`
     /// - If a matrix is loaded by name, the name must be valid using
     ///   [`aa_mat_from_name`]
     /// - `matrix` cannot be specified for a [`Dna`] alphabet
@@ -305,7 +275,8 @@ impl<'a> AnyMatrix<'a, i8> {
     /// [`Dna`]: Alphabet::Dna
     /// [`Aa`]: Alphabet::Aa
     fn parse_from_clap(
-        alphabet: Option<Alphabet>, matrix: Option<String>, matching: Option<u8>, mismatch: Option<u8>, ignore_n: bool,
+        alphabet: Option<Alphabet>, matrix: Option<String>, matching: Option<u8>, mismatch: Option<u8>, gap_open: u8,
+        gap_extend: u8, ignore_n: bool,
     ) -> Self {
         // If either matching or mismatch is specified, then use the defaults
         // for the other
@@ -322,18 +293,22 @@ impl<'a> AnyMatrix<'a, i8> {
             let mismatch = 0i8.checked_sub_unsigned(mismatch).expect("Validated by clap");
             (matching, mismatch)
         });
+        let gap_open = 0i8.checked_sub_unsigned(gap_open).expect("Validated by clap");
+        let gap_extend = 0i8.checked_sub_unsigned(gap_extend).expect("Validated by clap");
 
-        let matrix: AnyMatrix<'_, i8> = match (alphabet, matrix, scores) {
+        let ignoring = if ignore_n { Some(b'N') } else { None };
+
+        let result = match (alphabet, matrix, scores) {
             // Simple DNA weight matrix with default weights
             (None | Some(Alphabet::Dna), None, None) => {
-                WeightMatrix::new_dna_matrix(2, -5, if ignore_n { Some(b'N') } else { None }).into()
+                ScoreParams::new_dna_params(2, -5, gap_open, gap_extend, ignoring).map(EitherParams::Dna)
             }
             // Simple DNA weight matrix with user-specified weights
             (None | Some(Alphabet::Dna), None, Some((matching, mismatch))) => {
-                WeightMatrix::new_dna_matrix(matching, mismatch, if ignore_n { Some(b'N') } else { None }).into()
+                ScoreParams::new_dna_params(matching, mismatch, gap_open, gap_extend, ignoring).map(EitherParams::Dna)
             }
             // BLOSUM62 default named protein weight matrix
-            (Some(Alphabet::Aa), None, None) => (&BLOSUM_62).into(),
+            (Some(Alphabet::Aa), None, None) => ScoreParams::new(&BLOSUM_62, gap_open, gap_extend).map(EitherParams::Aa),
             // Named protein weight matrix
             (None | Some(Alphabet::Aa), Some(name), None) => {
                 let Some(matrix) = aa_mat_from_name(&name) else {
@@ -343,11 +318,12 @@ impl<'a> AnyMatrix<'a, i8> {
                         Some("aligner"),
                     );
                 };
-                matrix.into()
+                ScoreParams::new(matrix, gap_open, gap_extend).map(EitherParams::Aa)
             }
             // Simple protein weight matrix with user-specified weights
             (Some(Alphabet::Aa), None, Some((matching, mismatch))) => {
-                WeightMatrix::new(&AA_ALL_AMBIG_PROFILE_MAP_WITH_STOP, matching, mismatch, None).into()
+                let matrix = WeightMatrix::new(&AA_ALL_AMBIG_PROFILE_MAP_WITH_STOP, matching, mismatch, None);
+                ScoreParams::new(matrix, gap_open, gap_extend).map(EitherParams::Aa)
             }
 
             // Invalid combinations
@@ -361,7 +337,21 @@ impl<'a> AnyMatrix<'a, i8> {
             }
         };
 
-        if ignore_n && matrix.alphabet() == Alphabet::Aa {
+        let params = match result {
+            Ok(params) => params,
+            Err(ProfileError::BadGapWeights { gap_open, gap_extend }) => abort_clap(
+                ErrorKind::InvalidValue,
+                format!(
+                    "The gap open penalty must be greater than or equal to the gap extend penalty, but {gap_open} (gap open) and {gap_extend} (gap extend) were provided",
+                    gap_open = gap_open.abs(),
+                    gap_extend = gap_extend.abs(),
+                ),
+                Some("aligner"),
+            ),
+            Err(_) => unreachable!("Validated by clap"),
+        };
+
+        if ignore_n && matches!(params, EitherParams::Aa(_)) {
             abort_clap(
                 ErrorKind::ArgumentConflict,
                 "--ignore-n cannot be specified with an amino acid alphabet",
@@ -369,27 +359,6 @@ impl<'a> AnyMatrix<'a, i8> {
             )
         }
 
-        matrix
-    }
-}
-
-impl<'a, T: AnyInt> From<WeightMatrix<'a, T, 5>> for AnyMatrix<'a, T> {
-    #[inline]
-    fn from(value: WeightMatrix<'a, T, 5>) -> Self {
-        Self::Dna(value)
-    }
-}
-
-impl<'a, T: AnyInt + 'static> From<&'static WeightMatrix<'a, T, 25>> for AnyMatrix<'a, T> {
-    #[inline]
-    fn from(value: &'static WeightMatrix<'a, T, 25>) -> Self {
-        Self::AaNamed(value)
-    }
-}
-
-impl<'a, T: AnyInt> From<WeightMatrix<'a, T, 25>> for AnyMatrix<'a, T> {
-    #[inline]
-    fn from(value: WeightMatrix<'a, T, 25>) -> Self {
-        Self::AaSimple(value)
+        params
     }
 }
