@@ -7,7 +7,7 @@ use irma_records::{
     sam::{PairedMergeStats, pair_and_merge},
 };
 use std::{io::Write, path::PathBuf};
-use zoe::data::sam::*;
+use zoe::{data::sam::*, iter_utils::ProcessResultsExt};
 
 #[derive(Args, Debug)]
 pub struct MergeSAMArgs {
@@ -140,15 +140,19 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
 
     let mut stats = PairedMergeStats::default();
 
-    for record in pair_and_merge(
-        records,
-        &reference.header,
-        &reference.sequence,
-        args.bowtie_format,
-        &mut stats,
-    ) {
-        writeln!(sam_writer, "{}", record?)?;
-    }
+    records.process_results(|records| {
+        for record in pair_and_merge(
+            records,
+            &reference.header,
+            &reference.sequence,
+            args.bowtie_format,
+            &mut stats,
+        ) {
+            writeln!(sam_writer, "{record}")?;
+        }
+
+        std::io::Result::Ok(())
+    })??;
 
     if let Some(paired_stats_file) = args.paired_stats_file {
         let mut w = OutputOptions::new_from_path(&paired_stats_file).use_file().open()?;

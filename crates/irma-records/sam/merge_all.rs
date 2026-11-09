@@ -46,8 +46,8 @@ fn pair_record(available_mates: &mut UnpairedMap, read: SamData) -> Option<(SamD
 }
 
 /// An iterator that pairs up records by molecule. Each pair is yielded as soon
-/// as its second mate is read, and records left without a mate are yielded
-/// once the input is exhausted. Iteration stops after the first error.
+/// as its second mate is read, and records left without a mate are yielded once
+/// the input is exhausted.
 struct Pairer<I> {
     iter:  I,
     cache: PairerState,
@@ -59,30 +59,22 @@ enum PairerState {
     Reading(UnpairedMap),
     /// For draining unpaired reads
     Draining(IntoValues<String, UnpairedAln>),
-    /// Halt on an error
-    Halted,
 }
 
-impl<I, E> Iterator for Pairer<I>
+impl<I> Iterator for Pairer<I>
 where
-    I: Iterator<Item = Result<SamData, E>>,
+    I: Iterator<Item = SamData>,
 {
-    type Item = Result<(SamData, Option<SamData>), E>;
+    type Item = (SamData, Option<SamData>);
 
     fn next(&mut self) -> Option<Self::Item> {
         use PairerState::*;
+
         match &mut self.cache {
             Reading(available_mates) => {
-                for result in self.iter.by_ref() {
-                    let read = match result {
-                        Err(e) => {
-                            self.cache = Halted;
-                            return Some(Err(e));
-                        }
-                        Ok(r) => r,
-                    };
+                for read in self.iter.by_ref() {
                     if let Some((r1, r2)) = pair_record(available_mates, read) {
-                        return Some(Ok((r1, Some(r2))));
+                        return Some((r1, Some(r2)));
                     }
                 }
 
@@ -91,9 +83,8 @@ where
             }
             Draining(remaining) => {
                 let (_, unpaired) = remaining.next()?;
-                Some(Ok((*unpaired, None)))
+                Some((*unpaired, None))
             }
-            Halted => None,
         }
     }
 }
@@ -155,20 +146,15 @@ pub fn merge_pairs(
 /// Each molecule must have at most two records, with at most one explicit R1
 /// and one explicit R2. Either or both records may lack a read side. These
 /// requirements are not checked.
-///
-/// ## Errors
-///
-/// Errors from `records` are passed through, and iteration stops after the
-/// first error.
 //  TODO: use with `caller`
-pub fn pair_and_merge<E>(
-    records: impl IntoIterator<Item = Result<SamData, E>>, reference_name: &str, reference: &[u8], bowtie_format: bool,
+pub fn pair_and_merge(
+    records: impl IntoIterator<Item = SamData>, reference_name: &str, reference: &[u8], bowtie_format: bool,
     stats: &mut PairedMergeStats,
-) -> impl Iterator<Item = Result<SamData, E>> {
+) -> impl Iterator<Item = SamData> {
     let reference = reference.to_ascii_uppercase();
     let iter = records
         .into_iter()
-        .filter(move |record| !matches!(record, Ok(record) if record.rname != reference_name));
+        .filter(move |record| !matches!(record, record if record.rname != reference_name));
 
     let pairs = Pairer {
         iter,
@@ -176,9 +162,6 @@ pub fn pair_and_merge<E>(
     };
 
     pairs
-        .flat_map(move |pair| match pair {
-            Ok((r1, r2)) => merge_mates(r1, r2, &reference, bowtie_format, stats).map(|record| record.map(Ok)),
-            Err(e) => [Some(Err(e)), None],
-        })
+        .flat_map(move |(r1, r2)| merge_mates(r1, r2, &reference, bowtie_format, stats))
         .flatten()
 }
