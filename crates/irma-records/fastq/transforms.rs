@@ -252,25 +252,23 @@ impl ReadTransforms for FastQ {
             if let Some(r) = range {
                 self.sequence.mask_if_exists(r);
             }
-        } else {
-            if let Some(r) = self.sequence.find_substring(reverse) {
+        } else if let Some(r) = self.sequence.find_substring(reverse) {
+            // Chop 3' end of sequence data
+            self.sequence.shorten_to(r.start);
+            self.quality.shorten_to(r.start);
+        } else if let Some(r) = self.sequence.find_substring(forward) {
+            // Remove the 5' and clone back in
+            self.sequence.cut_to_start(r.end);
+            self.quality.cut_to_start(r.end);
+        } else if allow_fuzzy {
+            if let Some(r) = self.sequence.find_fuzzy_substring::<1>(reverse) {
                 // Chop 3' end of sequence data
                 self.sequence.shorten_to(r.start);
                 self.quality.shorten_to(r.start);
-            } else if let Some(r) = self.sequence.find_substring(forward) {
+            } else if let Some(r) = self.sequence.find_fuzzy_substring::<1>(forward) {
                 // Remove the 5' and clone back in
                 self.sequence.cut_to_start(r.end);
                 self.quality.cut_to_start(r.end);
-            } else if allow_fuzzy {
-                if let Some(r) = self.sequence.find_fuzzy_substring::<1>(reverse) {
-                    // Chop 3' end of sequence data
-                    self.sequence.shorten_to(r.start);
-                    self.quality.shorten_to(r.start);
-                } else if let Some(r) = self.sequence.find_fuzzy_substring::<1>(forward) {
-                    // Remove the 5' and clone back in
-                    self.sequence.cut_to_start(r.end);
-                    self.quality.cut_to_start(r.end);
-                }
             }
         }
 
@@ -332,12 +330,7 @@ impl ReadTransforms for FastQ {
     fn process_left_primer<const MAX_LEN: usize>(
         &mut self, restrict_left: usize, kmer_set: &impl FindKmersInSeq<MAX_LEN>, mask: bool,
     ) -> &mut Self {
-        if !mask {
-            if let Some(range) = self.sequence.search_in_first(restrict_left).find_kmers_rev(kmer_set) {
-                self.sequence.cut_to_start(range.end);
-                self.quality.cut_to_start(range.end);
-            }
-        } else {
+        if mask {
             // Note: This will mask all k-mers found, one at a time, even
             // redundantly if they overlap. However this was found to be
             // slightly faster than collecting the ranges and merging before
@@ -350,6 +343,9 @@ impl ReadTransforms for FastQ {
             for range in ranges {
                 self.sequence.mask_if_exists(range);
             }
+        } else if let Some(range) = self.sequence.search_in_first(restrict_left).find_kmers_rev(kmer_set) {
+            self.sequence.cut_to_start(range.end);
+            self.quality.cut_to_start(range.end);
         }
         self
     }
@@ -358,12 +354,7 @@ impl ReadTransforms for FastQ {
     fn process_right_primer<const MAX_LEN: usize>(
         &mut self, restrict_right: usize, kmer_set: &impl FindKmersInSeq<MAX_LEN>, mask: bool,
     ) -> &mut Self {
-        if !mask {
-            if let Some(range) = self.sequence.search_in_last(restrict_right).find_kmers(kmer_set) {
-                self.sequence.shorten_to(range.start);
-                self.quality.shorten_to(range.start);
-            }
-        } else {
+        if mask {
             // Note: This will mask all k-mers found, one at a time, even
             // redundantly if they overlap. However this was found to be
             // slightly faster than collecting the ranges and merging before
@@ -376,6 +367,9 @@ impl ReadTransforms for FastQ {
             for range in ranges {
                 self.sequence.mask_if_exists(range);
             }
+        } else if let Some(range) = self.sequence.search_in_last(restrict_right).find_kmers(kmer_set) {
+            self.sequence.shorten_to(range.start);
+            self.quality.shorten_to(range.start);
         }
         self
     }
@@ -436,7 +430,7 @@ impl ReadTransforms for FastQViewMut<'_> {
     fn process_left_polyg(&mut self, left_threshold: usize, mask: bool) -> &mut Self {
         if let Some(polyg_range) = self.sequence.find_repeating_at_start(b'G', left_threshold) {
             if mask {
-                self.sequence.mask_if_exists(..polyg_range.end)
+                self.sequence.mask_if_exists(..polyg_range.end);
             }
             self.restrict(polyg_range.end..);
         }
@@ -470,21 +464,19 @@ impl ReadTransforms for FastQViewMut<'_> {
             if let Some(r) = range {
                 self.sequence.mask_if_exists(r);
             }
-        } else {
-            if let Some(r) = self.sequence.find_substring(reverse) {
+        } else if let Some(r) = self.sequence.find_substring(reverse) {
+            // Chop 3' end of sequence data
+            self.restrict(..r.start);
+        } else if let Some(r) = self.sequence.find_substring(forward) {
+            // Remove the 5' end
+            self.restrict(r.end..);
+        } else if allow_fuzzy {
+            if let Some(r) = self.sequence.find_fuzzy_substring::<1>(reverse) {
                 // Chop 3' end of sequence data
                 self.restrict(..r.start);
-            } else if let Some(r) = self.sequence.find_substring(forward) {
+            } else if let Some(r) = self.sequence.find_fuzzy_substring::<1>(forward) {
                 // Remove the 5' end
                 self.restrict(r.end..);
-            } else if allow_fuzzy {
-                if let Some(r) = self.sequence.find_fuzzy_substring::<1>(reverse) {
-                    // Chop 3' end of sequence data
-                    self.restrict(..r.start);
-                } else if let Some(r) = self.sequence.find_fuzzy_substring::<1>(forward) {
-                    // Remove the 5' end
-                    self.restrict(r.end..);
-                }
             }
         }
 
@@ -542,11 +534,7 @@ impl ReadTransforms for FastQViewMut<'_> {
     fn process_left_primer<const MAX_LEN: usize>(
         &mut self, restrict_left: usize, kmer_set: &impl FindKmersInSeq<MAX_LEN>, mask: bool,
     ) -> &mut Self {
-        if !mask {
-            if let Some(range) = self.sequence.search_in_first(restrict_left).find_kmers_rev(kmer_set) {
-                self.restrict(range.end..);
-            }
-        } else {
+        if mask {
             // Note: This will mask all k-mers found, one at a time, even
             // redundantly if they overlap. However this was found to be
             // slightly faster than collecting the ranges and merging before
@@ -559,6 +547,8 @@ impl ReadTransforms for FastQViewMut<'_> {
             for range in ranges {
                 self.sequence.mask_if_exists(range);
             }
+        } else if let Some(range) = self.sequence.search_in_first(restrict_left).find_kmers_rev(kmer_set) {
+            self.restrict(range.end..);
         }
         self
     }
@@ -567,11 +557,7 @@ impl ReadTransforms for FastQViewMut<'_> {
     fn process_right_primer<const MAX_LEN: usize>(
         &mut self, restrict_right: usize, kmer_set: &impl FindKmersInSeq<MAX_LEN>, mask: bool,
     ) -> &mut Self {
-        if !mask {
-            if let Some(range) = self.sequence.search_in_last(restrict_right).find_kmers(kmer_set) {
-                self.restrict(..range.start);
-            }
-        } else {
+        if mask {
             // Note: This will mask all k-mers found, one at a time, even
             // redundantly if they overlap. However this was found to be
             // slightly faster than collecting the ranges and merging before
@@ -584,6 +570,8 @@ impl ReadTransforms for FastQViewMut<'_> {
             for range in ranges {
                 self.sequence.mask_if_exists(range);
             }
+        } else if let Some(range) = self.sequence.search_in_last(restrict_right).find_kmers(kmer_set) {
+            self.restrict(..range.start);
         }
         self
     }
