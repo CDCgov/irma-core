@@ -22,6 +22,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
   `PairedMergeStats` to tally into, rather than returning the struct
 - `PairedMergeStats` no longer implements `Add` or `AddAssign`
 - Renamed `WithContext::map` to `WithContext::map_inner`
+- Primer-processing methods in `ReadTransforms` now accept generic k-mer sets
 
 ### Fixed
 

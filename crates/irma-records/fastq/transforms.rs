@@ -1,9 +1,7 @@
 //! Code supporting the [`ReadTransforms`] trait for editing FASTQ reads.
 
-use foldhash::fast::SeedableRandomState;
 use zoe::{
     data::fastq::FastQ,
-    kmer::encoders::three_bit::ThreeBitKmerSet,
     prelude::*,
     search::{RangeSearch, ToRangeSearch},
 };
@@ -14,7 +12,6 @@ use zoe::{
 // operation safe for downstream Samtools.
 //
 // const BAM_QNAME_LIMIT: usize = 254;
-const MAX_KMER_LENGTH: usize = 21;
 
 pub(crate) fn fix_sra_format(header: &mut String, read_side: char) {
     let delim = if header.contains(' ') { ' ' } else { '_' };
@@ -99,8 +96,8 @@ pub trait ReadTransforms {
     /// for any instances of these k-mers, from right to left. In clipping mode,
     /// any bases within or left of the first k-mer found are trimmed. If `mask`
     /// is set, only the matched k-mer spans are masked.
-    fn process_left_primer(
-        &mut self, restrict_left: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, SeedableRandomState>, mask: bool,
+    fn process_left_primer<const MAX_LEN: usize>(
+        &mut self, restrict_left: usize, kmer_set: &impl FindKmersInSeq<MAX_LEN>, mask: bool,
     ) -> &mut Self;
 
     /// Performs trimming/masking of a primer on the right end of the read using
@@ -111,8 +108,8 @@ pub trait ReadTransforms {
     /// for any instances of these k-mers, from left to right. In clipping mode,
     /// any bases within or right of the first k-mer found are trimmed. In
     /// `mask` is set, only the matched k-mer spans are masked.
-    fn process_right_primer(
-        &mut self, restrict_right: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, SeedableRandomState>, mask: bool,
+    fn process_right_primer<const MAX_LEN: usize>(
+        &mut self, restrict_right: usize, kmer_set: &impl FindKmersInSeq<MAX_LEN>, mask: bool,
     ) -> &mut Self;
 
     /// Performs trimming/masking of a barcode on the left and right end of the
@@ -229,8 +226,8 @@ impl ReadTransforms for FastQ {
     }
 
     #[inline]
-    fn process_left_primer(
-        &mut self, restrict_left: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, SeedableRandomState>, mask: bool,
+    fn process_left_primer<const MAX_LEN: usize>(
+        &mut self, restrict_left: usize, kmer_set: &impl FindKmersInSeq<MAX_LEN>, mask: bool,
     ) -> &mut Self {
         if !mask {
             if let Some(range) = self.sequence.search_in_first(restrict_left).find_kmers_rev(kmer_set) {
@@ -255,8 +252,8 @@ impl ReadTransforms for FastQ {
     }
 
     #[inline]
-    fn process_right_primer(
-        &mut self, restrict_right: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, SeedableRandomState>, mask: bool,
+    fn process_right_primer<const MAX_LEN: usize>(
+        &mut self, restrict_right: usize, kmer_set: &impl FindKmersInSeq<MAX_LEN>, mask: bool,
     ) -> &mut Self {
         if !mask {
             if let Some(range) = self.sequence.search_in_last(restrict_right).find_kmers(kmer_set) {
@@ -452,8 +449,8 @@ impl ReadTransforms for FastQViewMut<'_> {
     }
 
     #[inline]
-    fn process_left_primer(
-        &mut self, restrict_left: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, SeedableRandomState>, mask: bool,
+    fn process_left_primer<const MAX_LEN: usize>(
+        &mut self, restrict_left: usize, kmer_set: &impl FindKmersInSeq<MAX_LEN>, mask: bool,
     ) -> &mut Self {
         if !mask {
             if let Some(range) = self.sequence.search_in_first(restrict_left).find_kmers_rev(kmer_set) {
@@ -477,8 +474,8 @@ impl ReadTransforms for FastQViewMut<'_> {
     }
 
     #[inline]
-    fn process_right_primer(
-        &mut self, restrict_right: usize, kmer_set: &ThreeBitKmerSet<MAX_KMER_LENGTH, SeedableRandomState>, mask: bool,
+    fn process_right_primer<const MAX_LEN: usize>(
+        &mut self, restrict_right: usize, kmer_set: &impl FindKmersInSeq<MAX_LEN>, mask: bool,
     ) -> &mut Self {
         if !mask {
             if let Some(range) = self.sequence.search_in_last(restrict_right).find_kmers(kmer_set) {
