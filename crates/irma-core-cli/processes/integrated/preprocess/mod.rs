@@ -304,7 +304,7 @@ fn trim_and_deflate(
         }
     } else {
         reader1.try_for_each(|read| {
-            preprocess_seq(&mut read?, ReadSide::Unpaired, &mut metadata, &mut deflated, options);
+            preprocess_seq(&mut read?, ReadSide::None, &mut metadata, &mut deflated, options);
             std::io::Result::Ok(())
         })?;
     };

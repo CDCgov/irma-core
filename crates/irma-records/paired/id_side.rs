@@ -7,27 +7,26 @@ use zoe::data::records::HeaderReadable;
 pub enum ReadSide {
     R1,
     R2,
-    Unpaired,
+    None,
 }
 
 impl ReadSide {
-    /// Convert to a char. [`ReadSide::R1`] is `Some('1')`, [`ReadSide::R2`] is
-    /// `Some('2')`, and `Unpaired` is `None`.
+    /// Convert to a char: `Some('1')`, `Some('2')`, and `None`.
     #[inline]
     pub fn to_char(self) -> Option<char> {
         match self {
             ReadSide::R1 => Some('1'),
             ReadSide::R2 => Some('2'),
-            ReadSide::Unpaired => None,
+            ReadSide::None => None,
         }
     }
 
-    /// Convert to a SIMD vector for generating count metadata. [`ReadSide::R1`]
-    /// and `Unpaired` are both `[1, 0]` and [`ReadSide::R2`] is `[0, 1]`.
+    /// Convert to a SIMD vector for generating count metadata. `R1` and `None`
+    /// are both `[1, 0]` and `R2` is `[0, 1]`.
     #[inline]
     pub fn to_simd(self) -> Simd<usize, 2> {
         match self {
-            ReadSide::R1 | ReadSide::Unpaired => Simd::from_array([1, 0]),
+            ReadSide::R1 | ReadSide::None => Simd::from_array([1, 0]),
             ReadSide::R2 => Simd::from_array([0, 1]),
         }
     }

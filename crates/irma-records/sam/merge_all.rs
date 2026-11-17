@@ -11,18 +11,22 @@ use zoe::data::{sam::SamData, views::Len};
 type UnpairedAln = (ReadSide, Box<SamData>);
 type UnpairedMap = HashMap<String, UnpairedAln, SeedableRandomState>;
 
-/// Adds `read` alignment to the pool of available mates, or else removes and
-/// pairs a found mate.
+/// Adds `read` to the pool of available mates, or removes its mate and returns
+/// the pair. A record without a read side fills whichever side its mate lacks.
+/// If neither has a side, the lesser `qname` is R1.
 ///
-/// A record without a read side fills whichever side its mate lacks. Each read
-/// side of a molecule should have at most one record, otherwise duplicates are
-/// dropped while awaiting a mate.
+/// ## Validity
+///
+/// - Each molecule has at most two records, with at most one explicit R1 and
+///   one explicit R2. Otherwise, a repeated side is dropped while its first
+///   record awaits a mate, and redundant records after a completed pair can
+///   lead to new, duplicate pairs or singletons.
 fn pair_record(available_mates: &mut UnpairedMap, read: SamData) -> Option<(SamData, SamData)> {
     let (id, side) = match get_molecular_id_side(&read.qname, '0') {
         Some((id, '1')) => (id, ReadSide::R1),
         Some((id, '2')) => (id, ReadSide::R2),
-        Some((id, _)) => (id, ReadSide::Unpaired),
-        None => (read.qname.as_str(), ReadSide::Unpaired),
+        Some((id, _)) => (id, ReadSide::None),
+        None => (read.qname.as_str(), ReadSide::None),
     };
 
     let Some((mate_side, mate)) = available_mates.remove(id) else {
@@ -31,12 +35,14 @@ fn pair_record(available_mates: &mut UnpairedMap, read: SamData) -> Option<(SamD
     };
 
     // Should not happen, but we preserve legacy behavior.
-    if mate_side == side && side != ReadSide::Unpaired {
+    if mate_side == side && side != ReadSide::None {
         available_mates.insert(id.to_string(), (side, mate));
         return None;
     }
 
     Some(
+        // If both reads in the pair do not have a side, the merged `qname` is
+        // deterministically based on lexicographic order of the qnames.
         if ReadSide::R1 == side || mate_side == ReadSide::R2 || (side == mate_side && read.qname < mate.qname) {
             (read, *mate)
         } else {
@@ -53,11 +59,11 @@ struct Pairer<I> {
     cache: PairerState,
 }
 
-/// Models state machine for streaming read pairer
+/// Models state machine for streaming read pairer.
 enum PairerState {
-    /// Reading from the iterator and making pairs
+    /// Reading from the iterator and making pairs.
     Reading(UnpairedMap),
-    /// For draining unpaired reads
+    /// For draining unpaired reads.
     Draining(IntoValues<String, UnpairedAln>),
 }
 
@@ -89,17 +95,15 @@ where
     }
 }
 
-/// Uppercases `r1` and its mate `r2`, if any, and merges them. Returns the
-/// merged record, or the records with uppercased sequences if there is no mate
-/// or either lacks quality scores (for which IRMA does not define merging).
+/// Merges `r1` and its mate `r2`, if any. Returns the merged record, or the
+/// records unchanged if there is no mate or either lacks quality scores (for
+/// which IRMA does not define merging).
 fn merge_mates(
-    mut r1: SamData, r2: Option<SamData>, reference: &[u8], bowtie_format: bool, stats: &mut PairedMergeStats,
+    r1: SamData, r2: Option<SamData>, reference: &[u8], bowtie_format: bool, stats: &mut PairedMergeStats,
 ) -> [Option<SamData>; 2] {
-    r1.seq.as_mut_bytes().make_ascii_uppercase();
-    let Some(mut r2) = r2 else {
+    let Some(r2) = r2 else {
         return [Some(r1), None];
     };
-    r2.seq.as_mut_bytes().make_ascii_uppercase();
 
     if r1.qual.is_empty() || r2.qual.is_empty() {
         [Some(r1), Some(r2)]
@@ -113,12 +117,13 @@ fn merge_mates(
 /// `reference` sequence and accumulating observations in `stats`.
 ///
 /// Each item is an R1 record and its R2 mate, if any. The R1 record provides
-/// the merged qname. Sequences are uppercased. A pair is yielded unmerged if
-/// either record lacks quality scores, since IRMA does not define merging for
-/// that case.
+/// the merged qname. A pair is yielded unmerged if either record lacks quality
+/// scores, since IRMA does not define merging for that case.
 ///
-/// Records must belong to the supplied reference; their reference names are
-/// not checked.
+/// ## Validity
+///
+/// - Record sequences must be uppercase.
+/// - Records belong to the supplied reference.
 //  TODO: possible entry point for `i-assemble`
 pub fn merge_pairs(
     pairs: impl IntoIterator<Item = (SamData, Option<SamData>)>, reference: &[u8], bowtie_format: bool,
@@ -135,29 +140,25 @@ pub fn merge_pairs(
 /// [`merge_pairs`], yielding it as soon as its second mate is read. Records
 /// without a mate are yielded once `records` is exhausted.
 ///
-/// Records whose `RNAME` is not `reference_name`, such as unmapped records, are
-/// skipped. The read side is taken from the qname when it is explicit. A
-/// record without a read side fills whichever side its mate lacks. If neither
-/// mate has a side, the one with the lesser qname is treated as R1.
+/// The read side is taken from the qname when it is explicit. A record without
+/// a read side fills whichever side its mate lacks. If neither mate has a side,
+/// the one with the lesser qname is treated as R1.
 ///
 /// Merged content is independent of input order; emission order follows pair
 /// completion, followed by unmatched records in hash table order.
 ///
-/// Each molecule must have at most two records, with at most one explicit R1
-/// and one explicit R2. Either or both records may lack a read side. These
-/// requirements are not checked.
-//  TODO: use with `caller`
+/// ## Validity
+///
+/// - Record sequences must be uppercase.
+/// - Records belong to the supplied reference.
+/// - Each molecule has at most two records, with at most one explicit R1 and
+///   one explicit R2. Either or both records may lack a read side.
 pub fn pair_and_merge(
-    records: impl IntoIterator<Item = SamData>, reference_name: &str, reference: &[u8], bowtie_format: bool,
-    stats: &mut PairedMergeStats,
+    records: impl IntoIterator<Item = SamData>, reference: &[u8], bowtie_format: bool, stats: &mut PairedMergeStats,
 ) -> impl Iterator<Item = SamData> {
     let reference = reference.to_ascii_uppercase();
-    let iter = records
-        .into_iter()
-        .filter(move |record| !matches!(record, record if record.rname != reference_name));
-
     let pairs = Pairer {
-        iter,
+        iter:  records.into_iter(),
         cache: PairerState::Reading(HashMap::with_hasher(get_hasher())),
     };
 

@@ -141,13 +141,16 @@ pub fn merge_sam_pairs_process(args: MergeSAMArgs) -> Result<(), std::io::Error>
     let mut stats = PairedMergeStats::default();
 
     records.process_results(|records| {
-        for record in pair_and_merge(
-            records,
-            &reference.header,
-            &reference.sequence,
-            args.bowtie_format,
-            &mut stats,
-        ) {
+        let filtered = records.filter_map(|mut record| {
+            if record.rname == reference.header {
+                record.seq.as_mut_bytes().make_ascii_uppercase();
+                Some(record)
+            } else {
+                None
+            }
+        });
+
+        for record in pair_and_merge(filtered, &reference.sequence, args.bowtie_format, &mut stats) {
             writeln!(sam_writer, "{record}")?;
         }
 
