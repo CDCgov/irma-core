@@ -24,7 +24,8 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 - Renamed `WithContext::map` to `WithContext::map_inner`
 - Primer-processing methods in `ReadTransforms` now accept generic k-mer sets
 - Methods of `ReadTransforms` no longer return `&mut Self` (and hence no longer
-  support chaining in one line)
+  support chaining in one line), and many instead return a boolean for whether
+  the read was trimmed/masked
 
 ### Fixed
 

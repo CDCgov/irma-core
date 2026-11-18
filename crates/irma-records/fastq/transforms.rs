@@ -68,7 +68,9 @@ pub trait ReadTransforms {
     fn to_canonical_bases(&mut self, recode: bool);
 
     /// Trims tails of consecutive `G` that are at the exact beginning or end of
-    /// the read.
+    /// the read. The boolean return value indicates whether the
+    /// trimming/masking operation was applied to the read (i.e., at least one G
+    /// was trimmed or masked).
     ///
     /// The minimum number of `G` present to trigger removal is specified in
     /// `polyg_left` and `polyg_right`, where `None` skips poly-G trimming on
@@ -76,31 +78,41 @@ pub trait ReadTransforms {
     ///
     /// If `mask` is set, the `G` bases are converted to `N`.
     #[inline]
-    fn process_polyg(&mut self, polyg_left: Option<usize>, polyg_right: Option<usize>, mask: bool) {
+    fn process_polyg(&mut self, polyg_left: Option<usize>, polyg_right: Option<usize>, mask: bool) -> bool {
+        let mut edited = false;
+
         if let Some(left_threshold) = polyg_left {
-            self.process_left_polyg(left_threshold, mask);
+            edited |= self.process_left_polyg(left_threshold, mask);
         }
         if let Some(right_threshold) = polyg_right {
-            self.process_right_polyg(right_threshold, mask);
+            edited |= self.process_right_polyg(right_threshold, mask);
         }
+
+        edited
     }
 
     /// Trims a tail of consecutive `G` bases that occur at the exact beginning
     /// of the read. At least `left_threshold` are required for trimming to
-    /// occur.
+    /// occur. The boolean return value indicates whether the trimming/masking
+    /// operation was applied to the read (i.e., at least one G was trimmed or
+    /// masked).
     ///
     /// If `mask` is set, the `G` bases are converted to `N`.
-    fn process_left_polyg(&mut self, left_threshold: usize, mask: bool);
+    fn process_left_polyg(&mut self, left_threshold: usize, mask: bool) -> bool;
 
     /// Trims a tail of consecutive `G` bases that occur at the exact end of the
-    /// read. At least `right_threshold` are required for trimming to occur.
+    /// read. At least `right_threshold` are required for trimming to occur. The
+    /// boolean return value indicates whether the trimming/masking operation
+    /// was applied to the read (i.e., at least one G was trimmed or masked).
     ///
     /// If `mask` is set, the `G` bases are converted to `N`.
-    fn process_right_polyg(&mut self, right_threshold: usize, mask: bool);
+    fn process_right_polyg(&mut self, right_threshold: usize, mask: bool) -> bool;
 
     // TODO: Improve methodology to use reverse string search where applicable
     // (so that multiple adapters are handled properly)
-    /// Performs trimming/masking of an adapter using string search.
+    /// Performs trimming/masking of an adapter using string search. The boolean
+    /// return value indicates whether the trimming/masking operation was
+    /// applied to the read (i.e., a match for the adapter was found).
     ///
     /// Both the forward and reverse adapters are given (corresponding to
     /// whether the read is on the forward or reverse strand). First, `reverse`
@@ -108,13 +120,15 @@ pub trait ReadTransforms {
     /// nothing is found and `is_fuzzy` is true, the same is repeated but
     /// allowing up to one mismatch.
     ///
-    /// The found region is masked if `mask` is true. Otherwise, if `reverse`
-    /// is located, 3' trimming occurs, and if `forward` is located, 5' trimming
+    /// The found region is masked if `mask` is true. Otherwise, if `reverse` is
+    /// located, 3' trimming occurs, and if `forward` is located, 5' trimming
     /// occurs.
-    fn process_adapter(&mut self, reverse: &[u8], forward: &[u8], allow_fuzzy: bool, mask: bool);
+    fn process_adapter(&mut self, reverse: &[u8], forward: &[u8], allow_fuzzy: bool, mask: bool) -> bool;
 
     /// Performs trimming/masking of a barcode on the left and right end of the
-    /// read using string search.
+    /// read using string search. The boolean return value indicates whether the
+    /// trimming/masking operation was applied to the read (i.e., at least one
+    /// match for the barcode was found).
     ///
     /// The barcode to process on the left end is given with `barcode`, and the
     /// value for the right end is given in `reverse`. The left end is processed
@@ -138,10 +152,12 @@ pub trait ReadTransforms {
     fn process_barcode(
         &mut self, barcode: &[u8], reverse: &[u8], hdist: usize, mask: bool, b_restrict_left: Option<usize>,
         b_restrict_right: Option<usize>,
-    );
+    ) -> bool;
 
     /// Performs trimming/masking of a primer on the left end of the read using
-    /// k-mers.
+    /// k-mers. The boolean return value indicates whether the trimming/masking
+    /// operation was applied to the read (i.e., at least one match for the
+    /// primer was found).
     ///
     /// The allowable primers are decomposed into k-mers and passed as a
     /// [`KmerSet`]. The first `restrict_left` bases in the read are searched
@@ -150,10 +166,12 @@ pub trait ReadTransforms {
     /// is set, only the matched k-mer spans are masked.
     fn process_left_primer<const MAX_LEN: usize>(
         &mut self, restrict_left: usize, kmer_set: &impl FindKmersInSeq<MAX_LEN>, mask: bool,
-    );
+    ) -> bool;
 
     /// Performs trimming/masking of a primer on the right end of the read using
-    /// k-mers.
+    /// k-mers. The boolean return value indicates whether the trimming/masking
+    /// operation was applied to the read (i.e., at least one match for the
+    /// primer was found).
     ///
     /// The allowable primers are decomposed into k-mers and passed as a
     /// [`KmerSet`]. The last `restrict_right` bases in the read are searched
@@ -162,10 +180,12 @@ pub trait ReadTransforms {
     /// `mask` is set, only the matched k-mer spans are masked.
     fn process_right_primer<const MAX_LEN: usize>(
         &mut self, restrict_right: usize, kmer_set: &impl FindKmersInSeq<MAX_LEN>, mask: bool,
-    );
+    ) -> bool;
 
     /// Either performs hard clipping (removing the bases) or masking
-    /// (converting them to `N`).
+    /// (converting them to `N`). The boolean return value indicates whether the
+    /// trimming/masking operation was applied to the read (i.e., at least one
+    /// base was trimmed or masked).
     ///
     /// This calls either [`hard_clip`] or [`hard_mask`] depending on the value
     /// of `mask`.
@@ -173,7 +193,7 @@ pub trait ReadTransforms {
     /// [`hard_clip`]: ReadTransforms::hard_clip
     /// [`hard_mask`]: ReadTransforms::hard_mask
     #[inline]
-    fn hard_clip_or_mask(&mut self, left_bases: usize, right_bases: usize, mask: bool) {
+    fn hard_clip_or_mask(&mut self, left_bases: usize, right_bases: usize, mask: bool) -> bool {
         if mask {
             self.hard_mask(left_bases, right_bases)
         } else {
@@ -182,12 +202,15 @@ pub trait ReadTransforms {
     }
 
     /// Hard clips the read by the given number of bases on the left and right
-    /// (removing them from the read).
-    fn hard_clip(&mut self, left_bases: usize, right_bases: usize);
+    /// (removing them from the read). The boolean return value indicates
+    /// whether the trimming/masking operation was applied to the read (i.e., at
+    /// least one base was trimmed).
+    fn hard_clip(&mut self, left_bases: usize, right_bases: usize) -> bool;
 
     /// Masks the given number of bases on the left and right (converting them
-    /// to `N`).
-    fn hard_mask(&mut self, left_bases: usize, right_bases: usize);
+    /// to `N`). The boolean return value indicates whether the trimming/masking
+    /// operation was applied to the read (i.e., at least one base was masked).
+    fn hard_mask(&mut self, left_bases: usize, right_bases: usize) -> bool;
 
     fn fix_header(&mut self, read_side: Option<char>);
 
@@ -207,7 +230,9 @@ impl ReadTransforms for FastQ {
     }
 
     #[inline]
-    fn process_left_polyg(&mut self, left_threshold: usize, mask: bool) {
+    fn process_left_polyg(&mut self, left_threshold: usize, mask: bool) -> bool {
+        let mut edited = false;
+
         if let Some(polyg_range) = self.sequence.find_repeating_at_start(b'G', left_threshold) {
             if mask {
                 self.sequence.mask_if_exists(..polyg_range.end);
@@ -215,11 +240,18 @@ impl ReadTransforms for FastQ {
                 self.sequence.cut_to_start(polyg_range.end);
                 self.quality.cut_to_start(polyg_range.end);
             }
+
+            // find_repeating_at_start never returns empty range
+            edited = true;
         }
+
+        edited
     }
 
     #[inline]
-    fn process_right_polyg(&mut self, right_threshold: usize, mask: bool) {
+    fn process_right_polyg(&mut self, right_threshold: usize, mask: bool) -> bool {
+        let mut edited = false;
+
         if let Some(polyg_range) = self.sequence.find_repeating_at_end(b'G', right_threshold) {
             if mask {
                 self.sequence.mask_if_exists(polyg_range.start..);
@@ -227,11 +259,21 @@ impl ReadTransforms for FastQ {
                 self.sequence.shorten_to(polyg_range.start);
                 self.quality.shorten_to(polyg_range.start);
             }
+
+            // find_repeating_at_end never returns empty range
+            edited = true;
         }
+
+        edited
     }
 
     #[inline]
-    fn process_adapter(&mut self, reverse: &[u8], forward: &[u8], allow_fuzzy: bool, mask: bool) {
+    fn process_adapter(&mut self, reverse: &[u8], forward: &[u8], allow_fuzzy: bool, mask: bool) -> bool {
+        // Whether or not the read has been edited. This is set to true whenever
+        // find_substring or find_fuzzy_substring locate a match, since the
+        // returned ranges are never empty
+        let mut edited = false;
+
         if mask {
             let mut range = self
                 .sequence
@@ -246,33 +288,45 @@ impl ReadTransforms for FastQ {
 
             if let Some(r) = range {
                 self.sequence.mask_if_exists(r);
+                edited = true;
             }
         } else if let Some(r) = self.sequence.find_substring(reverse) {
             // Chop 3' end of sequence data
             self.sequence.shorten_to(r.start);
             self.quality.shorten_to(r.start);
+            edited = true;
         } else if let Some(r) = self.sequence.find_substring(forward) {
             // Remove the 5' and clone back in
             self.sequence.cut_to_start(r.end);
             self.quality.cut_to_start(r.end);
+            edited = true;
         } else if allow_fuzzy {
             if let Some(r) = self.sequence.find_fuzzy_substring::<1>(reverse) {
                 // Chop 3' end of sequence data
                 self.sequence.shorten_to(r.start);
                 self.quality.shorten_to(r.start);
+                edited = true;
             } else if let Some(r) = self.sequence.find_fuzzy_substring::<1>(forward) {
                 // Remove the 5' and clone back in
                 self.sequence.cut_to_start(r.end);
                 self.quality.cut_to_start(r.end);
+                edited = true;
             }
         }
+
+        edited
     }
 
     #[inline]
     fn process_barcode(
         &mut self, barcode: &[u8], reverse: &[u8], hdist: usize, mask: bool, b_restrict_left: Option<usize>,
         b_restrict_right: Option<usize>,
-    ) {
+    ) -> bool {
+        // Whether or not the read has been edited. This is set to true whenever
+        // find_substring or find_fuzzy_substring locate a match, since the
+        // returned ranges are never empty
+        let mut edited = false;
+
         let restricted_substring_fn = match hdist {
             0 => |needle: &[u8], seq: &RangeSearch<'_, Nucleotides>| seq.find_substring(needle),
             1 => |needle: &[u8], seq: &RangeSearch<'_, Nucleotides>| seq.find_fuzzy_substring::<1>(needle),
@@ -301,6 +355,7 @@ impl ReadTransforms for FastQ {
                 self.sequence.cut_to_start(left_range.end);
                 self.quality.cut_to_start(left_range.end);
             }
+            edited = true;
         }
 
         let right_barcode_pos = match b_restrict_right {
@@ -315,13 +370,18 @@ impl ReadTransforms for FastQ {
                 self.sequence.shorten_to(right_range.start);
                 self.quality.shorten_to(right_range.start);
             }
+            edited = true;
         }
+
+        edited
     }
 
     #[inline]
     fn process_left_primer<const MAX_LEN: usize>(
         &mut self, restrict_left: usize, kmer_set: &impl FindKmersInSeq<MAX_LEN>, mask: bool,
-    ) {
+    ) -> bool {
+        let mut edited = false;
+
         if mask {
             // Note: This will mask all k-mers found, one at a time, even
             // redundantly if they overlap. However this was found to be
@@ -332,19 +392,29 @@ impl ReadTransforms for FastQ {
                 .search_in_first(restrict_left)
                 .find_all_kmers(kmer_set)
                 .collect();
+
+            if !ranges.is_empty() {
+                edited = true;
+            }
+
             for range in ranges {
                 self.sequence.mask_if_exists(range);
             }
         } else if let Some(range) = self.sequence.search_in_first(restrict_left).find_kmers_rev(kmer_set) {
             self.sequence.cut_to_start(range.end);
             self.quality.cut_to_start(range.end);
+            edited = true;
         }
+
+        edited
     }
 
     #[inline]
     fn process_right_primer<const MAX_LEN: usize>(
         &mut self, restrict_right: usize, kmer_set: &impl FindKmersInSeq<MAX_LEN>, mask: bool,
-    ) {
+    ) -> bool {
+        let mut edited = false;
+
         if mask {
             // Note: This will mask all k-mers found, one at a time, even
             // redundantly if they overlap. However this was found to be
@@ -355,17 +425,27 @@ impl ReadTransforms for FastQ {
                 .search_in_last(restrict_right)
                 .find_all_kmers(kmer_set)
                 .collect();
+
+            if !ranges.is_empty() {
+                edited = true;
+            }
+
             for range in ranges {
                 self.sequence.mask_if_exists(range);
             }
         } else if let Some(range) = self.sequence.search_in_last(restrict_right).find_kmers(kmer_set) {
             self.sequence.shorten_to(range.start);
             self.quality.shorten_to(range.start);
+            edited = true;
         }
+
+        edited
     }
 
     #[inline]
-    fn hard_clip(&mut self, left_bases: usize, right_bases: usize) {
+    fn hard_clip(&mut self, left_bases: usize, right_bases: usize) -> bool {
+        let edited = !self.sequence.is_empty() && (left_bases > 0 || right_bases > 0);
+
         if self.sequence.len() > left_bases + right_bases {
             self.sequence.cut_to_start(left_bases);
             self.sequence.shorten_to(self.sequence.len() - right_bases);
@@ -375,16 +455,22 @@ impl ReadTransforms for FastQ {
             self.sequence.shorten_to(0);
             self.quality.shorten_to(0);
         }
+
+        edited
     }
 
     #[inline]
-    fn hard_mask(&mut self, left_bases: usize, right_bases: usize) {
+    fn hard_mask(&mut self, left_bases: usize, right_bases: usize) -> bool {
+        let edited = !self.sequence.is_empty() && (left_bases > 0 || right_bases > 0);
+
         if self.sequence.len() > left_bases + right_bases {
             self.sequence.mask_if_exists(..left_bases);
             self.sequence.mask_if_exists(self.sequence.len() - right_bases..);
         } else {
             self.sequence.mask_if_exists(..);
         }
+
+        edited
     }
 
     #[inline]
@@ -413,26 +499,45 @@ impl ReadTransforms for FastQViewMut<'_> {
         }
     }
 
-    fn process_left_polyg(&mut self, left_threshold: usize, mask: bool) {
+    fn process_left_polyg(&mut self, left_threshold: usize, mask: bool) -> bool {
+        let mut edited = false;
+
         if let Some(polyg_range) = self.sequence.find_repeating_at_start(b'G', left_threshold) {
             if mask {
                 self.sequence.mask_if_exists(..polyg_range.end);
             }
             self.restrict(polyg_range.end..);
+
+            // find_repeating_at_start never returns empty range
+            edited = true;
         }
+
+        edited
     }
 
-    fn process_right_polyg(&mut self, right_threshold: usize, mask: bool) {
+    fn process_right_polyg(&mut self, right_threshold: usize, mask: bool) -> bool {
+        let mut edited = false;
+
         if let Some(polyg_range) = self.sequence.find_repeating_at_end(b'G', right_threshold) {
             if mask {
                 self.sequence.mask_if_exists(polyg_range.start..);
             }
             self.restrict(..polyg_range.start);
+
+            // find_repeating_at_end never returns empty range
+            edited = true;
         }
+
+        edited
     }
 
     #[inline]
-    fn process_adapter(&mut self, reverse: &[u8], forward: &[u8], allow_fuzzy: bool, mask: bool) {
+    fn process_adapter(&mut self, reverse: &[u8], forward: &[u8], allow_fuzzy: bool, mask: bool) -> bool {
+        // Whether or not the read has been edited. This is set to true whenever
+        // find_substring or find_fuzzy_substring locate a match, since the
+        // returned ranges are never empty
+        let mut edited = false;
+
         if mask {
             let mut range = self
                 .sequence
@@ -447,29 +552,41 @@ impl ReadTransforms for FastQViewMut<'_> {
 
             if let Some(r) = range {
                 self.sequence.mask_if_exists(r);
+                edited = true;
             }
         } else if let Some(r) = self.sequence.find_substring(reverse) {
             // Chop 3' end of sequence data
             self.restrict(..r.start);
+            edited = true;
         } else if let Some(r) = self.sequence.find_substring(forward) {
             // Remove the 5' end
             self.restrict(r.end..);
+            edited = true;
         } else if allow_fuzzy {
             if let Some(r) = self.sequence.find_fuzzy_substring::<1>(reverse) {
                 // Chop 3' end of sequence data
                 self.restrict(..r.start);
+                edited = true;
             } else if let Some(r) = self.sequence.find_fuzzy_substring::<1>(forward) {
                 // Remove the 5' end
                 self.restrict(r.end..);
+                edited = true;
             }
         }
+
+        edited
     }
 
     #[inline]
     fn process_barcode(
         &mut self, barcode: &[u8], reverse: &[u8], hdist: usize, mask: bool, b_restrict_left: Option<usize>,
         b_restrict_right: Option<usize>,
-    ) {
+    ) -> bool {
+        // Whether or not the read has been edited. This is set to true whenever
+        // find_substring or find_fuzzy_substring locate a match, since the
+        // returned ranges are never empty
+        let mut edited = false;
+
         let substring_fn = match hdist {
             0 => |needle: &[u8], seq: &NucleotidesViewMut<'_>| seq.find_substring(needle),
             1 => |needle: &[u8], seq: &NucleotidesViewMut<'_>| seq.find_fuzzy_substring::<1>(needle),
@@ -496,6 +613,7 @@ impl ReadTransforms for FastQViewMut<'_> {
                 self.sequence.mask_if_exists(left_range.clone());
             }
             self.restrict(left_range.end..);
+            edited = true;
         }
 
         let right_barcode_pos = match b_restrict_right {
@@ -508,13 +626,18 @@ impl ReadTransforms for FastQViewMut<'_> {
                 self.sequence.mask_if_exists(right_range.clone());
             }
             self.restrict(..right_range.start);
+            edited = true;
         }
+
+        edited
     }
 
     #[inline]
     fn process_left_primer<const MAX_LEN: usize>(
         &mut self, restrict_left: usize, kmer_set: &impl FindKmersInSeq<MAX_LEN>, mask: bool,
-    ) {
+    ) -> bool {
+        let mut edited = false;
+
         if mask {
             // Note: This will mask all k-mers found, one at a time, even
             // redundantly if they overlap. However this was found to be
@@ -525,18 +648,28 @@ impl ReadTransforms for FastQViewMut<'_> {
                 .search_in_first(restrict_left)
                 .find_all_kmers(kmer_set)
                 .collect();
+
+            if !ranges.is_empty() {
+                edited = true;
+            }
+
             for range in ranges {
                 self.sequence.mask_if_exists(range);
             }
         } else if let Some(range) = self.sequence.search_in_first(restrict_left).find_kmers_rev(kmer_set) {
             self.restrict(range.end..);
+            edited = true;
         }
+
+        edited
     }
 
     #[inline]
     fn process_right_primer<const MAX_LEN: usize>(
         &mut self, restrict_right: usize, kmer_set: &impl FindKmersInSeq<MAX_LEN>, mask: bool,
-    ) {
+    ) -> bool {
+        let mut edited = false;
+
         if mask {
             // Note: This will mask all k-mers found, one at a time, even
             // redundantly if they overlap. However this was found to be
@@ -547,25 +680,39 @@ impl ReadTransforms for FastQViewMut<'_> {
                 .search_in_last(restrict_right)
                 .find_all_kmers(kmer_set)
                 .collect();
+
+            if !ranges.is_empty() {
+                edited = true;
+            }
+
             for range in ranges {
                 self.sequence.mask_if_exists(range);
             }
         } else if let Some(range) = self.sequence.search_in_last(restrict_right).find_kmers(kmer_set) {
             self.restrict(..range.start);
+            edited = true;
         }
+
+        edited
     }
 
     #[inline]
-    fn hard_clip(&mut self, left_bases: usize, right_bases: usize) {
+    fn hard_clip(&mut self, left_bases: usize, right_bases: usize) -> bool {
+        let edited = !self.sequence.is_empty();
+
         if self.sequence.len() > left_bases + right_bases {
             self.restrict(left_bases..self.len() - right_bases);
         } else {
             self.restrict(..0);
         }
+
+        edited
     }
 
     #[inline]
-    fn hard_mask(&mut self, left_bases: usize, right_bases: usize) {
+    fn hard_mask(&mut self, left_bases: usize, right_bases: usize) -> bool {
+        let edited = !self.sequence.is_empty();
+
         if self.sequence.len() > left_bases + right_bases {
             self.mask_if_exists(..left_bases);
             self.mask_if_exists(self.sequence.len() - right_bases..);
@@ -574,6 +721,8 @@ impl ReadTransforms for FastQViewMut<'_> {
             self.mask_if_exists(..);
             self.restrict(..0);
         }
+
+        edited
     }
 
     #[inline]
