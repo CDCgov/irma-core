@@ -1,4 +1,4 @@
-use jiff::Zoned;
+use jiff::ZonedDateTime;
 use std::error::Error;
 use zoe::{data::err::DisplayErrStack, search::ByteSubstringMut};
 
@@ -40,13 +40,13 @@ where
         if use_stderr {
             eprintln!(
                 "[{now}] {pad}{program} WARNING :: {message}",
-                now = Zoned::now().strftime("%Y-%m-%d %k:%M:%S")
+                now = ZonedDateTime::now().strftime("%Y-%m-%d %k:%M:%S")
             );
             eprint!("{}", self.display_stack())
         } else {
             println!(
                 "[{now}] {pad}{program} WARNING :: {message}",
-                now = Zoned::now().strftime("%Y-%m-%d %k:%M:%S")
+                now = ZonedDateTime::now().strftime("%Y-%m-%d %k:%M:%S")
             );
             print!("{}", self.display_stack())
         }
