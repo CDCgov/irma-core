@@ -33,6 +33,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 - `merge-sam` now supports passing `/dev/null` for the outputs
 - Fixed pathological performance issue for one-pass COVID alignments as well as
   for certain multithreaded WSL set-ups
+- Fixed a bug for the count of primer masking operations applied
 
 ## [0.11.0] - 2026-09-17
 

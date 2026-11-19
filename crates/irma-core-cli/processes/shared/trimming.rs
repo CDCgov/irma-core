@@ -5,24 +5,27 @@ use zoe::prelude::{FastQViewMut, Len};
 
 /// Trims or masks a read based on user provided arguments. This edits the
 /// underlying FASTQ data for masking and recoding.
+///
+/// This updates [`TrimmedCounts::pretrim_lengths`], as well as the count fields
+/// if `verbose` is set.
 pub fn trim_read<'a>(
     mut fq_view: FastQViewMut<'a>, mask: bool, args: &ParsedClippingArgs, counts: &mut TrimmedCounts, verbose: bool,
 ) -> FastQViewMut<'a> {
     fq_view.to_canonical_bases(!args.preserve_bases);
 
-    counts.last_read_len = fq_view.sequence.len();
-
-    let mut original_len = fq_view.sequence.len();
+    let original_len = fq_view.sequence.len();
     counts.pretrim_lengths[original_len] += 1;
 
-    fq_view.process_polyg(args.polyg_left, args.polyg_right, mask);
-    update_trimmed_counts_field(&mut counts.poly_g, &fq_view, &mut counts.last_read_len, verbose);
+    // Poly-G trimming
+    let polyg_trimmed = fq_view.process_polyg(args.polyg_left, args.polyg_right, mask);
 
-    if let Some((ref forward_adapter, ref reverse_adapter)) = args.adapters {
-        fq_view.process_adapter(reverse_adapter.as_bytes(), forward_adapter.as_bytes(), args.a_fuzzy, mask);
-        update_trimmed_counts_field(&mut counts.adapter, &fq_view, &mut counts.last_read_len, verbose);
+    // Adapter or barcode trimming
+    let (adapter_trimmed, barcode_trimmed) = if let Some((ref forward_adapter, ref reverse_adapter)) = args.adapters {
+        let adapter_trimmed =
+            fq_view.process_adapter(reverse_adapter.as_bytes(), forward_adapter.as_bytes(), args.a_fuzzy, mask);
+        (adapter_trimmed, false)
     } else if let Some((barcode, reverse)) = &args.barcodes {
-        fq_view.process_barcode(
+        let barcode_trimmed = fq_view.process_barcode(
             barcode.as_bytes(),
             reverse.as_bytes(),
             args.b_hdist,
@@ -30,30 +33,49 @@ pub fn trim_read<'a>(
             args.b_restrict_left,
             args.b_restrict_right,
         );
-        update_trimmed_counts_field(&mut counts.barcode, &fq_view, &mut counts.last_read_len, verbose);
-    }
+        (false, barcode_trimmed)
+    } else {
+        (false, false)
+    };
 
-    if let Some(ref kmers) = args.primer_kmers {
+    // Primer trimming
+    let primer_trimmed = if let Some(ref kmers) = args.primer_kmers {
+        let mut primer_trimmed = false;
         if let Some(p_restrict_left) = args.p_restrict_left {
-            fq_view.process_left_primer(p_restrict_left, kmers, mask);
+            primer_trimmed |= fq_view.process_left_primer(p_restrict_left, kmers, mask);
         }
         if let Some(p_restrict_right) = args.p_restrict_right {
-            fq_view.process_right_primer(p_restrict_right, kmers, mask);
+            primer_trimmed |= fq_view.process_right_primer(p_restrict_right, kmers, mask);
         }
-        update_trimmed_counts_field(&mut counts.primer, &fq_view, &mut counts.last_read_len, verbose);
-    }
+        primer_trimmed
+    } else {
+        false
+    };
 
-    if args.hard_left > 0 || args.hard_right > 0 {
-        fq_view.hard_clip_or_mask(args.hard_left, args.hard_right, mask);
-        update_trimmed_counts_field(&mut counts.hard, &fq_view, &mut counts.last_read_len, verbose);
+    // Hard trimming
+    let hard_trimmed = if args.hard_left > 0 || args.hard_right > 0 {
+        fq_view.hard_clip_or_mask(args.hard_left, args.hard_right, mask)
+    } else {
+        false
+    };
+
+    // Update counts if in verbose mode
+    if verbose {
+        counts.poly_g += usize::from(polyg_trimmed);
+        counts.adapter += usize::from(adapter_trimmed);
+        counts.barcode += usize::from(barcode_trimmed);
+        counts.primer += usize::from(primer_trimmed);
+        counts.hard += usize::from(hard_trimmed);
+
+        let any_trimmed = polyg_trimmed | adapter_trimmed | barcode_trimmed | primer_trimmed | hard_trimmed;
+        counts.total_trimmed += usize::from(any_trimmed);
     }
-    update_trimmed_counts_field(&mut counts.total_trimmed, &fq_view, &mut original_len, verbose);
 
     fq_view
 }
 
 /// Counts observed read lengths, using the read length as the index.
-#[derive(Default, Debug)]
+#[derive(Debug, Default)]
 pub struct LengthCounts(Vec<u32>);
 
 impl LengthCounts {
@@ -98,9 +120,8 @@ impl Add for LengthCounts {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Debug, Default)]
 pub struct TrimmedCounts {
-    pub last_read_len:    usize,
     pub hard:             usize,
     pub poly_g:           usize,
     pub adapter:          usize,
@@ -119,7 +140,6 @@ impl Add for TrimmedCounts {
 
     fn add(self, other: Self) -> Self::Output {
         TrimmedCounts {
-            last_read_len:    self.last_read_len,
             hard:             self.hard + other.hard,
             poly_g:           self.poly_g + other.poly_g,
             adapter:          self.adapter + other.adapter,
@@ -132,15 +152,6 @@ impl Add for TrimmedCounts {
             pretrim_lengths:  self.pretrim_lengths + other.pretrim_lengths,
             posttrim_lengths: self.posttrim_lengths + other.posttrim_lengths,
         }
-    }
-}
-
-pub fn update_trimmed_counts_field(field: &mut usize, read: &FastQViewMut<'_>, last_read_len: &mut usize, verbose: bool) {
-    if verbose {
-        if read.len() < *last_read_len {
-            *field += 1;
-        }
-        *last_read_len = read.len();
     }
 }
 
