@@ -295,11 +295,15 @@ irma-core trimmer input.fastq \
     --hard-trim 15 --h-right 20
 ```
 
-## Length Filtering and Output
+## Length Filtering and Masking
 
 IRMA-core will filter reads from the output that have fewer than the set `--min-length` amount of bases after trimming.
 
-The `--mask` flag will mask bases with `N`, rather than trimming them from the reads. Masking will ***not*** alter the quality scores of the masked bases. When masking is enabled, the `--min-length` filter applies to the full read length (including any portions that were masked).
+The `--mask` flag will mask bases with `N`, rather than trimming them from the reads. IRMA-core only supports performing all trimming or all masking for the specified operations (to perform both, run `trimmer` twice). Each subsequent trimming operation temporarily shrinks the range of bases being considered in the reads; for example, a barcode masked on the left side of the read or any bases left of it will not be considered during primer masking.
+
+The only exception is if a run contains both primer masking and hard masking. For short reads, there may not be a way to distinguish between a primer matching on the left or on the right of the sequence, so `trimmer` makes no assumptions. This means hard masking may mask bases on the opposite side of the primers as expected, or may mask a range of bases overlapping with the already-masked primers. Open an issue in the git repository if different behavior is required.
+
+Masking will ***not*** alter the quality scores of the masked bases. Also, when masking is enabled, the `--min-length` filter applies to the full read length (including any portions that were masked).
 
 ### Arguments
 
