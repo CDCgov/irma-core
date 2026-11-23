@@ -7,7 +7,7 @@
 //! positions in the frequency TSV.
 //!
 //! All four [legacy distance
-//! measures]https://wonder.cdc.gov/controller/pdf/Updated_Phasing_Methods.pdf)
+//! measures](https://wonder.cdc.gov/controller/pdf/Updated_Phasing_Methods.pdf)
 //! are computed once per pair, retaining the lower triangle in memory. Phase
 //! groups are determined by identifying connected components where the EXPENRD
 //! distance is below a threshold. Only explicitly selected matrices are
@@ -504,7 +504,7 @@ fn calculate_distances_sequential(
     })
 }
 
-/// Computes all pairwise [`Distances`] between `variants`.
+/// Computes all pairwise [`DistanceMatrices`] between `variants`.
 ///
 /// Each off-diagonal pair is computed once with [`distance`] and stored in a
 /// flattened lower-triangular matrix of per-pair structs, storing row `i`
@@ -655,7 +655,7 @@ impl Display for DistanceType {
 /// Computes the four legacy distance measures between two variants from the
 /// counted `patterns`.
 ///
-/// The returned [`Distances`] holds, in [`Distance::VARIANTS`] order:
+/// The returned [`CalculatedDistances`] contains these distances, in the order:
 ///
 /// 1. MUTUALD
 /// 2. JACCARD
@@ -667,11 +667,11 @@ impl Display for DistanceType {
 ///
 /// The following special cases apply:
 ///
-/// - Two variants at the same site return [`Distances::SAME`] if they share an
-///   allele, and [`Distances::NONE`] otherwise.
+/// - Two variants at the same site return [`CalculatedDistances::SAME`] if they
+///   share an allele, and [`CalculatedDistances::NONE`] otherwise.
 /// - If either variant has a frequency of zero, or there is no coverage, no
 ///   joint observation, or no observation of either allele, this returns
-///   [`Distances::NONE`].
+///   [`CalculatedDistances::NONE`].
 ///
 /// All measures are symmetric, so the order of `first` and `second` does not
 /// matter.

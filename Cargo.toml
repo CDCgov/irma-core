@@ -3,7 +3,7 @@ members = ["crates/irma-core-cli", "crates/irma-records"]
 resolver = "2"
 
 [workspace.package]
-version = "0.12.0-dev"
+version = "0.12.0"
 edition = "2024"
 license = "Apache-2.0"
 rust-version = "1.95"
@@ -18,10 +18,7 @@ repository = "https://github.com/CDCgov/irma-core"
 readme = "README.md"
 
 [workspace.dependencies]
-zoe = { git = "https://github.com/CDCgov/zoe.git", default-features = false, features = [
-    "multiversion",
-    "rand",
-] }
+zoe = "0.0.37"
 foldhash = "0.2"
 flate2 = "1"
 

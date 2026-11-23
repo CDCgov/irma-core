@@ -5,7 +5,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 [Semantic Versioning]. For IRMA vs IRMA-core compatibility, please see the
 [version matrix](VERSION_MATRIX.md).
 
-## [0.12.0] - TBD
+## [0.12.0] - 2026-11-23
 
 ### Added
 
@@ -18,7 +18,7 @@ is roughly based on [Keep a Changelog], and this project tries to adheres to
 
 - The `phase` process now calculates four distance matrices from
   variant-frequency and counted-pattern TSVs before assigning phases using
-  thresholded EXPENRD connected components
+  thresholded EXPENRD connected components. For usage instructions and arguments, use `irma-core phase --help`
 - `merge_pair_using_reference` now accepts a mutable reference to a
   `PairedMergeStats` to tally into, rather than returning the struct
 - `PairedMergeStats` no longer implements `Add` or `AddAssign`
