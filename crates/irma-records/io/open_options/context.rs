@@ -30,9 +30,9 @@ pub enum ReaderType {
     ///
     /// [`FastXReader`]: crate::io::FastXReader
     FastX,
-    /// A SAM record, as used in [`SAMReader`].
+    /// A SAM record, as used in [`SamReader`].
     ///
-    /// [`SAMReader`]: zoe::data::records::sam::SAMReader
+    /// [`SamReader`]: zoe::data::records::sam::SamReader
     Sam,
 }
 

@@ -8,7 +8,7 @@ use std::{
     path::Path,
 };
 use zoe::{
-    data::sam::SAMReader,
+    data::sam::{ParseSamFields, SamReader},
     prelude::{FastQReader, FastaReader},
 };
 
@@ -20,7 +20,7 @@ use zoe::{
 /// - Interpreting the paths in multiple ways, such as [`File`],
 ///   [`ReadFileZip`], [`ReadFileZipInThread`], and [`ReadFileStdin`]
 /// - Parsing the inputs into [`FastQReader`], [`FastaReader`], [`FastXReader`],
-///   or [`SAMReader`]
+///   or [`SamReader`]
 /// - Automatically adding context including the path and record type (if
 ///   applicable) to any errors while opening the file or reading from the file
 /// - Automatically adding context including the path and record type to each
@@ -57,7 +57,8 @@ use zoe::{
 ///    - `parse_fasta`: Parses the input as a FASTA file ([`FastaReader`])
 ///    - `parse_fastx`: Parses the input as either a FASTQ or FASTA file
 ///      ([`FastXReader`])
-///    - `parse_sam`: Parses the input as a SAM file ([`SAMReader`])
+///    - `parse_sam`: Parses the input as a SAM file ([`SamReader`]). To parse
+///      into a custom struct, call `with_record_type` after that.
 /// 5. Call the `open` method to retrieve the inputs, with context automatically
 ///    added to any errors.
 ///
@@ -163,7 +164,6 @@ impl<'a> InputOptions<'a, Option<&'a Path>> {
 
     /// Interprets the optional path using [`ReadFileStdin`], which supports
     /// regular files and stdin (in the case that no path was provided).
-    #[allow(dead_code)]
     pub fn use_file_or_stdin(self) -> InputOptions<'a, ReadFileStdin> {
         InputOptions {
             context: self.context,
@@ -372,8 +372,8 @@ where
         }
     }
 
-    /// Parses the input as a SAM file, via the iterator [`SAMReader`].
-    pub fn parse_sam(self) -> InputOptions<'a, SAMReader<R>> {
+    /// Parses the input as a SAM file, via the iterator [`SamReader`].
+    pub fn parse_sam(self) -> InputOptions<'a, SamReader<R>> {
         let src = match self.input {
             Ok(src) => src,
             Err(e) => {
@@ -386,7 +386,7 @@ where
 
         InputOptions {
             context: self.context.with_reader1(ReaderType::Sam),
-            input:   SAMReader::from_readable(src).map_err(PairedErrors::Err1),
+            input:   SamReader::from_readable(src).map_err(PairedErrors::Err1),
         }
     }
 }
@@ -416,7 +416,6 @@ where
     }
 
     /// Parses the input(s) as FASTA file(s), via the iterator [`FastaReader`].
-    #[allow(dead_code)]
     pub fn parse_fasta(self) -> InputOptions<'a, RecordReaders<FastaReader<R>>> {
         let srcs = match self.input {
             Ok(src) => src,
@@ -473,8 +472,8 @@ where
         }
     }
 
-    /// Parses the input(s) as SAM files, via the iterator [`SAMReader`].
-    pub fn parse_sam(self) -> InputOptions<'a, RecordReaders<SAMReader<R>>> {
+    /// Parses the input(s) as SAM files, via the iterator [`SamReader`].
+    pub fn parse_sam(self) -> InputOptions<'a, RecordReaders<SamReader<R>>> {
         let srcs = match self.input {
             Ok(src) => src,
             Err(e) => {
@@ -485,11 +484,37 @@ where
             }
         };
 
-        let input = srcs.try_map(SAMReader::from_readable);
+        let input = srcs.try_map(SamReader::from_readable);
 
         InputOptions {
             context: self.context.with_reader1(ReaderType::Sam).with_reader2(ReaderType::Sam),
             input,
+        }
+    }
+}
+
+impl<'a, R: Read> InputOptions<'a, SamReader<R>> {
+    /// Customizes the [`SamReader`] to parse into a custom data structure `T`
+    /// implementing [`ParseSamFields`].
+    pub fn with_record_type<T>(self) -> InputOptions<'a, SamReader<R, T>>
+    where
+        T: ParseSamFields, {
+        InputOptions {
+            context: self.context,
+            input:   self.input.map(|input| input.with_record_type()),
+        }
+    }
+}
+
+impl<'a, R: Read> InputOptions<'a, RecordReaders<SamReader<R>>> {
+    /// Customizes the [`SamReader`] to parse into a custom data structure `T`
+    /// implementing [`ParseSamFields`].
+    pub fn with_record_type<T>(self) -> InputOptions<'a, RecordReaders<SamReader<R, T>>>
+    where
+        T: ParseSamFields, {
+        InputOptions {
+            context: self.context,
+            input:   self.input.map(|input| input.map(|reader| reader.with_record_type())),
         }
     }
 }
@@ -548,7 +573,7 @@ where
     I: IterWithContext,
 {
     /// A helper function for opening an iterator ([`FastQReader`],
-    /// [`FastaReader`], [`FastXReader`], or [`SAMReader`]).
+    /// [`FastaReader`], [`FastXReader`], or [`SamReader`]).
     ///
     /// ## Errors
     ///
@@ -573,7 +598,7 @@ where
     I: IterWithContext,
 {
     /// A helper function for opening a [`RecordReaders`] of iterators
-    /// ([`FastQReader`], [`FastaReader`], [`FastXReader`], or [`SAMReader`]).
+    /// ([`FastQReader`], [`FastaReader`], [`FastXReader`], or [`SamReader`]).
     ///
     /// ## Errors
     ///
@@ -610,7 +635,6 @@ impl InputOptions<'_, ReadFileZip> {
     /// IO errors when opening the file are propagated. Context is added that
     /// includes the path. Any failed reads from the reader will also have
     /// similar context due to the [`WithContext`] wrapper.
-    #[allow(dead_code)]
     pub fn open(self) -> std::io::Result<WithContext<BufReader<ReadFileZip>>> {
         self.open_readable()
     }
@@ -625,7 +649,6 @@ impl InputOptions<'_, ReadFileZipInThread> {
     /// Context is added that includes the path. Any failed reads from the
     /// reader will also have similar context due to the [`WithContext`]
     /// wrapper.
-    #[allow(dead_code)]
     pub fn open(self) -> std::io::Result<WithContext<BufReader<ReadFileZipInThread>>> {
         self.open_readable()
     }
@@ -640,7 +663,6 @@ impl InputOptions<'_, ReadFileStdin> {
     /// Context is added that includes the path. Any failed reads from the
     /// reader will also have similar context due to the [`WithContext`]
     /// wrapper.
-    #[allow(dead_code)]
     pub fn open(self) -> std::io::Result<WithContext<BufReader<ReadFileStdin>>> {
         self.open_readable()
     }
@@ -658,7 +680,6 @@ where
     /// the path if available, and the record type FASTQ if the error originated
     /// during parsing. Any items that are errors in the iterator will also have
     /// similar context due to the [`WithContext`] wrapper.
-    #[allow(dead_code)]
     pub fn open(self) -> std::io::Result<WithContext<FastQReader<R>>> {
         self.open_iter()
     }
@@ -704,11 +725,12 @@ where
     }
 }
 
-impl<R> InputOptions<'_, SAMReader<R>>
+impl<R, T> InputOptions<'_, SamReader<R, T>>
 where
     R: Read,
+    T: ParseSamFields,
 {
-    /// Opens the [`SAMReader`].
+    /// Opens the [`SamReader`].
     ///
     /// ## Errors
     ///
@@ -716,8 +738,7 @@ where
     /// the path if available, and the record type SAM if the error originated
     /// during parsing. Any items that are errors in the iterator will also have
     /// similar context due to the [`WithContext`] wrapper.
-    #[allow(dead_code)]
-    pub fn open(self) -> std::io::Result<WithContext<SAMReader<R>>> {
+    pub fn open(self) -> std::io::Result<WithContext<SamReader<R, T>>> {
         self.open_iter()
     }
 }
@@ -745,7 +766,6 @@ impl InputOptions<'_, RecordReaders<ReadFileZip>> {
     /// IO errors when opening the files are propagated. Context is added that
     /// includes the path. Any failed reads from the readers will also have
     /// similar context due to the [`WithContext`] wrapper.
-    #[allow(dead_code)]
     pub fn open(self) -> std::io::Result<RecordReaders<BufReader<WithContext<ReadFileZip>>>> {
         self.open_readable().map(|readers| readers.map(BufReader::new))
     }
@@ -761,7 +781,6 @@ impl InputOptions<'_, RecordReaders<ReadFileZipInThread>> {
     /// Context is added that includes the path. Any failed reads from the
     /// readers will also have similar context due to the [`WithContext`]
     /// wrapper.
-    #[allow(dead_code)]
     pub fn open(self) -> std::io::Result<RecordReaders<BufReader<WithContext<ReadFileZipInThread>>>> {
         self.open_readable().map(|readers| readers.map(BufReader::new))
     }
@@ -777,7 +796,6 @@ impl InputOptions<'_, RecordReaders<ReadFileStdin>> {
     /// file are propagated. Context is added that includes the path. Any failed
     /// reads from the readers will also have similar context due to the
     /// [`WithContext`] wrapper.
-    #[allow(dead_code)]
     pub fn open(self) -> std::io::Result<RecordReaders<BufReader<WithContext<ReadFileStdin>>>> {
         self.open_readable().map(|readers| readers.map(BufReader::new))
     }
@@ -841,11 +859,12 @@ where
     }
 }
 
-impl<R> InputOptions<'_, RecordReaders<SAMReader<R>>>
+impl<R, T> InputOptions<'_, RecordReaders<SamReader<R, T>>>
 where
     R: Read,
+    T: ParseSamFields,
 {
-    /// Opens the potentially paired [`SAMReader`] inputs.
+    /// Opens the potentially paired [`SamReader`] inputs.
     ///
     /// ## Errors
     ///
@@ -853,8 +872,7 @@ where
     /// the path if available, and the record type SAM if the error originated
     /// during parsing. Any items that are errors in the iterator will also have
     /// similar context due to the [`WithContext`] wrapper.
-    #[allow(dead_code)]
-    pub fn open(self) -> std::io::Result<RecordReaders<WithContext<SAMReader<R>>>> {
+    pub fn open(self) -> std::io::Result<RecordReaders<WithContext<SamReader<R, T>>>> {
         self.open_iter()
     }
 }
